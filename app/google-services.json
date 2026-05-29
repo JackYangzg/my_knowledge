@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "58939483662",
+    "project_id": "com-my-knowledge-5dc79",
+    "storage_bucket": "com-my-knowledge-5dc79.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:58939483662:android:86d3c9b30c0d529b4d7e5f",
+        "android_client_info": {
+          "package_name": "com.my.knowledge"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBow-llT9r4Lki6wp_2JLuxA1k2rp2njsQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
