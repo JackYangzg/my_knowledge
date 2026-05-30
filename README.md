@@ -1,7 +1,7 @@
 # My Knowledge
 
 个人知识管理 Android 应用 — 本地优先、AI 辅助的知识收集、加工与脉络发现系统。
-
+<img width="1536" height="1024" alt="image" src="https://github.com/user-attachments/assets/cf7de056-eeec-46a0-9d03-5e9cee95d5b8" /> 
 ## 核心理念
 
 | 理念 | 说明 |
