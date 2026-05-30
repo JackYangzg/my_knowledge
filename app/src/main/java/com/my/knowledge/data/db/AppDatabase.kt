@@ -11,6 +11,7 @@ import com.my.knowledge.data.db.entity.*
     entities = [
         KnowledgeBaseEntity::class,
         KnowledgeItemEntity::class,
+        KnowledgeItemFts::class,
         NoteEntity::class,
         AttachmentEntity::class,
         ProcessingTaskEntity::class,
@@ -29,7 +30,12 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun noteDao(): NoteDao
     abstract fun attachmentDao(): AttachmentDao
     abstract fun processingTaskDao(): ProcessingTaskDao
+    abstract fun archiveRecommendationDao(): ArchiveRecommendationDao
     abstract fun searchDao(): SearchDao
+    abstract fun aiConversationDao(): AiConversationDao
+    abstract fun aiMessageDao(): AiMessageDao
+    abstract fun knowledgeThreadDao(): KnowledgeThreadDao
+    abstract fun knowledgeThreadLogDao(): KnowledgeThreadLogDao
 
     companion object {
         private const val DATABASE_NAME = "knowledge_db"
@@ -45,7 +51,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
-                .fallbackToDestructiveMigration()
+                .fallbackToDestructiveMigration(false)
                 .build()
         }
     }

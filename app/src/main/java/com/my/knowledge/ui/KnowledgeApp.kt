@@ -24,6 +24,8 @@ import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
 import com.my.knowledge.viewmodel.KnowledgeManageViewModel
 import com.my.knowledge.viewmodel.NoteEditorViewModel
+import com.my.knowledge.viewmodel.ProcessingStatusViewModel
+import com.my.knowledge.viewmodel.ThreadViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
 enum class Tab(val id: String, val label: String, val icon: ImageVector) {
@@ -44,6 +46,8 @@ fun KnowledgeApp() {
     val manageViewModel: KnowledgeManageViewModel = viewModel(factory = ViewModelFactory)
     val itemViewModel: KnowledgeItemListViewModel = viewModel(factory = ViewModelFactory)
     val askViewModel: AskViewModel = viewModel(factory = ViewModelFactory)
+    val processingStatusViewModel: ProcessingStatusViewModel = viewModel(factory = ViewModelFactory)
+    val threadViewModel: ThreadViewModel = viewModel(factory = ViewModelFactory)
 
     Scaffold(
         bottomBar = {
@@ -60,7 +64,11 @@ fun KnowledgeApp() {
     ) { paddingValues ->
         Box(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
             when {
-                subPage == "context" -> KnowledgeContextScreen(onBack = { subPage = null })
+                subPage == "context" -> KnowledgeContextScreen(
+                    homeViewModel = homeViewModel,
+                    threadViewModel = threadViewModel,
+                    onBack = { subPage = null }
+                )
                 subPage == "fragments" -> FragmentOrganizeScreen(onBack = { subPage = null })
                 subPage == "manage" -> KnowledgeManageScreen(
                     homeViewModel = homeViewModel,
@@ -72,6 +80,10 @@ fun KnowledgeApp() {
                     }
                 )
                 subPage == "settings" -> SettingsScreen(
+                    onBack = { subPage = null }
+                )
+                subPage == "processing" -> ProcessingStatusScreen(
+                    viewModel = processingStatusViewModel,
                     onBack = { subPage = null }
                 )
                 subPage == "detail" && selectedKbId != null -> {
@@ -88,6 +100,7 @@ fun KnowledgeApp() {
                         when (tab) {
                             Tab.KNOWLEDGE -> KnowledgeScreen(
                                 viewModel = homeViewModel,
+                                askViewModel = askViewModel,
                                 onOpenContext = { subPage = "context" },
                                 onOpenFragments = { subPage = "fragments" },
                                 onOpenKbDetail = { kbId ->
@@ -97,7 +110,10 @@ fun KnowledgeApp() {
                                 onOpenKbManage = { subPage = "manage" }
                             )
                             Tab.INSPIRATION -> InspirationScreen(viewModel = noteViewModel)
-                            Tab.PROFILE -> ProfileScreen(onOpenSettings = { subPage = "settings" })
+                            Tab.PROFILE -> ProfileScreen(
+                                onOpenSettings = { subPage = "settings" },
+                                onOpenProcessingStatus = { subPage = "processing" }
+                            )
                         }
                     }
                 }

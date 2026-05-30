@@ -1,5 +1,11 @@
 package com.my.knowledge.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -19,22 +25,57 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.my.knowledge.viewmodel.NoteEditorViewModel
 
 @Composable
 fun InspirationScreen(viewModel: NoteEditorViewModel) {
+    val context = LocalContext.current
     val mode = viewModel.mode
     val title = viewModel.title
     val content = viewModel.content
     val saveStatus by viewModel.saveStatus.collectAsState()
-    
+
     var showMoreMenu by remember { mutableStateOf(false) }
     var selectedLibrary by remember { mutableStateOf("未归类") }
     var showLibraryPicker by remember { mutableStateOf(false) }
+
+    // Image picker
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val markdown = "\n![image]($it)\n"
+            viewModel.content = viewModel.content + markdown
+        }
+    }
+
+    // Attachment picker
+    val attachmentPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        uri?.let {
+            val fileName = uri.lastPathSegment ?: "attachment"
+            val markdown = "\n[${fileName}]($it)\n"
+            viewModel.content = viewModel.content + markdown
+        }
+    }
+
+    // Voice input - check permission and record
+    val audioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            Toast.makeText(context, "语音输入功能开发中...", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "需要麦克风权限才能使用语音输入", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.White)) {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -145,7 +186,16 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     SmallFloatingActionButton(
-                        onClick = { },
+                        onClick = {
+                            val hasPermission = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (hasPermission) {
+                                Toast.makeText(context, "语音输入功能开发中...", Toast.LENGTH_SHORT).show()
+                            } else {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
                         containerColor = Color.White,
                         contentColor = Color(0xFF147EC5),
                         shape = CircleShape,
@@ -204,14 +254,22 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                             }
                         }
                         HorizontalDivider(color = Color(0xFFF3F4F6))
-                        MoreMenuItem("添加图片到文档", "🖼")
-                        MoreMenuItem("添加附件到文档", "📎")
-                        
+                        MoreMenuItem(
+                            label = "添加图片到文档",
+                            rightText = "",
+                            onClick = { imagePickerLauncher.launch("image/*") }
+                        )
+                        MoreMenuItem(
+                            label = "添加附件到文档",
+                            rightText = "",
+                            onClick = { attachmentPickerLauncher.launch("*/*") }
+                        )
+
                         // Library Picker Item
                         Box(modifier = Modifier.fillMaxWidth()) {
                             MoreMenuItem(
-                                label = "保存到", 
-                                rightText = selectedLibrary, 
+                                label = "保存到",
+                                rightText = selectedLibrary,
                                 isStrong = true,
                                 onClick = { showLibraryPicker = !showLibraryPicker }
                             )
@@ -235,7 +293,16 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                         MoreMenuItem("添加标签", "›")
                         MoreMenuItem("移动到知识库", "›")
                         MoreMenuItem("标记需要整理", "›")
-                        MoreMenuItem("删除", "›", isDestructive = true)
+                        MoreMenuItem(
+                            label = "删除",
+                            rightText = "",
+                            isDestructive = true,
+                            onClick = {
+                                viewModel.content = ""
+                                viewModel.title = ""
+                                showMoreMenu = false
+                            }
+                        )
                     }
                 }
             }

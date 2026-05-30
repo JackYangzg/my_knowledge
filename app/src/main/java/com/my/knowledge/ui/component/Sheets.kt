@@ -6,13 +6,17 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,6 +26,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.my.knowledge.data.db.entity.AiMessageEntity
+import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -128,7 +134,16 @@ fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AskSheet(onClose: () -> Unit) {
+fun AskSheet(
+    askViewModel: AskViewModel,
+    onClose: () -> Unit
+) {
+    val messages by askViewModel.messages.collectAsState()
+    val isLoading by askViewModel.isLoading.collectAsState()
+    val conversations by askViewModel.conversations.collectAsState()
+    val activeConversationId by askViewModel.activeConversationId.collectAsState()
+    var inputText by remember { mutableStateOf("") }
+
     ModalBottomSheet(
         onDismissRequest = onClose,
         containerColor = Color.White,
@@ -138,38 +153,109 @@ fun AskSheet(onClose: () -> Unit) {
             modifier = Modifier
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 32.dp)
+                .heightIn(max = 560.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("问一问", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                IconButton(onClick = onClose, modifier = Modifier.background(Color(0xFFF5F5F5), CircleShape).size(28.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("问一问", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    if (activeConversationId != null) {
+                        TextButton(
+                            onClick = { askViewModel.startNewConversation() },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Text("+ 新对话", fontSize = 12.sp, color = Color(0xFF147EC5))
+                        }
+                    }
+                }
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier.background(Color(0xFFF5F5F5), CircleShape).size(28.dp)
+                ) {
                     Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            listOf(
-                "这个知识库现在主要在讲什么？",
-                "帮我整理明天会议可以讲的观点",
-                "最近导入的内容有哪些值得归档？"
-            ).forEach { q ->
-                Surface(
-                    onClick = { },
-                    shape = RoundedCornerShape(14.dp),
-                    color = Color.White,
-                    border = BorderStroke(0.5.dp, Color(0xFFF3F3F3)),
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+            // Conversations list (when no active conversation or showing history)
+            if (activeConversationId == null && conversations.isNotEmpty()) {
+                Text("历史对话", fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(bottom = 8.dp))
+                conversations.take(5).forEach { conv ->
+                    Surface(
+                        onClick = { askViewModel.selectConversation(conv.id) },
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFFF7FBFF),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                    ) {
+                        Text(
+                            conv.title,
+                            fontSize = 13.sp,
+                            color = Color(0xFF0F172A),
+                            modifier = Modifier.padding(12.dp)
+                        )
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+            }
+
+            // Messages area
+            if (messages.isNotEmpty()) {
+                LazyColumn(
+                    modifier = Modifier.weight(1f, fill = false).heightIn(max = 300.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text(q, fontSize = 14.sp, color = Color(0xFF0F172A), modifier = Modifier.padding(18.dp, 15.dp))
+                    items(messages) { msg ->
+                        MessageBubble(msg, onSaveAsKnowledge = { messageId ->
+                            askViewModel.saveAnswerAsKnowledge(messageId)
+                        })
+                    }
+                    if (isLoading) {
+                        item {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = Color(0xFF147EC5)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("思考中...", fontSize = 13.sp, color = Color(0xFF5F87A3))
+                            }
+                        }
+                    }
+                }
+            } else if (activeConversationId == null) {
+                // Suggested questions
+                val suggestions = listOf(
+                    "这个知识库现在主要在讲什么？",
+                    "帮我整理明天会议可以讲的观点",
+                    "最近导入的内容有哪些值得归档？"
+                )
+                suggestions.forEach { q ->
+                    Surface(
+                        onClick = {
+                            askViewModel.startNewConversation()
+                            inputText = q
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = Color.White,
+                        border = BorderStroke(0.5.dp, Color(0xFFF3F3F3)),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                    ) {
+                        Text(q, fontSize = 14.sp, color = Color(0xFF0F172A), modifier = Modifier.padding(18.dp, 15.dp))
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
+            // Input area
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
@@ -180,8 +266,8 @@ fun AskSheet(onClose: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextField(
-                        value = "",
-                        onValueChange = {},
+                        value = inputText,
+                        onValueChange = { if (!isLoading) inputText = it },
                         placeholder = { Text("输入问题", fontSize = 14.sp, color = Color(0xFFA3A3A3)) },
                         modifier = Modifier.weight(1f),
                         colors = TextFieldDefaults.colors(
@@ -192,12 +278,88 @@ fun AskSheet(onClose: () -> Unit) {
                         )
                     )
                     IconButton(
-                        onClick = { },
-                        modifier = Modifier.size(36.dp).background(Color(0xFF111827), RoundedCornerShape(14.dp))
+                        onClick = {
+                            if (inputText.isNotBlank() && !isLoading) {
+                                askViewModel.askQuestion(inputText.trim())
+                                inputText = ""
+                            }
+                        },
+                        enabled = inputText.isNotBlank() && !isLoading,
+                        modifier = Modifier.size(36.dp).background(
+                            if (inputText.isNotBlank() && !isLoading) Color(0xFF111827) else Color(0xFFE5E5E5),
+                            RoundedCornerShape(14.dp)
+                        )
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                        Icon(
+                            Icons.AutoMirrored.Filled.Send,
+                            contentDescription = "发送",
+                            tint = if (inputText.isNotBlank() && !isLoading) Color.White else Color(0xFFA3A3A3),
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageBubble(
+    msg: AiMessageEntity,
+    onSaveAsKnowledge: (String) -> Unit
+) {
+    val isUser = msg.role == "user"
+    val alignment = if (isUser) Arrangement.End else Arrangement.Start
+    val bgColor = if (isUser) Color(0xFFEFF7FF) else Color(0xFFF9FAFB)
+    val textColor = Color(0xFF0F172A)
+
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = alignment,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (!isUser) {
+                Icon(
+                    Icons.Default.Person,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp).padding(end = 4.dp),
+                    tint = Color(0xFF147EC5)
+                )
+            }
+            Surface(
+                shape = RoundedCornerShape(if (isUser) 16.dp else 16.dp),
+                color = bgColor,
+                shadowElevation = 0.dp
+            ) {
+                Text(
+                    msg.content,
+                    fontSize = 13.sp,
+                    color = textColor,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    lineHeight = 20.sp
+                )
+            }
+        }
+
+        // Save as knowledge button for all assistant messages
+        if (!isUser && msg.savedAsKnowledgeItemId == null) {
+            TextButton(
+                onClick = { onSaveAsKnowledge(msg.id) },
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                modifier = Modifier.height(28.dp)
+            ) {
+                Icon(
+                    Icons.Default.Bookmarks,
+                    contentDescription = null,
+                    modifier = Modifier.size(12.dp),
+                    tint = Color(0xFF147EC5)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("保存为知识", fontSize = 11.sp, color = Color(0xFF147EC5))
             }
         }
     }

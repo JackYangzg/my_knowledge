@@ -20,7 +20,7 @@ data class KnowledgeItemEntity(
     val contentMarkdown: String,
     val excerpt: String,
     val sourceType: String,
-    val status: String, // draft, unfiled, processing, processed, archived, need_review, failed, deleted
+    val status: String,
     val contentHash: String,
     val summary: String?,
     val tagsJson: String,
@@ -30,4 +30,25 @@ data class KnowledgeItemEntity(
     val updatedAt: Long,
     val processedAt: Long?,
     val deletedAt: Long?
-)
+) {
+    companion object {
+        /** Initial draft, not yet saved as knowledge item */
+        const val STATUS_DRAFT = "draft"
+        /** Saved but not yet categorized */
+        const val STATUS_UNFILED = "unfiled"
+        /** Processing pipeline is running */
+        const val STATUS_PROCESSING = "processing"
+        /** Processing complete, ready for user review */
+        const val STATUS_PROCESSED = "processed"
+        /** Archive recommendation ready, waiting for user confirmation */
+        const val STATUS_RECOMMEND_READY = "recommend_ready"
+        /** User confirmed and archived into knowledge base */
+        const val STATUS_ARCHIVED = "archived"
+        /** Needs user review (e.g., low confidence processing) */
+        const val STATUS_NEED_REVIEW = "need_review"
+        /** Processing failed */
+        const val STATUS_FAILED = "failed"
+        /** Soft deleted */
+        const val STATUS_DELETED = "deleted"
+    }
+}

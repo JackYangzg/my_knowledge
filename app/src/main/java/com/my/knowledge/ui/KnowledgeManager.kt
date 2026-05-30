@@ -1,6 +1,7 @@
 package com.my.knowledge.ui
 
 import android.content.Context
+import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -11,16 +12,25 @@ import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.security.MessageDigest
 import java.util.*
 
 /**
  * KnowledgeManager acts as a bridge for MVP processing.
+ * P0: Includes local-first preference management
  */
 object KnowledgeManager {
+    
+    private const val PREFS_NAME = "knowledge_prefs"
+    private const val KEY_AI_EXTERNAL_ENABLED = "ai_external_calls_enabled"
 
     private var db: AppDatabase? = null
     private var scheduler: ProcessingTaskScheduler? = null
     private val scope = CoroutineScope(Dispatchers.IO)
+    
+    // P0: SharedPreferences for local-first toggle
+    lateinit var preferences: SharedPreferences
+        private set
 
     // Legacy public state for compatibility during migration
     val insights = mutableStateListOf<KnowledgeInsight>()
@@ -31,13 +41,27 @@ object KnowledgeManager {
     var modelConfig by mutableStateOf(ModelConfig())
         private set
 
+    // P0: AI external calls setting
+    var aiExternalCallsEnabled: Boolean
+        get() = preferences.getBoolean(KEY_AI_EXTERNAL_ENABLED, false)
+        set(value) {
+            preferences.edit().putBoolean(KEY_AI_EXTERNAL_ENABLED, value).apply()
+        }
+
     fun init(context: Context) {
         db = AppDatabase.getInstance(context)
         scheduler = ProcessingTaskScheduler(context)
+        preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     }
 
     fun updateModelConfig(newConfig: ModelConfig) {
         modelConfig = newConfig
+    }
+
+    private fun sha256(content: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val hashBytes = digest.digest(content.toByteArray(Charsets.UTF_8))
+        return hashBytes.joinToString("") { "%02x".format(it) }
     }
 
     fun importAndAnalyze(name: String, type: String, content: String = "", targetLibrary: String = "unfiled") {
@@ -54,7 +78,7 @@ object KnowledgeManager {
                 excerpt = content.take(100),
                 sourceType = type,
                 status = "processing",
-                contentHash = content.hashCode().toString(),
+                contentHash = sha256(content),
                 summary = null,
                 tagsJson = "[]",
                 rawNoteId = null,

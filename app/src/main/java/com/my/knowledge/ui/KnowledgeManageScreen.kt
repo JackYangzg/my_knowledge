@@ -10,6 +10,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.DeleteOutline
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.ui.component.MiniTag
 import com.my.knowledge.ui.component.SummaryCard
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
@@ -33,6 +36,9 @@ fun KnowledgeManageScreen(
     onOpenKbDetail: (String) -> Unit
 ) {
     val knowledgeBases by homeViewModel.knowledgeBases.collectAsState()
+    var deleteTarget by remember { mutableStateOf<KnowledgeBaseEntity?>(null) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var moveToUnfiled by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier
@@ -176,10 +182,25 @@ fun KnowledgeManageScreen(
                                 }
                             },
                             right = {
-                                Column(modifier = Modifier.padding(top = 6.dp)) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        MiniTag("${item.itemCount} 条知识")
-                                        if (item.isSystem) MiniTag("系统")
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Column(modifier = Modifier.padding(top = 6.dp)) {
+                                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                            MiniTag("${item.itemCount} 条知识")
+                                            if (item.isSystem) MiniTag("系统")
+                                        }
+                                    }
+                                    if (item.allowDelete) {
+                                        IconButton(
+                                            onClick = { deleteTarget = item; showDeleteDialog = true },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Default.DeleteOutline,
+                                                contentDescription = "删除",
+                                                tint = Color(0xFF9CA3AF),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -187,6 +208,54 @@ fun KnowledgeManageScreen(
                     }
                 }
             }
+        }
+
+        // P1: Delete confirmation dialog
+        if (showDeleteDialog && deleteTarget != null) {
+            AlertDialog(
+                onDismissRequest = { showDeleteDialog = false },
+                icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEA580C)) },
+                title = { Text("删除知识库", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        Text("确定要删除「${deleteTarget!!.name}」吗？")
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            "该知识库包含 ${deleteTarget!!.itemCount} 条知识。",
+                            fontSize = 13.sp,
+                            color = Color(0xFF5F87A3)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(
+                                checked = moveToUnfiled,
+                                onCheckedChange = { moveToUnfiled = it }
+                            )
+                            Text("将知识移动到「未归类」", fontSize = 14.sp)
+                        }
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            manageViewModel.deleteKnowledgeBase(deleteTarget!!.id, moveToUnfiled)
+                            showDeleteDialog = false
+                            deleteTarget = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                    ) {
+                        Text("删除", color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        showDeleteDialog = false
+                        deleteTarget = null
+                    }) {
+                        Text("取消")
+                    }
+                }
+            )
         }
     }
 }

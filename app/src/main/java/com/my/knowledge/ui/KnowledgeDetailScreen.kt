@@ -4,8 +4,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,6 +21,10 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.ui.component.KnowledgeItemRow
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
 
+/**
+ * Knowledge Detail Screen with pagination
+ * P2: Fixed page size of 3 items per page
+ */
 @Composable
 fun KnowledgeDetailScreen(
     kbName: String,
@@ -25,11 +33,19 @@ fun KnowledgeDetailScreen(
     onAskAI: (String) -> Unit
 ) {
     val items by viewModel.items.collectAsState()
+    val currentPage by viewModel.currentPage.collectAsState()
+    val totalPages by viewModel.totalPages.collectAsState()
+    val hasNext by viewModel.hasNextPage.collectAsState()
+    val hasPrevious by viewModel.hasPreviousPage.collectAsState()
+    val itemCount by viewModel.itemCount.collectAsState()
+    
+    var showSearch by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF)) // Ocean 25
+            .background(Color(0xFFF7FBFF))
     ) {
         // Header
         Column(
@@ -54,32 +70,135 @@ fun KnowledgeDetailScreen(
                 Text("返回上一层", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                text = "知识详情",
-                fontSize = 26.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF0F172A)
-            )
-            Text(
-                text = "$kbName · 已完成智能分析与碎片整理",
-                fontSize = 13.sp,
-                color = Color(0xFF5F87A3),
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = kbName,
+                        fontSize = 26.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                    Text(
+                        text = if (itemCount > 0) "共 $itemCount 条知识" else "暂无知识",
+                        fontSize = 13.sp,
+                        color = Color(0xFF5F87A3),
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(
+                        onClick = { showSearch = !showSearch },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(Color(0xFFF7FBFF), RoundedCornerShape(10.dp))
+                    ) {
+                        Icon(
+                            Icons.Default.Search,
+                            contentDescription = "搜索",
+                            tint = Color(0xFF147EC5),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+            
+            // Search bar
+            if (showSearch) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("搜索知识...", color = Color(0xFFA3A3A3)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF147EC5),
+                        unfocusedBorderColor = Color(0xFFDBEEFF)
+                    )
+                )
+            }
         }
 
         LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth()
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(bottom = 16.dp)
         ) {
             if (items.isEmpty()) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                        Text("该知识库尚无已整理知识", color = Color(0xFF5F87A3), fontSize = 14.sp)
+                        Text(
+                            if (searchQuery.isNotEmpty()) "未找到匹配结果" else "该知识库尚无已整理知识",
+                            color = Color(0xFF5F87A3),
+                            fontSize = 14.sp
+                        )
                     }
                 }
             } else {
                 items(items) { item ->
                     KnowledgeItemRow(item, onAskAI = { onAskAI(item.title) })
+                }
+            }
+        }
+
+        // Pagination controls - P2: Fixed page size of 3
+        Surface(
+            color = Color.White,
+            shadowElevation = 4.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 12.dp)
+                    .navigationBarsPadding(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { viewModel.previousPage() },
+                    enabled = hasPrevious,
+                    modifier = Modifier
+                        .size(40.dp)
+                        .background(
+                            if (hasPrevious) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
+                            RoundedCornerShape(12.dp)
+                        )
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "上一页",
+                        tint = if (hasPrevious) Color(0xFF147EC5) else Color(0xFFA3A3A3)
+                    )
+                }
+                
+                Text(
+                    text = "${currentPage + 1} / $totalPages",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = Color(0xFF0F172A)
+                )
+                
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    IconButton(
+                        onClick = { viewModel.nextPage() },
+                        enabled = hasNext,
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(
+                                if (hasNext) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
+                                RoundedCornerShape(12.dp)
+                            )
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                            contentDescription = "下一页",
+                            tint = if (hasNext) Color(0xFF147EC5) else Color(0xFFA3A3A3)
+                        )
+                    }
                 }
             }
         }

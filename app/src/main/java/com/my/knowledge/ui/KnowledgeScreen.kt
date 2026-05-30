@@ -27,12 +27,14 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.ui.component.KnowledgeDigestSection
 import com.my.knowledge.ui.component.AskSheet
 import com.my.knowledge.ui.component.ImportSheet
+import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun KnowledgeScreen(
     viewModel: KnowledgeHomeViewModel,
+    askViewModel: AskViewModel,
     onOpenContext: () -> Unit,
     onOpenFragments: () -> Unit,
     onOpenKbDetail: (String) -> Unit,
@@ -185,7 +187,7 @@ fun KnowledgeScreen(
         }
 
         if (showAskSheet) {
-            AskSheet(onClose = { showAskSheet = false })
+            AskSheet(askViewModel = askViewModel, onClose = { showAskSheet = false })
         }
 
         if (showImportSheet && selectedFileUri != null) {

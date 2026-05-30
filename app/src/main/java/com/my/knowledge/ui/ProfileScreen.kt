@@ -17,7 +17,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 @Composable
-fun ProfileScreen(onOpenSettings: () -> Unit) {
+fun ProfileScreen(
+    onOpenSettings: () -> Unit,
+    onOpenProcessingStatus: () -> Unit = {}
+) {
     val originalFiles = KnowledgeManager.originalFiles
 
     LazyColumn(
@@ -96,10 +99,15 @@ fun ProfileScreen(onOpenSettings: () -> Unit) {
                 items.forEachIndexed { index, (icon, title, desc) ->
                     if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
                     QuietCell(
-                        icon = icon, 
-                        title = title, 
+                        icon = icon,
+                        title = title,
                         desc = desc,
-                        onClick = { if (title == "设置") onOpenSettings() }
+                        onClick = {
+                            when (title) {
+                                "设置" -> onOpenSettings()
+                                "加工状态", "未归档处理" -> onOpenProcessingStatus()
+                            }
+                        }
                     )
                 }
             }

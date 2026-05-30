@@ -12,11 +12,13 @@ class FtsSearchEngine(
     private val searchDao: SearchDao
 ) : SearchEngine {
     override fun search(query: String, knowledgeBaseId: String?): Flow<List<KnowledgeItemEntity>> {
-        val sanitizedQuery = "*$query*" // Basic wildcard search
-        return if (knowledgeBaseId == null) {
-            searchDao.searchAll(sanitizedQuery)
+        val useFts = query.length >= 2 && !query.contains("*")
+        return if (useFts) {
+            if (knowledgeBaseId == null) searchDao.ftsSearchAll("\"$query\"")
+            else searchDao.ftsSearchByKb("\"$query\"", knowledgeBaseId)
         } else {
-            searchDao.searchByKb(sanitizedQuery, knowledgeBaseId)
+            if (knowledgeBaseId == null) searchDao.searchAll(query)
+            else searchDao.searchByKb(query, knowledgeBaseId)
         }
     }
 }
