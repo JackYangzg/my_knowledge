@@ -6,6 +6,7 @@ import androidx.work.WorkerParameters
 import com.my.knowledge.data.ai.AiGateway
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
+import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
 import com.my.knowledge.data.repository.KnowledgeRepositoryImpl
 import com.my.knowledge.domain.repository.KnowledgeRepository
 
@@ -17,6 +18,8 @@ class TagWorker(
     override suspend fun doWork(): Result {
         val itemId = inputData.getString("itemId") ?: return Result.failure()
         val repository = getRepository()
+        val task = repository.getPendingTask("knowledge_item", itemId)
+        repository.appendProcessingLog(log(task?.id, itemId, "tag", "running", "开始提取标签"))
         val item = repository.getItemById(itemId) ?: return Result.failure()
 
         val existingTags = parseTags(item.tagsJson)
@@ -31,6 +34,7 @@ class TagWorker(
             tagsJson = tagsJson,
             updatedAt = System.currentTimeMillis()
         ))
+        repository.appendProcessingLog(log(task?.id, itemId, "tag", "success", "标签提取完成"))
 
         return Result.success()
     }
@@ -93,7 +97,22 @@ $text
             db.knowledgeBaseDao(), db.knowledgeItemDao(),
             db.processingTaskDao(), db.archiveRecommendationDao(),
             db.aiConversationDao(), db.aiMessageDao(),
-            db.knowledgeThreadDao(), db.knowledgeThreadLogDao()
+            db.knowledgeThreadDao(), db.knowledgeThreadLogDao(),
+            db.sourceManifestDao(), db.knowledgeFragmentDao(),
+            db.processingTaskLogDao(), db.askCitationDao(),
+            db.knowledgeGraphDao()
         )
     }
+
+    private fun log(taskId: String?, itemId: String, stage: String, status: String, message: String) =
+        ProcessingTaskLogEntity(
+            id = java.util.UUID.randomUUID().toString(),
+            taskId = taskId,
+            targetType = "knowledge_item",
+            targetId = itemId,
+            stage = stage,
+            status = status,
+            message = message,
+            createdAt = System.currentTimeMillis()
+        )
 }

@@ -9,19 +9,25 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.my.knowledge.viewmodel.ProfileViewModel
 
 @Composable
 fun ProfileScreen(
+    viewModel: ProfileViewModel,
     onOpenSettings: () -> Unit,
-    onOpenProcessingStatus: () -> Unit = {}
+    onOpenProcessingStatus: () -> Unit = {},
+    onOpenRecycleBin: () -> Unit = {}
 ) {
     val originalFiles = KnowledgeManager.originalFiles
+    val exportStatus by viewModel.exportStatus.collectAsState()
 
     LazyColumn(
         modifier = Modifier
@@ -93,6 +99,7 @@ fun ProfileScreen(
                 val items = listOf(
                     Triple(Icons.Default.Inbox, "未归档处理", "18 条内容，5 条已有建议"),
                     Triple(Icons.Default.CheckCircle, "加工状态", "今日 8 条完成，2 条处理中"),
+                    Triple(Icons.Default.Delete, "回收站", "已删除的知识条目，可恢复"),
                     Triple(Icons.Default.Download, "导出", "Markdown / PDF / Word"),
                     Triple(Icons.Default.Settings, "设置", "同步、模型、默认知识库")
                 )
@@ -106,8 +113,27 @@ fun ProfileScreen(
                             when (title) {
                                 "设置" -> onOpenSettings()
                                 "加工状态", "未归档处理" -> onOpenProcessingStatus()
+                                "回收站" -> onOpenRecycleBin()
+                                "导出" -> viewModel.exportMarkdownBackup()
                             }
                         }
+                    )
+                }
+            }
+        }
+
+        if (exportStatus != null) {
+            item {
+                Surface(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp).fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFEFF7FF)
+                ) {
+                    Text(
+                        exportStatus.orEmpty(),
+                        modifier = Modifier.padding(12.dp),
+                        color = Color(0xFF147EC5),
+                        fontSize = 12.sp
                     )
                 }
             }

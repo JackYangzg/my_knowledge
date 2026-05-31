@@ -44,13 +44,14 @@ fun KnowledgeScreen(
     
     var showAskSheet by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
-    var selectedFileUri by remember { mutableStateOf<Uri?>(null) }
+    var selectedFileUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    val selectedFileUri = selectedFileUris.firstOrNull()
 
     val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-        onResult = { uri ->
-            if (uri != null) {
-                selectedFileUri = uri
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = { uris ->
+            if (uris.isNotEmpty()) {
+                selectedFileUris = uris
                 showImportSheet = true
             }
         }
@@ -193,10 +194,11 @@ fun KnowledgeScreen(
         if (showImportSheet && selectedFileUri != null) {
             ImportSheet(
                 viewModel = viewModel,
-                uri = selectedFileUri!!,
-                onClose = { 
-                    showImportSheet = false
-                    selectedFileUri = null
+                uri = selectedFileUri,
+                onClose = {
+                    val remaining = selectedFileUris.drop(1)
+                    selectedFileUris = remaining
+                    showImportSheet = remaining.isNotEmpty()
                 }
             )
         }

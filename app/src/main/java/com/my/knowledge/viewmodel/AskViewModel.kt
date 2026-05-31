@@ -5,9 +5,11 @@ import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.ai.AiPromptTemplates
 import com.my.knowledge.data.ai.ContentType
 import com.my.knowledge.data.ai.ScopeType
+import com.my.knowledge.data.db.entity.AskCitationEntity
 import com.my.knowledge.data.db.entity.AiConversationEntity
 import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
+import com.my.knowledge.data.search.KnowledgeSearchResult
 import com.my.knowledge.data.search.SearchEngine
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -31,7 +33,7 @@ class AskViewModel(
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _currentScopeType = MutableStateFlow(ScopeType.GLOBAL)
+    private val _currentScopeType = MutableStateFlow(ScopeType.KNOWLEDGE_BASE)
     val currentScopeType: StateFlow<String> = _currentScopeType.asStateFlow()
 
     private val _currentScopeId = MutableStateFlow("")
@@ -43,6 +45,9 @@ class AskViewModel(
     private val _messages = MutableStateFlow<List<AiMessageEntity>>(emptyList())
     val messages: StateFlow<List<AiMessageEntity>> = _messages.asStateFlow()
 
+    private val _lastCitations = MutableStateFlow<List<AskCitationEntity>>(emptyList())
+    val lastCitations: StateFlow<List<AskCitationEntity>> = _lastCitations.asStateFlow()
+
     private val _conversations = MutableStateFlow<List<AiConversationEntity>>(emptyList())
     val conversations: StateFlow<List<AiConversationEntity>> = _conversations.asStateFlow()
 
@@ -50,7 +55,10 @@ class AskViewModel(
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
     fun setScope(scopeType: String, scopeId: String) {
-        _currentScopeType.value = scopeType
+        _currentScopeType.value = when (scopeType) {
+            ScopeType.KNOWLEDGE_ITEM, ScopeType.KNOWLEDGE_BASE, ScopeType.THREAD -> scopeType
+            else -> ScopeType.KNOWLEDGE_BASE
+        }
         _currentScopeId.value = scopeId
         loadConversations()
     }
@@ -105,12 +113,8 @@ class AskViewModel(
     }
 
     fun askQuestion(question: String) {
-        if (_activeConversationId.value == null) {
-            startNewConversation()
-        }
-        val conversationId = _activeConversationId.value ?: return
-
         viewModelScope.launch {
+            val conversationId = ensureActiveConversation()
             _isLoading.value = true
 
             val userMsg = AiMessageEntity(
@@ -124,8 +128,9 @@ class AskViewModel(
             knowledgeRepository.createMessage(userMsg)
             _messages.value = _messages.value + userMsg
 
-            val relevantItems = searchRelevantItems(question)
-            val answer = generateAnswerWithMarkers(question, relevantItems)
+            val relevantResults = searchRelevantResults(question)
+            val relevantItems = hydrateItems(relevantResults)
+            val answer = generateAnswerWithMarkers(question, relevantResults, relevantItems)
 
             val assistantMsg = AiMessageEntity(
                 id = UUID.randomUUID().toString(),
@@ -133,12 +138,17 @@ class AskViewModel(
                 role = "assistant",
                 content = answer,
                 contentType = ContentType.GENERAL,
-                citationJson = buildCitationJson(relevantItems),
-                sourceItemIdsJson = relevantItems.map { it.id }
+                citationJson = buildCitationJson(relevantResults, relevantItems),
+                sourceItemIdsJson = relevantResults.map { it.itemId }
+                    .ifEmpty { relevantItems.map { it.id } }
+                    .distinct()
                     .joinToString(",", "[", "]") { "\"$it\"" },
                 createdAt = System.currentTimeMillis()
             )
             knowledgeRepository.createMessage(assistantMsg)
+            val citations = buildCitations(assistantMsg.id, relevantResults, relevantItems, answer)
+            knowledgeRepository.replaceCitationsForMessage(assistantMsg.id, citations)
+            _lastCitations.value = citations
             _messages.value = _messages.value + assistantMsg
 
             val conversation = knowledgeRepository.getConversation(conversationId)
@@ -150,6 +160,34 @@ class AskViewModel(
 
             _isLoading.value = false
         }
+    }
+
+    private suspend fun ensureActiveConversation(): String {
+        _activeConversationId.value?.let { return it }
+        val conversation = AiConversationEntity(
+            id = UUID.randomUUID().toString(),
+            scopeType = _currentScopeType.value,
+            scopeId = _currentScopeId.value,
+            title = "新对话",
+            isLocalOnly = true,
+            createdAt = System.currentTimeMillis(),
+            updatedAt = System.currentTimeMillis(),
+            deletedAt = null
+        )
+        knowledgeRepository.createConversation(conversation)
+        _activeConversationId.value = conversation.id
+        _messages.value = emptyList()
+        knowledgeRepository.createMessage(
+            AiMessageEntity(
+                id = UUID.randomUUID().toString(),
+                conversationId = conversation.id,
+                role = "system",
+                content = AiPromptTemplates.BASE_SYSTEM_PROMPT,
+                contentType = ContentType.GENERAL,
+                createdAt = System.currentTimeMillis()
+            )
+        )
+        return conversation.id
     }
 
     fun saveAnswerAsKnowledge(messageId: String) {
@@ -190,27 +228,103 @@ class AskViewModel(
         }
     }
 
-    private suspend fun searchRelevantItems(question: String): List<KnowledgeItemEntity> {
+    private suspend fun searchRelevantResults(question: String): List<KnowledgeSearchResult> {
         val scopeType = _currentScopeType.value
         val scopeId = _currentScopeId.value
         return when (scopeType) {
             ScopeType.KNOWLEDGE_ITEM -> {
-                listOfNotNull(knowledgeRepository.getItemById(scopeId))
+                val item = knowledgeRepository.getItemById(scopeId)
+                if (item == null) emptyList() else listOf(
+                    KnowledgeSearchResult(
+                        itemId = item.id,
+                        fragmentId = null,
+                        knowledgeBaseId = item.knowledgeBaseId,
+                        title = item.title,
+                        snippet = item.contentMarkdown.take(500),
+                        sourceType = item.sourceType,
+                        score = 3f,
+                        matchType = "item_scope"
+                    )
+                )
             }
             ScopeType.KNOWLEDGE_BASE -> {
-                searchEngine.search(question, scopeId).firstOrNull() ?: emptyList()
+                if (scopeId.isBlank()) emptyList() else searchEngine.searchResults(question, scopeId, 8).firstOrNull() ?: emptyList()
+            }
+            ScopeType.THREAD -> {
+                val thread = knowledgeRepository.getThreadByKb(scopeId)
+                if (thread == null) emptyList() else {
+                    searchEngine.searchResults(question, thread.knowledgeBaseId, 8).firstOrNull() ?: emptyList()
+                }
             }
             else -> {
-                searchEngine.search(question).firstOrNull() ?: emptyList()
+                emptyList()
             }
         }.take(5)
     }
 
+    private suspend fun hydrateItems(results: List<KnowledgeSearchResult>): List<KnowledgeItemEntity> =
+        results.mapNotNull { knowledgeRepository.getItemById(it.itemId) }.distinctBy { it.id }
+
+    private fun buildCitations(
+        messageId: String,
+        results: List<KnowledgeSearchResult>,
+        items: List<KnowledgeItemEntity>,
+        answer: String
+    ): List<AskCitationEntity> {
+        val now = System.currentTimeMillis()
+        if (results.isEmpty() && items.isEmpty()) {
+            return listOf(
+                AskCitationEntity(
+                    id = UUID.randomUUID().toString(),
+                    messageId = messageId,
+                    itemId = null,
+                    fragmentId = null,
+                    quote = answer.take(200),
+                    label = AskCitationEntity.LABEL_INSUFFICIENT,
+                    createdAt = now
+                )
+            )
+        }
+        val resultCitations = results.map { result ->
+            AskCitationEntity(
+                id = UUID.randomUUID().toString(),
+                messageId = messageId,
+                itemId = result.itemId,
+                fragmentId = result.fragmentId,
+                quote = result.snippet.take(240),
+                label = AskCitationEntity.LABEL_SOURCE,
+                createdAt = now
+            )
+        }
+        return resultCitations.ifEmpty {
+            items.map { item ->
+                AskCitationEntity(
+                    id = UUID.randomUUID().toString(),
+                    messageId = messageId,
+                    itemId = item.id,
+                    fragmentId = null,
+                    quote = item.contentMarkdown.take(240),
+                    label = AskCitationEntity.LABEL_SOURCE,
+                    createdAt = now
+                )
+            }
+        } + AskCitationEntity(
+            id = UUID.randomUUID().toString(),
+            messageId = messageId,
+            itemId = null,
+            fragmentId = null,
+            quote = "基于 ${items.size} 条来源生成的分析",
+            label = AskCitationEntity.LABEL_INFERENCE,
+            createdAt = now + 1
+        )
+    }
+
     private fun generateAnswerWithMarkers(
         question: String,
+        relevantResults: List<KnowledgeSearchResult>,
         relevantItems: List<KnowledgeItemEntity>
     ): String {
-        if (relevantItems.isEmpty()) {
+        if (relevantResults.isEmpty() && relevantItems.isEmpty()) {
             return buildString {
                 appendLine("【信息不足】")
                 appendLine()
@@ -223,28 +337,49 @@ class AskViewModel(
         }
 
         return buildString {
-            for ((index, item) in relevantItems.withIndex()) {
-                appendLine("【来自原文】")
-                appendLine(item.contentMarkdown.take(300))
-                appendLine("来源：知识条目「${item.title}」")
-                if (item.summary != null) appendLine("摘要：${item.summary}")
-                appendLine()
+            if (relevantResults.isNotEmpty()) {
+                for (result in relevantResults) {
+                    appendLine("【来自原文】")
+                    appendLine(result.snippet.take(300))
+                    appendLine("来源：知识条目「${result.title}」${result.fragmentId?.let { " · 片段 ${it.take(8)}" } ?: ""}")
+                    appendLine()
+                }
+            } else {
+                for (item in relevantItems) {
+                    appendLine("【来自原文】")
+                    appendLine(item.contentMarkdown.take(300))
+                    appendLine("来源：知识条目「${item.title}」")
+                    if (item.summary != null) appendLine("摘要：${item.summary}")
+                    appendLine()
+                }
             }
 
-            val titles = relevantItems.joinToString("、") { it.title }
+            val titles = (relevantResults.map { it.title } + relevantItems.map { it.title }).distinct().joinToString("、")
+            val sourceCount = if (relevantResults.isNotEmpty()) relevantResults.size else relevantItems.size
             appendLine("【AI推理】")
-            appendLine("基于以上${relevantItems.size}条知识条目（$titles）的内容，" +
-                "对「$question」进行了分析。以上推断基于现有知识库内容，仅供参考。")
+            appendLine("基于以上${sourceCount}条知识来源（$titles）的内容，" +
+                "对「$question」进行了分析。以上推断基于当前 scope 内的本地知识，仅供参考。")
             appendLine()
         }
     }
 
-    private fun buildCitationJson(items: List<KnowledgeItemEntity>): String {
+    private fun buildCitationJson(
+        results: List<KnowledgeSearchResult>,
+        items: List<KnowledgeItemEntity>
+    ): String {
+        if (results.isNotEmpty()) {
+            return results.map { result ->
+                val fragment = result.snippet.take(100)
+                    .replace("\"", "\\\"")
+                    .replace("\n", " ")
+                """{"itemId":"${result.itemId}","fragmentId":${result.fragmentId?.let { "\"$it\"" } ?: "null"},"itemTitle":"${result.title}","fragment":"$fragment","confidence":${result.score}}"""
+            }.joinToString(",", "[", "]")
+        }
         return items.map { item ->
             val fragment = item.contentMarkdown.take(100)
                 .replace("\"", "\\\"")
                 .replace("\n", " ")
-            """{"itemId":"${item.id}","itemTitle":"${item.title}","fragment":"$fragment","confidence":1.0}"""
+            """{"itemId":"${item.id}","fragmentId":null,"itemTitle":"${item.title}","fragment":"$fragment","confidence":1.0}"""
         }.joinToString(",", "[", "]")
     }
 }

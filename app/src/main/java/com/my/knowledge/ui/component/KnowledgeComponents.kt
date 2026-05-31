@@ -8,7 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -194,8 +194,9 @@ fun InsightRow(insight: KnowledgeInsight) {
 }
 
 @Composable
-fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit) {
+fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit, onDelete: () -> Unit = {}, onClick: () -> Unit = {}) {
     Surface(
+        onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         color = Color.White,
         border = BorderStroke(0.5.dp, Color(0xFFEEF6FF))
@@ -214,8 +215,10 @@ fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit) {
                     modifier = Modifier.weight(1f),
                     lineHeight = 20.sp
                 )
-                IconButton(onClick = onAskAI, modifier = Modifier.size(24.dp)) {
-                    Icon(Icons.Default.ChatBubbleOutline, contentDescription = "问AI", tint = Color(0xFF147EC5), modifier = Modifier.size(18.dp))
+                Row {
+                    IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
+                        Icon(Icons.Default.Delete, contentDescription = "删除", tint = Color(0xFF9CA3AF), modifier = Modifier.size(16.dp))
+                    }
                 }
             }
             Text(
@@ -228,14 +231,31 @@ fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit) {
                 modifier = Modifier.padding(top = 7.dp)
             )
             Row(
-                modifier = Modifier.padding(top = 10.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(12.dp), tint = Color(0xFFA3A3A3))
-                Text(item.sourceType, fontSize = 11.sp, color = Color(0xFFA3A3A3))
-                Spacer(modifier = Modifier.width(8.dp))
-                MiniTag(item.status)
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(12.dp), tint = Color(0xFFA3A3A3))
+                    Text(item.sourceType, fontSize = 11.sp, color = Color(0xFFA3A3A3))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    MiniTag(item.status)
+                }
+                Surface(
+                    onClick = onAskAI,
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFF147EC5),
+                    modifier = Modifier.size(32.dp, 22.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text("AI", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
             }
         }
     }

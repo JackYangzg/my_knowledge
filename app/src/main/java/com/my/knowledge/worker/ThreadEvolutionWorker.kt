@@ -72,6 +72,7 @@ class ThreadEvolutionWorker(
             createdAt = System.currentTimeMillis()
         )
         repository.appendThreadLog(log)
+        repository.rebuildGraphForBase(kbId)
 
         repository.updateBase(base.copy(
             threadStatus = "ready",
@@ -176,7 +177,10 @@ class ThreadEvolutionWorker(
             db.knowledgeBaseDao(), db.knowledgeItemDao(),
             db.processingTaskDao(), db.archiveRecommendationDao(),
             db.aiConversationDao(), db.aiMessageDao(),
-            db.knowledgeThreadDao(), db.knowledgeThreadLogDao()
+            db.knowledgeThreadDao(), db.knowledgeThreadLogDao(),
+            db.sourceManifestDao(), db.knowledgeFragmentDao(),
+            db.processingTaskLogDao(), db.askCitationDao(),
+            db.knowledgeGraphDao()
         )
     }
 }

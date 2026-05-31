@@ -39,6 +39,10 @@ fun KnowledgeManageScreen(
     var deleteTarget by remember { mutableStateOf<KnowledgeBaseEntity?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var moveToUnfiled by remember { mutableStateOf(true) }
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var createName by remember { mutableStateOf("") }
+    var createDescription by remember { mutableStateOf("") }
+    var createNameError by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
@@ -87,16 +91,20 @@ fun KnowledgeManageScreen(
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
-                IconButton(
-                    onClick = { 
-                        manageViewModel.createKnowledgeBase("新知识库", "新建于 ${System.currentTimeMillis()}")
+                Button(
+                    onClick = {
+                        createName = ""
+                        createDescription = ""
+                        showCreateDialog = true
                     },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(Color(0xFFF7FBFF), CircleShape)
-                        .border(1.dp, Color(0xFFDBEEFF), CircleShape)
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5)),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
+                    modifier = Modifier.height(40.dp)
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = null, tint = Color(0xFF147EC5))
+                    Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("新建知识库", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
                 }
             }
         }
@@ -113,46 +121,6 @@ fun KnowledgeManageScreen(
                     SummaryCard(Modifier.weight(1f), knowledgeBases.size.toString(), "知识库")
                     SummaryCard(Modifier.weight(1f), knowledgeBases.sumOf { it.itemCount }.toString(), "知识总数")
                     SummaryCard(Modifier.weight(1f), knowledgeBases.find { it.type == "unfiled" }?.itemCount?.toString() ?: "0", "未归档")
-                }
-            }
-
-            item {
-                Row(
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            manageViewModel.createKnowledgeBase("工作笔记", "用于存放所有与工作相关的内容")
-                        },
-                        modifier = Modifier.weight(1f).height(42.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.Transparent
-                        ),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.verticalGradient(listOf(Color(0xFF4BB8FF), Color(0xFF188BD7))),
-                                    RoundedCornerShape(16.dp)
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text("新建知识库", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        }
-                    }
-                    Button(
-                        onClick = {},
-                        modifier = Modifier.weight(1f).height(42.dp),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                        border = BorderStroke(1.dp, Color(0xFFCBE8FF))
-                    ) {
-                        Text("排序", color = Color(0xFF147EC5), fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                    }
                 }
             }
 
@@ -208,6 +176,79 @@ fun KnowledgeManageScreen(
                     }
                 }
             }
+        }
+
+        // Create knowledge base dialog
+        if (showCreateDialog) {
+            AlertDialog(
+                onDismissRequest = { showCreateDialog = false },
+                icon = {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = null,
+                        tint = Color(0xFF147EC5),
+                        modifier = Modifier.size(24.dp)
+                    )
+                },
+                title = { Text("新建知识库", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column {
+                        OutlinedTextField(
+                            value = createName,
+                            onValueChange = {
+                                createName = it
+                                createNameError = null
+                            },
+                            label = { Text("知识库名称") },
+                            placeholder = { Text("例如：工作笔记、学习资料", color = Color(0xFFA3A3A3)) },
+                            singleLine = true,
+                            isError = createNameError != null,
+                            supportingText = if (createNameError != null) {
+                                { Text(createNameError!!, color = Color(0xFFDC2626), fontSize = 12.sp) }
+                            } else null,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = createDescription,
+                            onValueChange = { createDescription = it },
+                            label = { Text("知识库描述") },
+                            placeholder = { Text("可选：简要描述知识库用途", color = Color(0xFFA3A3A3)) },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+                    }
+                },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            val name = createName.trim()
+                            if (name.isBlank()) {
+                                createNameError = "名称不能为空"
+                                return@Button
+                            }
+                            if (knowledgeBases.any { it.name == name }) {
+                                createNameError = "该名称已存在，请使用其他名称"
+                                return@Button
+                            }
+                            val desc = createDescription.trim().ifBlank { null }
+                            manageViewModel.createKnowledgeBase(name, desc)
+                            showCreateDialog = false
+                        },
+                        enabled = true,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
+                    ) {
+                        Text("创建", color = Color.White)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showCreateDialog = false }) {
+                        Text("取消")
+                    }
+                }
+            )
         }
 
         // P1: Delete confirmation dialog

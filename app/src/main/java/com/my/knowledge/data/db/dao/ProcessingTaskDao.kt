@@ -6,7 +6,10 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ProcessingTaskDao {
-    @Query("SELECT * FROM processing_task WHERE status = 'pending' OR status = 'running' ORDER BY priority DESC, createdAt ASC")
+    @Query("SELECT * FROM processing_task WHERE id = :id LIMIT 1")
+    suspend fun getById(id: String): ProcessingTaskEntity?
+
+    @Query("SELECT * FROM processing_task WHERE status = 'pending' OR status = 'running' OR status = 'failed' ORDER BY priority DESC, createdAt ASC")
     fun observeActiveTasks(): Flow<List<ProcessingTaskEntity>>
 
     @Query("SELECT * FROM processing_task WHERE targetType = :targetType AND targetId = :targetId AND (status = 'pending' OR status = 'running' OR status = 'failed') LIMIT 1")

@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ArchiveRecommendationDao {
+    @Query("SELECT * FROM archive_recommendation WHERE id = :id")
+    suspend fun getById(id: String): ArchiveRecommendationEntity?
+
     @Query("SELECT * FROM archive_recommendation WHERE itemId = :itemId")
     suspend fun getByItemId(itemId: String): ArchiveRecommendationEntity?
 

@@ -19,9 +19,17 @@ import com.my.knowledge.data.db.entity.*
         AiConversationEntity::class,
         AiMessageEntity::class,
         KnowledgeThreadEntity::class,
-        KnowledgeThreadLogEntity::class
+        KnowledgeThreadLogEntity::class,
+        SourceManifestEntity::class,
+        KnowledgeFragmentEntity::class,
+        ProcessingTaskLogEntity::class,
+        AskCitationEntity::class,
+        KnowledgeEmbeddingEntity::class,
+        KnowledgeEntityEntity::class,
+        KnowledgeRelationEntity::class,
+        KnowledgeCommunityEntity::class
     ],
-    version = 2,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -36,6 +44,11 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun aiMessageDao(): AiMessageDao
     abstract fun knowledgeThreadDao(): KnowledgeThreadDao
     abstract fun knowledgeThreadLogDao(): KnowledgeThreadLogDao
+    abstract fun sourceManifestDao(): SourceManifestDao
+    abstract fun knowledgeFragmentDao(): KnowledgeFragmentDao
+    abstract fun processingTaskLogDao(): ProcessingTaskLogDao
+    abstract fun askCitationDao(): AskCitationDao
+    abstract fun knowledgeGraphDao(): KnowledgeGraphDao
 
     companion object {
         private const val DATABASE_NAME = "knowledge_db"

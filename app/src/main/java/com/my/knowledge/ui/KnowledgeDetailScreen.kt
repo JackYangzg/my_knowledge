@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,19 +19,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.ui.component.KnowledgeItemRow
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
 
-/**
- * Knowledge Detail Screen with pagination
- * P2: Fixed page size of 3 items per page
- */
 @Composable
 fun KnowledgeDetailScreen(
     kbName: String,
     viewModel: KnowledgeItemListViewModel,
     onBack: () -> Unit,
-    onAskAI: (String) -> Unit
+    onAskAI: (String, String) -> Unit,
+    onOpenItem: (String) -> Unit = {}
 ) {
     val items by viewModel.items.collectAsState()
     val currentPage by viewModel.currentPage.collectAsState()
@@ -38,9 +37,11 @@ fun KnowledgeDetailScreen(
     val hasNext by viewModel.hasNextPage.collectAsState()
     val hasPrevious by viewModel.hasPreviousPage.collectAsState()
     val itemCount by viewModel.itemCount.collectAsState()
-    
+
     var showSearch by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<KnowledgeItemEntity?>(null) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -105,7 +106,7 @@ fun KnowledgeDetailScreen(
                     }
                 }
             }
-            
+
             // Search bar
             if (showSearch) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -140,67 +141,110 @@ fun KnowledgeDetailScreen(
                 }
             } else {
                 items(items) { item ->
-                    KnowledgeItemRow(item, onAskAI = { onAskAI(item.title) })
+                    KnowledgeItemRow(
+                        item,
+                        onAskAI = { onAskAI(item.id, item.title) },
+                        onDelete = {
+                            deleteTarget = item
+                            showDeleteDialog = true
+                        },
+                        onClick = { onOpenItem(item.id) }
+                    )
                 }
             }
         }
 
-        // Pagination controls - P2: Fixed page size of 3
-        Surface(
-            color = Color.White,
-            shadowElevation = 4.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 12.dp)
-                    .navigationBarsPadding(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+        // Pagination controls
+        if (items.isNotEmpty()) {
+            Surface(
+                color = Color.White,
+                shadowElevation = 4.dp
             ) {
-                IconButton(
-                    onClick = { viewModel.previousPage() },
-                    enabled = hasPrevious,
+                Row(
                     modifier = Modifier
-                        .size(40.dp)
-                        .background(
-                            if (hasPrevious) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
-                            RoundedCornerShape(12.dp)
-                        )
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                        .navigationBarsPadding(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                        contentDescription = "上一页",
-                        tint = if (hasPrevious) Color(0xFF147EC5) else Color(0xFFA3A3A3)
-                    )
-                }
-                
-                Text(
-                    text = "${currentPage + 1} / $totalPages",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = Color(0xFF0F172A)
-                )
-                
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     IconButton(
-                        onClick = { viewModel.nextPage() },
-                        enabled = hasNext,
+                        onClick = { viewModel.previousPage() },
+                        enabled = hasPrevious,
                         modifier = Modifier
                             .size(40.dp)
                             .background(
-                                if (hasNext) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
+                                if (hasPrevious) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
                                 RoundedCornerShape(12.dp)
                             )
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "下一页",
-                            tint = if (hasNext) Color(0xFF147EC5) else Color(0xFFA3A3A3)
+                            Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                            contentDescription = "上一页",
+                            tint = if (hasPrevious) Color(0xFF147EC5) else Color(0xFFA3A3A3)
                         )
+                    }
+
+                    Text(
+                        text = "${currentPage + 1} / $totalPages",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color(0xFF0F172A)
+                    )
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        IconButton(
+                            onClick = { viewModel.nextPage() },
+                            enabled = hasNext,
+                            modifier = Modifier
+                                .size(40.dp)
+                                .background(
+                                    if (hasNext) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
+                                    RoundedCornerShape(12.dp)
+                                )
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "下一页",
+                                tint = if (hasNext) Color(0xFF147EC5) else Color(0xFFA3A3A3)
+                            )
+                        }
                     }
                 }
             }
         }
+    }
+
+    // Delete confirmation dialog
+    if (showDeleteDialog && deleteTarget != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteDialog = false
+                deleteTarget = null
+            },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEA580C)) },
+            title = { Text("删除知识", fontWeight = FontWeight.Bold) },
+            text = { Text("确定要删除「${deleteTarget!!.title}」吗？删除后可从回收站恢复。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        deleteTarget?.let { viewModel.deleteItem(it.id) }
+                        showDeleteDialog = false
+                        deleteTarget = null
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                ) {
+                    Text("删除", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showDeleteDialog = false
+                    deleteTarget = null
+                }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }

@@ -3,9 +3,13 @@ package com.my.knowledge.data.search
 import com.my.knowledge.data.db.dao.SearchDao
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import java.util.Locale
 
 interface SearchEngine {
     fun search(query: String, knowledgeBaseId: String? = null): Flow<List<KnowledgeItemEntity>>
+    fun searchResults(query: String, knowledgeBaseId: String? = null, limit: Int = 20): Flow<List<KnowledgeSearchResult>>
 }
 
 class FtsSearchEngine(
@@ -21,4 +25,81 @@ class FtsSearchEngine(
             else searchDao.searchByKb(query, knowledgeBaseId)
         }
     }
+
+    override fun searchResults(
+        query: String,
+        knowledgeBaseId: String?,
+        limit: Int
+    ): Flow<List<KnowledgeSearchResult>> {
+        val fragmentFlow = if (knowledgeBaseId == null) {
+            searchDao.searchFragmentsAll(query, limit)
+        } else {
+            searchDao.searchFragmentsByKb(query, knowledgeBaseId, limit)
+        }
+        val itemFlow = if (knowledgeBaseId == null) {
+            searchDao.searchItemsAsResultsAll(query, limit)
+        } else {
+            searchDao.searchItemsAsResultsByKb(query, knowledgeBaseId, limit)
+        }
+        val semanticFlow = if (knowledgeBaseId == null) {
+            searchDao.semanticCandidatesAll(limit * 8)
+        } else {
+            searchDao.semanticCandidatesByKb(knowledgeBaseId, limit * 8)
+        }.map { candidates ->
+            val queryEmbedding = localEmbedding(query)
+            candidates.mapNotNull { candidate ->
+                val score = cosine(queryEmbedding, parseEmbedding(candidate.embeddingJson))
+                if (score <= 0.05f) null else KnowledgeSearchResult(
+                    itemId = candidate.itemId,
+                    fragmentId = candidate.fragmentId,
+                    knowledgeBaseId = candidate.knowledgeBaseId,
+                    title = candidate.title,
+                    snippet = candidate.snippet,
+                    sourceType = candidate.sourceType,
+                    score = 1.2f + score,
+                    matchType = "semantic"
+                )
+            }.sortedByDescending { it.score }.take(limit)
+        }
+        return combine(fragmentFlow, itemFlow, semanticFlow) { fragments, items, semantic ->
+            (fragments + semantic + items)
+                .groupBy { it.itemId to it.fragmentId }
+                .map { (_, group) -> group.maxBy { it.score } }
+                .sortedWith(compareByDescending<KnowledgeSearchResult> { it.score }.thenBy { it.title })
+                .take(limit)
+        }
+    }
+
+    private fun localEmbedding(content: String): FloatArray {
+        val vector = FloatArray(16)
+        tokenize(content).forEach { token ->
+            val bucket = (token.hashCode() and Int.MAX_VALUE) % vector.size
+            vector[bucket] += 1f
+        }
+        val norm = kotlin.math.sqrt(vector.sumOf { (it * it).toDouble() }).toFloat().takeIf { it > 0f } ?: 1f
+        for (i in vector.indices) vector[i] = vector[i] / norm
+        return vector
+    }
+
+    private fun parseEmbedding(json: String): FloatArray {
+        return json.removeSurrounding("[", "]")
+            .split(",")
+            .mapNotNull { it.trim().toFloatOrNull() }
+            .let { values ->
+                FloatArray(16) { index -> values.getOrNull(index) ?: 0f }
+            }
+    }
+
+    private fun cosine(a: FloatArray, b: FloatArray): Float {
+        var dot = 0f
+        for (i in a.indices) dot += a[i] * b.getOrElse(i) { 0f }
+        return dot.coerceIn(0f, 1f)
+    }
+
+    private fun tokenize(text: String): List<String> =
+        text.replace(Regex("[\\[\\]{}\"#*`~!?.:;，。！？、（）()<>/\\\\|]+"), " ")
+            .lowercase(Locale.ROOT)
+            .split(Regex("\\s+"))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
 }

@@ -15,6 +15,9 @@ interface KnowledgeBaseDao {
     @Query("SELECT * FROM knowledge_base WHERE type = :type AND deletedAt IS NULL LIMIT 1")
     suspend fun getByType(type: String): KnowledgeBaseEntity?
 
+    @Query("SELECT * FROM knowledge_base WHERE name = :name AND deletedAt IS NULL LIMIT 1")
+    suspend fun getByName(name: String): KnowledgeBaseEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(base: KnowledgeBaseEntity)
 

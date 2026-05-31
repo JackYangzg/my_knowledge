@@ -38,6 +38,9 @@ interface KnowledgeItemDao {
     @Query("SELECT * FROM knowledge_item WHERE id = :id AND deletedAt IS NULL")
     suspend fun getById(id: String): KnowledgeItemEntity?
 
+    @Query("SELECT * FROM knowledge_item WHERE id = :id")
+    suspend fun getByIdIncludeDeleted(id: String): KnowledgeItemEntity?
+
     @Query("SELECT * FROM knowledge_item WHERE contentHash = :hash AND deletedAt IS NULL LIMIT 1")
     suspend fun getByContentHash(hash: String): KnowledgeItemEntity?
 
@@ -50,11 +53,29 @@ interface KnowledgeItemDao {
     @Update
     suspend fun update(item: KnowledgeItemEntity)
 
-    @Query("UPDATE knowledge_item SET deletedAt = :deletedAt WHERE id = :id")
+    @Query("UPDATE knowledge_item SET deletedAt = :deletedAt, status = 'deleted' WHERE id = :id")
     suspend fun softDelete(id: String, deletedAt: Long)
 
     @Query("DELETE FROM knowledge_item WHERE id = :id")
     suspend fun hardDelete(id: String)
+
+    @Query("UPDATE knowledge_item SET deletedAt = NULL, status = 'unfiled', updatedAt = :updatedAt WHERE id = :id")
+    suspend fun restore(id: String, updatedAt: Long)
+
+    @Query("SELECT * FROM knowledge_item WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC")
+    fun observeDeletedItems(): Flow<List<KnowledgeItemEntity>>
+
+    @Query("SELECT * FROM knowledge_item WHERE deletedAt IS NOT NULL ORDER BY deletedAt DESC LIMIT :limit OFFSET :offset")
+    fun observeDeletedItemsPaged(limit: Int, offset: Int): Flow<List<KnowledgeItemEntity>>
+
+    @Query("SELECT COUNT(*) FROM knowledge_item WHERE deletedAt IS NOT NULL")
+    fun observeDeletedItemCount(): Flow<Int>
+
+    @Query("UPDATE knowledge_item SET deletedAt = NULL, status = 'unfiled', updatedAt = :updatedAt WHERE id IN (:ids)")
+    suspend fun restoreItems(ids: List<String>, updatedAt: Long)
+
+    @Query("DELETE FROM knowledge_item WHERE id IN (:ids)")
+    suspend fun hardDeleteItems(ids: List<String>)
 
     @Query("UPDATE knowledge_item SET knowledgeBaseId = :targetKbId, updatedAt = :updatedAt WHERE id = :itemId")
     suspend fun moveToBase(itemId: String, targetKbId: String, updatedAt: Long)
@@ -66,4 +87,10 @@ interface KnowledgeItemDao {
     // Status queries
     @Query("SELECT * FROM knowledge_item WHERE status = :status AND deletedAt IS NULL")
     fun observeByStatus(status: String): Flow<List<KnowledgeItemEntity>>
+
+    @Query("SELECT * FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL")
+    suspend fun getAllByKb(kbId: String): List<KnowledgeItemEntity>
+
+    @Query("SELECT * FROM knowledge_item WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT :limit OFFSET :offset")
+    suspend fun getAllActive(limit: Int, offset: Int): List<KnowledgeItemEntity>
 }

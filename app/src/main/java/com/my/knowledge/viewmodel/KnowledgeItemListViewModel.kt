@@ -6,6 +6,7 @@ import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
 
 /**
  * ViewModel for knowledge item list with pagination
@@ -72,6 +73,29 @@ class KnowledgeItemListViewModel(
     fun goToPage(page: Int) {
         if (page >= 0) {
             _currentPage.value = page
+        }
+    }
+
+    fun deleteItem(itemId: String) {
+        viewModelScope.launch {
+            knowledgeRepository.deleteItem(itemId, softDelete = true)
+        }
+    }
+
+    // === Recycle bin operations ===
+
+    val deletedItems: StateFlow<List<KnowledgeItemEntity>> = knowledgeRepository.observeDeletedItems()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun restoreItem(itemId: String) {
+        viewModelScope.launch {
+            knowledgeRepository.restoreItem(itemId)
+        }
+    }
+
+    fun permanentDeleteItem(itemId: String) {
+        viewModelScope.launch {
+            knowledgeRepository.permanentDeleteItem(itemId)
         }
     }
 }

@@ -19,12 +19,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
+import com.my.knowledge.viewmodel.KnowledgeItemDetailViewModel
 import com.my.knowledge.viewmodel.KnowledgeManageViewModel
 import com.my.knowledge.viewmodel.NoteEditorViewModel
 import com.my.knowledge.viewmodel.ProcessingStatusViewModel
+import com.my.knowledge.viewmodel.ProfileViewModel
+import com.my.knowledge.viewmodel.RecycleBinViewModel
 import com.my.knowledge.viewmodel.ThreadViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 
@@ -40,6 +44,8 @@ fun KnowledgeApp() {
     var activeTab by remember { mutableStateOf(Tab.KNOWLEDGE) }
     var subPage by remember { mutableStateOf<String?>(null) }
     var selectedKbId by remember { mutableStateOf<String?>(null) }
+    var selectedItemId by remember { mutableStateOf<String?>(null) }
+    var selectedItemTitle by remember { mutableStateOf("") }
 
     val noteViewModel: NoteEditorViewModel = viewModel(factory = ViewModelFactory)
     val homeViewModel: KnowledgeHomeViewModel = viewModel(factory = ViewModelFactory)
@@ -47,7 +53,10 @@ fun KnowledgeApp() {
     val itemViewModel: KnowledgeItemListViewModel = viewModel(factory = ViewModelFactory)
     val askViewModel: AskViewModel = viewModel(factory = ViewModelFactory)
     val processingStatusViewModel: ProcessingStatusViewModel = viewModel(factory = ViewModelFactory)
+    val profileViewModel: ProfileViewModel = viewModel(factory = ViewModelFactory)
     val threadViewModel: ThreadViewModel = viewModel(factory = ViewModelFactory)
+    val detailViewModel: KnowledgeItemDetailViewModel = viewModel(factory = ViewModelFactory)
+    val recycleBinViewModel: RecycleBinViewModel = viewModel(factory = ViewModelFactory)
 
     Scaffold(
         bottomBar = {
@@ -92,7 +101,36 @@ fun KnowledgeApp() {
                         kbName = homeViewModel.knowledgeBases.value.find { it.id == selectedKbId }?.name ?: "知识管理",
                         viewModel = itemViewModel,
                         onBack = { subPage = "manage" },
-                        onAskAI = { /* handle AI ask context */ }
+                        onAskAI = { itemId, itemTitle ->
+                        askViewModel.setScope(ScopeType.KNOWLEDGE_ITEM, itemId)
+                        askViewModel.startNewConversation(itemTitle)
+                        selectedItemTitle = itemTitle
+                        subPage = "ask"
+                    },
+                        onOpenItem = { itemId ->
+                            selectedItemId = itemId
+                            subPage = "viewer"
+                        }
+                    )
+                }
+                subPage == "viewer" && selectedItemId != null -> {
+                    KnowledgeViewerScreen(
+                        itemId = selectedItemId!!,
+                        viewModel = detailViewModel,
+                        onBack = { subPage = "detail" }
+                    )
+                }
+                subPage == "recycle_bin" -> {
+                    RecycleBinScreen(
+                        viewModel = recycleBinViewModel,
+                        onBack = { subPage = null }
+                    )
+                }
+                subPage == "ask" -> {
+                    AskScreen(
+                        viewModel = askViewModel,
+                        itemTitle = selectedItemTitle,
+                        onBack = { subPage = "detail" }
                     )
                 }
                 else -> {
@@ -111,8 +149,10 @@ fun KnowledgeApp() {
                             )
                             Tab.INSPIRATION -> InspirationScreen(viewModel = noteViewModel)
                             Tab.PROFILE -> ProfileScreen(
+                                viewModel = profileViewModel,
                                 onOpenSettings = { subPage = "settings" },
-                                onOpenProcessingStatus = { subPage = "processing" }
+                                onOpenProcessingStatus = { subPage = "processing" },
+                                onOpenRecycleBin = { subPage = "recycle_bin" }
                             )
                         }
                     }

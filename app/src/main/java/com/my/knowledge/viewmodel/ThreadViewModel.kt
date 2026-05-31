@@ -42,6 +42,18 @@ class ThreadViewModel(
         parseStringList(t?.nextSuggestionsJson)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val graphEntities = _kbId.filterNotNull()
+        .flatMapLatest { knowledgeRepository.observeKnowledgeEntities(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val graphRelations = _kbId.filterNotNull()
+        .flatMapLatest { knowledgeRepository.observeKnowledgeRelations(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val graphCommunities = _kbId.filterNotNull()
+        .flatMapLatest { knowledgeRepository.observeKnowledgeCommunities(it) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     data class ThreadRelation(val from: String, val to: String, val relation: String)
 
     val parsedRelations: StateFlow<List<ThreadRelation>> = thread.map { t ->
@@ -55,6 +67,7 @@ class ThreadViewModel(
     fun triggerManualEvolution() {
         viewModelScope.launch {
             val kbId = _kbId.value ?: return@launch
+            knowledgeRepository.rebuildGraphForBase(kbId)
             val log = KnowledgeThreadLogEntity(
                 id = java.util.UUID.randomUUID().toString(),
                 threadId = thread.value?.id ?: "",

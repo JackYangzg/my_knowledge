@@ -7,5 +7,6 @@ interface NoteRepository {
     fun observeCurrentDraft(): Flow<NoteEntity?>
     suspend fun createNote(knowledgeBaseId: String): NoteEntity
     suspend fun saveNote(id: String, content: String)
+    suspend fun readNoteContent(id: String): String
     suspend fun getNoteById(id: String): NoteEntity?
 }

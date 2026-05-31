@@ -140,7 +140,12 @@ class KnowledgeProcessingWorker(
             db.aiConversationDao(),
             db.aiMessageDao(),
             db.knowledgeThreadDao(),
-            db.knowledgeThreadLogDao()
+            db.knowledgeThreadLogDao(),
+            db.sourceManifestDao(),
+            db.knowledgeFragmentDao(),
+            db.processingTaskLogDao(),
+            db.askCitationDao(),
+            db.knowledgeGraphDao()
         )
     }
 

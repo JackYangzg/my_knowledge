@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.my.knowledge.viewmodel.NoteEditorViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun InspirationScreen(viewModel: NoteEditorViewModel) {
@@ -42,8 +43,10 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
     val saveStatus by viewModel.saveStatus.collectAsState()
 
     var showMoreMenu by remember { mutableStateOf(false) }
-    var selectedLibrary by remember { mutableStateOf("未归类") }
+    var selectedLibrary by remember { mutableStateOf("灵感空间") }
     var showLibraryPicker by remember { mutableStateOf(false) }
+    var showNewConfirmDialog by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     // Image picker
     val imagePickerLauncher = rememberLauncherForActivityResult(
@@ -89,16 +92,46 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("灵感", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                IconButton(
-                    onClick = {
-                        viewModel.createNewNote()
-                        selectedLibrary = "未归类"
-                    },
-                    modifier = Modifier
-                        .size(40.dp)
-                        .background(Color(0xFFF7FBFF), CircleShape)
-                ) {
-                    Icon(Icons.Default.Done, contentDescription = "保存并完成", tint = Color(0xFF147EC5))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Surface(
+                        onClick = {
+                            if (title.isNotBlank() || content.isNotBlank()) {
+                                showNewConfirmDialog = true
+                            } else {
+                                viewModel.createNewNote()
+                                Toast.makeText(context, "已新建灵感", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.dp, Color(0xFFDBEEFF))
+                    ) {
+                        Text(
+                            "新建",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color(0xFF147EC5),
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
+                    Surface(
+                        onClick = {
+                            scope.launch {
+                                val savedTo = viewModel.saveToKnowledgeBase(selectedLibrary)
+                                Toast.makeText(context, "已保存到「${savedTo}」知识库", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                        color = Color(0xFF111827)
+                    ) {
+                        Text(
+                            "保存",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                        )
+                    }
                 }
             }
 
@@ -110,19 +143,9 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                     .padding(3.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                MarkdownModeBtn("编辑", mode == "edit") { viewModel.toggleMode() }
-                MarkdownModeBtn("查看", mode == "preview") { viewModel.toggleMode() }
+                MarkdownModeBtn("编辑", mode == "edit") { viewModel.updateMode("edit") }
+                MarkdownModeBtn("查看", mode == "preview") { viewModel.updateMode("preview") }
                 Spacer(modifier = Modifier.weight(1f))
-                Text(
-                    text = when(saveStatus) {
-                        "saving" -> "● 正在保存..."
-                        "saved" -> "● 已自动保存"
-                        else -> "● 待保存"
-                    },
-                    fontSize = 12.sp,
-                    color = Color(0xFF6AA8D0),
-                    modifier = Modifier.padding(end = 12.dp)
-                )
             }
 
             HorizontalDivider(color = Color(0xFFF3F4F6), modifier = Modifier.padding(top = 8.dp))
@@ -170,7 +193,7 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                             Spacer(modifier = Modifier.height(16.dp))
                         }
                         if (content.isNotEmpty()) {
-                            Text(content, fontSize = 16.sp, lineHeight = 28.sp, color = Color(0xFF262626))
+                            MarkdownPreview(content)
                         } else if (title.isEmpty()) {
                             Text("无内容", fontSize = 16.sp, color = Color(0xFFD4D4D4))
                         }
@@ -278,11 +301,12 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                                 onDismissRequest = { showLibraryPicker = false },
                                 modifier = Modifier.fillMaxWidth(0.8f).background(Color.White)
                             ) {
-                                KnowledgeManager.libraries.forEach { lib ->
+                                val kbNames by viewModel.knowledgeBaseNames.collectAsState()
+                                kbNames.forEach { name ->
                                     DropdownMenuItem(
-                                        text = { Text(lib.name) },
+                                        text = { Text(name) },
                                         onClick = {
-                                            selectedLibrary = lib.name
+                                            selectedLibrary = name
                                             showLibraryPicker = false
                                         }
                                     )
@@ -306,7 +330,45 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                     }
                 }
             }
+
         }
+    }
+
+    // New inspiration confirmation dialog
+    if (showNewConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showNewConfirmDialog = false },
+            icon = {
+                Icon(
+                    Icons.Default.Add,
+                    contentDescription = null,
+                    tint = Color(0xFF147EC5),
+                    modifier = Modifier.size(24.dp)
+                )
+            },
+            title = { Text("新建灵感", fontWeight = FontWeight.Bold) },
+            text = { Text("当前灵感尚未保存，是否保存后新建？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showNewConfirmDialog = false
+                        scope.launch {
+                            viewModel.saveToKnowledgeBase(selectedLibrary)
+                            viewModel.createNewNote()
+                            selectedLibrary = "灵感空间"
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
+                ) {
+                    Text("保存并新建", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showNewConfirmDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
 
@@ -325,6 +387,108 @@ fun MarkdownModeBtn(text: String, active: Boolean, onClick: () -> Unit) {
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
         )
     }
+}
+
+@Composable
+private fun MarkdownPreview(markdown: String) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        markdown.lines().forEach { rawLine ->
+            val line = rawLine.trimEnd()
+            when {
+                line.isBlank() -> Spacer(modifier = Modifier.height(4.dp))
+                line.startsWith("### ") -> Text(
+                    text = line.removePrefix("### "),
+                    fontSize = 18.sp,
+                    lineHeight = 26.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF0F172A)
+                )
+                line.startsWith("## ") -> Text(
+                    text = line.removePrefix("## "),
+                    fontSize = 20.sp,
+                    lineHeight = 28.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF0F172A)
+                )
+                line.startsWith("# ") -> Text(
+                    text = line.removePrefix("# "),
+                    fontSize = 22.sp,
+                    lineHeight = 30.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFF0F172A)
+                )
+                line.startsWith("> ") -> Surface(
+                    color = Color(0xFFEFF7FF),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = renderInlineMarkdown(line.removePrefix("> ")),
+                        fontSize = 14.sp,
+                        lineHeight = 22.sp,
+                        color = Color(0xFF315F7D),
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                    )
+                }
+                line.startsWith("- ") || line.startsWith("* ") -> Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Text("•", fontSize = 16.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(end = 8.dp, top = 1.dp))
+                    Text(
+                        text = renderInlineMarkdown(line.drop(2)),
+                        fontSize = 16.sp,
+                        lineHeight = 26.sp,
+                        color = Color(0xFF262626),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                line.matches(Regex("\\d+\\.\\s+.*")) -> {
+                    val number = line.substringBefore(".")
+                    val body = line.substringAfter(".").trimStart()
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        Text("$number.", fontSize = 15.sp, color = Color(0xFF147EC5), modifier = Modifier.widthIn(min = 28.dp))
+                        Text(
+                            text = renderInlineMarkdown(body),
+                            fontSize = 16.sp,
+                            lineHeight = 26.sp,
+                            color = Color(0xFF262626),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+                line.startsWith("![") -> Surface(
+                    color = Color(0xFFF7FBFF),
+                    shape = RoundedCornerShape(12.dp),
+                    border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("图片 · ${line.substringAfter("](", "").substringBefore(")")}", fontSize = 13.sp, color = Color(0xFF5F87A3))
+                    }
+                }
+                else -> Text(
+                    text = renderInlineMarkdown(line),
+                    fontSize = 16.sp,
+                    lineHeight = 28.sp,
+                    color = Color(0xFF262626)
+                )
+            }
+        }
+    }
+}
+
+private fun renderInlineMarkdown(text: String): String {
+    return text
+        .replace(Regex("\\*\\*([^*]+)\\*\\*"), "$1")
+        .replace(Regex("`([^`]+)`"), "$1")
+        .replace(Regex("\\[([^]]+)]\\(([^)]+)\\)"), "$1 ($2)")
 }
 
 @Composable

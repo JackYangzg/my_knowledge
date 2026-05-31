@@ -23,6 +23,7 @@ import com.my.knowledge.ui.component.StatCard
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.ThreadViewModel
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun KnowledgeContextScreen(
     homeViewModel: KnowledgeHomeViewModel,
@@ -39,6 +40,9 @@ fun KnowledgeContextScreen(
     val gaps by threadViewModel.parsedGaps.collectAsState()
     val suggestions by threadViewModel.parsedSuggestions.collectAsState()
     val logs by threadViewModel.threadLogs.collectAsState()
+    val graphEntities by threadViewModel.graphEntities.collectAsState()
+    val graphRelations by threadViewModel.graphRelations.collectAsState()
+    val graphCommunities by threadViewModel.graphCommunities.collectAsState()
 
     LazyColumn(
         modifier = Modifier
@@ -208,6 +212,54 @@ fun KnowledgeContextScreen(
                                             }
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(rel.relation, fontSize = 11.sp, color = Color(0xFF5F87A3))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (graphEntities.isNotEmpty()) {
+                            SectionHeader("实体关系图谱", Icons.Default.Hub)
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color.White,
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    Text(
+                                        "${graphEntities.size} 个实体 · ${graphRelations.size} 条关系",
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF5F87A3)
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        graphEntities.take(16).forEach { entity ->
+                                            Surface(color = Color(0xFFEFF7FF), shape = CircleShape) {
+                                                Text(
+                                                    entity.name,
+                                                    fontSize = 11.sp,
+                                                    color = Color(0xFF147EC5),
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (graphCommunities.isNotEmpty()) {
+                            SectionHeader("知识社区", Icons.Default.Groups)
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color.White,
+                                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                    graphCommunities.take(6).forEach { community ->
+                                        Column(modifier = Modifier.padding(vertical = 4.dp)) {
+                                            Text(community.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                                            Text(community.summary, fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 2.dp))
                                         }
                                     }
                                 }

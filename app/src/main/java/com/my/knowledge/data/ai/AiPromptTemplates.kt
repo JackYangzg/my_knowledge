@@ -139,6 +139,6 @@ object ContentType {
 object ScopeType {
     const val KNOWLEDGE_ITEM = "knowledge_item"
     const val KNOWLEDGE_BASE = "knowledge_base"
-    const val THREAD = "thread"
+    const val THREAD = "knowledge_thread"
     const val GLOBAL = "global"
 }

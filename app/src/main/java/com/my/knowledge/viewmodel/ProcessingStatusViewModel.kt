@@ -4,12 +4,14 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
+import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class ProcessingStatusViewModel(
-    private val knowledgeRepository: KnowledgeRepository
+    private val knowledgeRepository: KnowledgeRepository,
+    private val processingTaskScheduler: ProcessingTaskScheduler
 ) : ViewModel() {
 
     val activeTasks: StateFlow<List<ProcessingTaskEntity>> = flow {
@@ -37,7 +39,11 @@ class ProcessingStatusViewModel(
 
     fun retryTask(taskId: String) {
         viewModelScope.launch {
+            val task = knowledgeRepository.getProcessingTask(taskId)
             knowledgeRepository.retryTask(taskId)
+            if (task?.targetType == "knowledge_item") {
+                processingTaskScheduler.scheduleFullPipeline(task.targetId)
+            }
         }
     }
 

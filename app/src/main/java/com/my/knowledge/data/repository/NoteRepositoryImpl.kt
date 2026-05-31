@@ -5,6 +5,7 @@ import com.my.knowledge.data.db.entity.NoteEntity
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.domain.repository.NoteRepository
 import kotlinx.coroutines.flow.Flow
+import java.security.MessageDigest
 import java.util.*
 
 class NoteRepositoryImpl(
@@ -35,15 +36,36 @@ class NoteRepositoryImpl(
     }
 
     override suspend fun saveNote(id: String, content: String) {
-        fileStore.writeMarkdown(id, content)
         val note = noteDao.getById(id)
         if (note != null) {
-            noteDao.update(note.copy(
-                updatedAt = System.currentTimeMillis(),
-                autoSaveStatus = "saved"
-            ))
+            noteDao.update(note.copy(autoSaveStatus = "saving", updatedAt = System.currentTimeMillis()))
+        }
+        try {
+            fileStore.writeMarkdown(id, content)
+            if (note != null) {
+                noteDao.update(note.copy(
+                    updatedAt = System.currentTimeMillis(),
+                    autoSaveStatus = "saved",
+                    contentHash = sha256(content)
+                ))
+            }
+        } catch (e: Exception) {
+            if (note != null) {
+                noteDao.update(note.copy(
+                    updatedAt = System.currentTimeMillis(),
+                    autoSaveStatus = "failed"
+                ))
+            }
+            throw e
         }
     }
 
+    override suspend fun readNoteContent(id: String): String = fileStore.readMarkdown(id)
+
     override suspend fun getNoteById(id: String): NoteEntity? = noteDao.getById(id)
+
+    private fun sha256(content: String): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        return digest.digest(content.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
 }

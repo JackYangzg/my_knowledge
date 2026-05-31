@@ -6,6 +6,7 @@ import androidx.work.WorkerParameters
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
+import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
 import com.my.knowledge.data.repository.KnowledgeRepositoryImpl
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.flow.first
@@ -19,11 +20,17 @@ class ArchiveRecommendWorker(
     override suspend fun doWork(): Result {
         val itemId = inputData.getString("itemId") ?: return Result.failure()
         val repository = getRepository()
+        val task = repository.getPendingTask("knowledge_item", itemId)
+        repository.appendProcessingLog(log(task?.id, itemId, "archive_recommend", "running", "开始生成归档推荐"))
         val item = repository.getItemById(itemId) ?: return Result.failure()
 
         // Don't re-recommend if already exists
         val existing = repository.getRecommendationForItem(itemId)
-        if (existing != null) return Result.success()
+        if (existing != null) {
+            task?.let { repository.updateProcessingTask(it.copy(status = "success", finishedAt = System.currentTimeMillis())) }
+            repository.appendProcessingLog(log(task?.id, itemId, "archive_recommend", "success", "已有归档推荐，跳过重复生成"))
+            return Result.success()
+        }
 
         val allBases = repository.observeAllBases().let { f -> f.first() }
         val normalBases = allBases.filter { it.type != "unfiled" && it.type != "system" }
@@ -54,6 +61,8 @@ class ArchiveRecommendWorker(
             status = KnowledgeItemEntity.STATUS_RECOMMEND_READY,
             updatedAt = System.currentTimeMillis()
         ))
+        task?.let { repository.updateProcessingTask(it.copy(status = "success", finishedAt = System.currentTimeMillis())) }
+        repository.appendProcessingLog(log(task?.id, itemId, "archive_recommend", "success", "归档推荐已生成"))
 
         return Result.success()
     }
@@ -88,7 +97,22 @@ class ArchiveRecommendWorker(
             db.knowledgeBaseDao(), db.knowledgeItemDao(),
             db.processingTaskDao(), db.archiveRecommendationDao(),
             db.aiConversationDao(), db.aiMessageDao(),
-            db.knowledgeThreadDao(), db.knowledgeThreadLogDao()
+            db.knowledgeThreadDao(), db.knowledgeThreadLogDao(),
+            db.sourceManifestDao(), db.knowledgeFragmentDao(),
+            db.processingTaskLogDao(), db.askCitationDao(),
+            db.knowledgeGraphDao()
         )
     }
+
+    private fun log(taskId: String?, itemId: String, stage: String, status: String, message: String) =
+        ProcessingTaskLogEntity(
+            id = UUID.randomUUID().toString(),
+            taskId = taskId,
+            targetType = "knowledge_item",
+            targetId = itemId,
+            stage = stage,
+            status = status,
+            message = message,
+            createdAt = System.currentTimeMillis()
+        )
 }

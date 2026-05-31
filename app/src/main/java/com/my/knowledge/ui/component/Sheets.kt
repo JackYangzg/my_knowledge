@@ -1,6 +1,7 @@
 package com.my.knowledge.ui.component
 
 import android.net.Uri
+import android.provider.OpenableColumns
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -35,7 +36,7 @@ import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit) {
     val context = LocalContext.current
     val fileName = remember(uri) { getFileName(context, uri) ?: "未知文档" }
-    var selectedLibrary by remember { mutableStateOf("未归类") }
+    var selectedLibrary by remember { mutableStateOf("灵感空间") }
     var expanded by remember { mutableStateOf(false) }
     
     val knowledgeBases by viewModel.knowledgeBases.collectAsState()
@@ -117,9 +118,10 @@ fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit
                         mimeType.startsWith("image/") -> "图片"
                         mimeType.contains("pdf") -> "PDF"
                         mimeType.contains("word") -> "Word"
+                        mimeType.startsWith("text/") -> "文本"
                         else -> "文档"
                     }
-                    viewModel.importFile(fileName, type, "从外部导入的文件内容...", selectedLibrary)
+                    viewModel.importFile(fileName, type, buildImportedMarkdown(context, uri, fileName, mimeType), selectedLibrary)
                     onClose()
                 },
                 modifier = Modifier.fillMaxWidth().height(50.dp),
@@ -371,7 +373,7 @@ private fun getFileName(context: android.content.Context, uri: Uri): String? {
         val cursor = context.contentResolver.query(uri, null, null, null, null)
         try {
             if (cursor != null && cursor.moveToFirst()) {
-                val index = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
                 if (index != -1) {
                     result = cursor.getString(index)
                 }
@@ -388,4 +390,70 @@ private fun getFileName(context: android.content.Context, uri: Uri): String? {
         }
     }
     return result
+}
+
+private fun buildImportedMarkdown(
+    context: android.content.Context,
+    uri: Uri,
+    fileName: String,
+    mimeType: String
+): String {
+    val size = readSize(context, uri)
+    val header = buildString {
+        appendLine("# $fileName")
+        appendLine()
+        appendLine("- 来源：外部导入")
+        appendLine("- MIME：$mimeType")
+        if (size != null) appendLine("- 大小：$size bytes")
+        appendLine("- URI：$uri")
+        appendLine()
+    }
+    return when {
+        mimeType.startsWith("text/") ||
+            mimeType.contains("json") ||
+            mimeType.contains("markdown") ||
+            mimeType.contains("csv") -> {
+            header + readTextPreview(context, uri)
+        }
+        mimeType.startsWith("image/") -> {
+            header + "![导入图片]($uri)\n\n> 图片已进入本地加工队列，后续 OCR 会在处理任务中补全文字内容。"
+        }
+        mimeType.contains("pdf") -> {
+            header + "> PDF 已注册为来源文件。当前版本先保存元数据和文件引用，后续解析任务会补充页文本与片段。"
+        }
+        mimeType.contains("word") ||
+            mimeType.contains("officedocument") -> {
+            header + "> Word 文档已注册为来源文件。当前版本先保存元数据和文件引用，后续解析任务会补充正文片段。"
+        }
+        else -> {
+            header + "> 文件已注册为来源文件，等待加工任务解析。"
+        }
+    }
+}
+
+private fun readTextPreview(context: android.content.Context, uri: Uri): String {
+    return runCatching {
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            input.bufferedReader(Charsets.UTF_8).use { reader ->
+                reader.readText().take(200_000)
+            }
+        }.orEmpty()
+    }.getOrElse {
+        "> 文本读取失败：${it.message ?: "未知错误"}"
+    }
+}
+
+private fun readSize(context: android.content.Context, uri: Uri): Long? {
+    if (uri.scheme != "content") return null
+    val cursor = context.contentResolver.query(uri, null, null, null, null)
+    return try {
+        if (cursor != null && cursor.moveToFirst()) {
+            val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+            if (index != -1 && !cursor.isNull(index)) cursor.getLong(index) else null
+        } else {
+            null
+        }
+    } finally {
+        cursor?.close()
+    }
 }

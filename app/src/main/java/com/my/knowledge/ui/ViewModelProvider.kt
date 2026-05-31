@@ -44,7 +44,12 @@ object DependencyProvider {
         provideDatabase(context).aiConversationDao(),
         provideDatabase(context).aiMessageDao(),
         provideDatabase(context).knowledgeThreadDao(),
-        provideDatabase(context).knowledgeThreadLogDao()
+        provideDatabase(context).knowledgeThreadLogDao(),
+        provideDatabase(context).sourceManifestDao(),
+        provideDatabase(context).knowledgeFragmentDao(),
+        provideDatabase(context).processingTaskLogDao(),
+        provideDatabase(context).askCitationDao(),
+        provideDatabase(context).knowledgeGraphDao()
     )
     
     fun provideSearchEngine(context: Context) = FtsSearchEngine(
@@ -64,11 +69,16 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                 NoteEditorViewModel(
                     CreateNoteUseCase(noteRepo),
                     AutoSaveNoteUseCase(noteRepo),
-                    noteRepo
+                    noteRepo,
+                    knowledgeRepo,
+                    DependencyProvider.provideScheduler(context)
                 ) as T
             }
             modelClass.isAssignableFrom(KnowledgeHomeViewModel::class.java) -> {
-                KnowledgeHomeViewModel(knowledgeRepo) as T
+                KnowledgeHomeViewModel(
+                    knowledgeRepo,
+                    DependencyProvider.provideScheduler(context)
+                ) as T
             }
             modelClass.isAssignableFrom(KnowledgeManageViewModel::class.java) -> {
                 KnowledgeManageViewModel(knowledgeRepo) as T
@@ -77,7 +87,10 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                 KnowledgeItemListViewModel(knowledgeRepo) as T
             }
             modelClass.isAssignableFrom(ProfileViewModel::class.java) -> {
-                ProfileViewModel() as T
+                ProfileViewModel(
+                    knowledgeRepo,
+                    DependencyProvider.provideFileStore(context)
+                ) as T
             }
             modelClass.isAssignableFrom(AskViewModel::class.java) -> {
                 AskViewModel(
@@ -89,7 +102,16 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                 ThreadViewModel(knowledgeRepo) as T
             }
             modelClass.isAssignableFrom(ProcessingStatusViewModel::class.java) -> {
-                ProcessingStatusViewModel(knowledgeRepo) as T
+                ProcessingStatusViewModel(
+                    knowledgeRepo,
+                    DependencyProvider.provideScheduler(context)
+                ) as T
+            }
+            modelClass.isAssignableFrom(KnowledgeItemDetailViewModel::class.java) -> {
+                KnowledgeItemDetailViewModel(knowledgeRepo) as T
+            }
+            modelClass.isAssignableFrom(RecycleBinViewModel::class.java) -> {
+                RecycleBinViewModel(knowledgeRepo) as T
             }
             else -> throw IllegalArgumentException("Unknown ViewModel class")
         }
