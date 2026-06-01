@@ -9,8 +9,17 @@ interface ProcessingTaskDao {
     @Query("SELECT * FROM processing_task WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): ProcessingTaskEntity?
 
-    @Query("SELECT * FROM processing_task WHERE status = 'pending' OR status = 'running' OR status = 'failed' ORDER BY priority DESC, createdAt ASC")
+    @Query("SELECT * FROM processing_task WHERE status = 'pending' ORDER BY priority DESC, createdAt ASC LIMIT 1")
+    suspend fun getNextPendingTask(): ProcessingTaskEntity?
+
+    @Query("SELECT * FROM processing_task WHERE sourceId = :sourceId ORDER BY createdAt DESC")
+    suspend fun getBySource(sourceId: String): List<ProcessingTaskEntity>
+
+    @Query("SELECT * FROM processing_task WHERE status = 'pending' OR status = 'running' OR status = 'failed' OR status = 'pending_config' ORDER BY priority DESC, createdAt ASC")
     fun observeActiveTasks(): Flow<List<ProcessingTaskEntity>>
+
+    @Query("SELECT * FROM processing_task ORDER BY createdAt DESC")
+    fun observeAllTasks(): Flow<List<ProcessingTaskEntity>>
 
     @Query("SELECT * FROM processing_task WHERE targetType = :targetType AND targetId = :targetId AND (status = 'pending' OR status = 'running' OR status = 'failed') LIMIT 1")
     suspend fun getPendingTask(targetType: String, targetId: String): ProcessingTaskEntity?
@@ -33,8 +42,17 @@ interface ProcessingTaskDao {
     @Query("UPDATE processing_task SET status = :status, updatedAt = :updatedAt, finishedAt = :finishedAt WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, updatedAt: Long, finishedAt: Long?)
 
+    @Query("UPDATE processing_task SET status = 'canceled', currentStep = '已取消', updatedAt = :updatedAt, finishedAt = :updatedAt WHERE id = :id AND status IN ('pending', 'running', 'failed')")
+    suspend fun cancelTask(id: String, updatedAt: Long)
+
+    @Query("UPDATE processing_task SET status = 'canceled', currentStep = '来源已删除', updatedAt = :updatedAt, finishedAt = :updatedAt WHERE sourceId = :sourceId AND status IN ('pending', 'running', 'failed')")
+    suspend fun cancelBySource(sourceId: String, updatedAt: Long)
+
     @Query("UPDATE processing_task SET status = 'pending', retryCount = retryCount + 1, errorMessage = NULL, updatedAt = :updatedAt WHERE id = :id")
     suspend fun retryTask(id: String, updatedAt: Long)
+
+    @Query("UPDATE processing_task SET status = 'pending', errorMessage = NULL, currentStep = '等待重试', updatedAt = :updatedAt WHERE sourceId = :sourceId AND status IN ('failed', 'pending_config', 'canceled')")
+    suspend fun retryBySource(sourceId: String, updatedAt: Long)
 
     @Query("UPDATE processing_task SET status = 'failed', errorMessage = :error, updatedAt = :updatedAt WHERE id = :id")
     suspend fun markFailed(id: String, error: String, updatedAt: Long)

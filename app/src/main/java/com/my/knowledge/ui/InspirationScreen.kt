@@ -1,8 +1,11 @@
 package com.my.knowledge.ui
 
 import android.Manifest
+import android.app.Activity
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -32,6 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import com.my.knowledge.viewmodel.NoteEditorViewModel
+import com.mukesh.MarkDown
 import kotlinx.coroutines.launch
 
 @Composable
@@ -53,8 +57,7 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
         contract = ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            val markdown = "\n![image]($it)\n"
-            viewModel.content = viewModel.content + markdown
+            viewModel.appendMarkdown("\n![image]($it)\n")
         }
     }
 
@@ -64,9 +67,34 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
     ) { uri: Uri? ->
         uri?.let {
             val fileName = uri.lastPathSegment ?: "attachment"
-            val markdown = "\n[${fileName}]($it)\n"
-            viewModel.content = viewModel.content + markdown
+            viewModel.appendMarkdown("\n[${fileName}]($it)\n")
         }
+    }
+
+    val speechLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == Activity.RESULT_OK) {
+            val transcript = result.data
+                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
+                ?.firstOrNull()
+                ?.trim()
+                .orEmpty()
+            if (transcript.isNotBlank()) {
+                viewModel.appendMarkdown("\n\n> 语音转写\n\n$transcript\n")
+                Toast.makeText(context, "语音已插入 Markdown", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    fun startSpeechInput() {
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "说出要记录的灵感")
+        }
+        runCatching { speechLauncher.launch(intent) }
+            .onFailure { Toast.makeText(context, "当前设备不支持语音识别", Toast.LENGTH_SHORT).show() }
     }
 
     // Voice input - check permission and record
@@ -74,7 +102,7 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            Toast.makeText(context, "语音输入功能开发中...", Toast.LENGTH_SHORT).show()
+            startSpeechInput()
         } else {
             Toast.makeText(context, "需要麦克风权限才能使用语音输入", Toast.LENGTH_SHORT).show()
         }
@@ -214,7 +242,7 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                                 context, Manifest.permission.RECORD_AUDIO
                             ) == PackageManager.PERMISSION_GRANTED
                             if (hasPermission) {
-                                Toast.makeText(context, "语音输入功能开发中...", Toast.LENGTH_SHORT).show()
+                                startSpeechInput()
                             } else {
                                 audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                             }
@@ -391,104 +419,11 @@ fun MarkdownModeBtn(text: String, active: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun MarkdownPreview(markdown: String) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        markdown.lines().forEach { rawLine ->
-            val line = rawLine.trimEnd()
-            when {
-                line.isBlank() -> Spacer(modifier = Modifier.height(4.dp))
-                line.startsWith("### ") -> Text(
-                    text = line.removePrefix("### "),
-                    fontSize = 18.sp,
-                    lineHeight = 26.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF0F172A)
-                )
-                line.startsWith("## ") -> Text(
-                    text = line.removePrefix("## "),
-                    fontSize = 20.sp,
-                    lineHeight = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A)
-                )
-                line.startsWith("# ") -> Text(
-                    text = line.removePrefix("# "),
-                    fontSize = 22.sp,
-                    lineHeight = 30.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A)
-                )
-                line.startsWith("> ") -> Surface(
-                    color = Color(0xFFEFF7FF),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = renderInlineMarkdown(line.removePrefix("> ")),
-                        fontSize = 14.sp,
-                        lineHeight = 22.sp,
-                        color = Color(0xFF315F7D),
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-                    )
-                }
-                line.startsWith("- ") || line.startsWith("* ") -> Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Text("•", fontSize = 16.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(end = 8.dp, top = 1.dp))
-                    Text(
-                        text = renderInlineMarkdown(line.drop(2)),
-                        fontSize = 16.sp,
-                        lineHeight = 26.sp,
-                        color = Color(0xFF262626),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                line.matches(Regex("\\d+\\.\\s+.*")) -> {
-                    val number = line.substringBefore(".")
-                    val body = line.substringAfter(".").trimStart()
-                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                        Text("$number.", fontSize = 15.sp, color = Color(0xFF147EC5), modifier = Modifier.widthIn(min = 28.dp))
-                        Text(
-                            text = renderInlineMarkdown(body),
-                            fontSize = 16.sp,
-                            lineHeight = 26.sp,
-                            color = Color(0xFF262626),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                }
-                line.startsWith("![") -> Surface(
-                    color = Color(0xFFF7FBFF),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Default.Image, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("图片 · ${line.substringAfter("](", "").substringBefore(")")}", fontSize = 13.sp, color = Color(0xFF5F87A3))
-                    }
-                }
-                else -> Text(
-                    text = renderInlineMarkdown(line),
-                    fontSize = 16.sp,
-                    lineHeight = 28.sp,
-                    color = Color(0xFF262626)
-                )
-            }
-        }
-    }
-}
-
-private fun renderInlineMarkdown(text: String): String {
-    return text
-        .replace(Regex("\\*\\*([^*]+)\\*\\*"), "$1")
-        .replace(Regex("`([^`]+)`"), "$1")
-        .replace(Regex("\\[([^]]+)]\\(([^)]+)\\)"), "$1 ($2)")
+    MarkDown(
+        modifier = Modifier.fillMaxWidth(),
+        text = markdown,
+        shouldOpenUrlInBrowser = true
+    )
 }
 
 @Composable

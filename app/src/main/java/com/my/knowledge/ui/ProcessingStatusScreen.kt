@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
+import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.viewmodel.ProcessingStatusViewModel
 
 @Composable
@@ -28,6 +29,8 @@ fun ProcessingStatusScreen(
 ) {
     val activeTasks by viewModel.activeTasks.collectAsState()
     val pendingRecommendations by viewModel.pendingRecommendations.collectAsState()
+    val pendingReviews by viewModel.pendingReviews.collectAsState()
+    val recommendationTitles by viewModel.recommendationItemTitles.collectAsState()
 
     Column(
         modifier = Modifier
@@ -85,8 +88,8 @@ fun ProcessingStatusScreen(
                     )
                     StatusSummaryCard(
                         modifier = Modifier.weight(1f),
-                        count = pendingRecommendations.size,
-                        label = "待确认推荐",
+                        count = pendingRecommendations.size + pendingReviews.size,
+                        label = "待人工确认",
                         color = Color(0xFFEA580C),
                         icon = Icons.Default.Recommend
                     )
@@ -106,12 +109,31 @@ fun ProcessingStatusScreen(
                 items(activeTasks) { task ->
                     TaskCard(
                         task = task,
-                        onRetry = { viewModel.retryTask(task.id) }
+                        onRetry = { viewModel.retryTask(task.id) },
+                        onCancel = { viewModel.cancelTask(task.id) }
                     )
                 }
             }
 
             // Pending recommendations section
+            item {
+                SectionHeader("Review Queue", Icons.Default.RateReview)
+            }
+
+            if (pendingReviews.isEmpty()) {
+                item {
+                    EmptyHint("暂无需要人工确认的事项")
+                }
+            } else {
+                items(pendingReviews) { review ->
+                    ReviewCard(
+                        review = review,
+                        onAccept = { viewModel.acceptReview(review.id) },
+                        onSkip = { viewModel.skipReview(review.id) }
+                    )
+                }
+            }
+
             item {
                 SectionHeader("归档推荐", Icons.Default.Recommend)
             }
@@ -124,6 +146,7 @@ fun ProcessingStatusScreen(
                 items(pendingRecommendations) { rec ->
                     RecommendationCard(
                         recommendation = rec,
+                        itemTitle = recommendationTitles[rec.itemId] ?: "未知知识",
                         onAccept = { viewModel.acceptRecommendation(rec.id) },
                         onReject = { viewModel.rejectRecommendation(rec.id) }
                     )
@@ -131,6 +154,48 @@ fun ProcessingStatusScreen(
             }
 
             item { Spacer(modifier = Modifier.height(32.dp)) }
+        }
+    }
+}
+
+@Composable
+private fun ReviewCard(
+    review: ReviewItemEntity,
+    onAccept: () -> Unit,
+    onSkip: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = Color.White,
+        shadowElevation = 1.dp,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.RateReview, contentDescription = null, tint = Color(0xFFEA580C), modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(review.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    Text(review.type, fontSize = 11.sp, color = Color(0xFFEA580C), modifier = Modifier.padding(top = 2.dp))
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(review.description, fontSize = 12.sp, lineHeight = 18.sp, color = Color(0xFF5F87A3))
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                TextButton(onClick = onSkip) {
+                    Text("稍后", fontSize = 13.sp, color = Color(0xFFA3A3A3))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = onAccept,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5)),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text("确认", fontSize = 13.sp)
+                }
+            }
         }
     }
 }
@@ -201,7 +266,8 @@ private fun EmptyHint(text: String) {
 @Composable
 private fun TaskCard(
     task: ProcessingTaskEntity,
-    onRetry: () -> Unit
+    onRetry: () -> Unit,
+    onCancel: () -> Unit
 ) {
     Surface(
         shape = RoundedCornerShape(12.dp),
@@ -276,6 +342,21 @@ private fun TaskCard(
                         Text("重试", fontSize = 12.sp, color = Color(0xFF147EC5))
                     }
                 }
+                if (task.status == "pending" || task.status == "running") {
+                    TextButton(
+                        onClick = onCancel,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Close,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = Color(0xFFDC2626)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("取消", fontSize = 12.sp, color = Color(0xFFDC2626))
+                    }
+                }
             }
         }
     }
@@ -299,6 +380,7 @@ private fun StatusDot(status: String) {
 @Composable
 private fun RecommendationCard(
     recommendation: ArchiveRecommendationEntity,
+    itemTitle: String,
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
@@ -316,10 +398,16 @@ private fun RecommendationCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "推荐归档到: ${recommendation.recommendedKnowledgeBaseName}",
+                        "知识：$itemTitle",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.SemiBold,
                         color = Color(0xFF0F172A)
+                    )
+                    Text(
+                        "推荐归档到: ${recommendation.recommendedKnowledgeBaseName ?: recommendation.recommendedKnowledgeBaseId ?: "未指定"}",
+                        fontSize = 12.sp,
+                        color = Color(0xFF5F87A3),
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(

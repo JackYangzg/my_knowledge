@@ -9,7 +9,10 @@ import androidx.room.PrimaryKey
     indices = [
         Index("itemId"),
         Index("knowledgeBaseId"),
-        Index("sourceManifestId")
+        Index("sourceManifestId"),
+        Index("sourceId"),
+        Index("parsedContentId"),
+        Index("knowledgeItemId")
     ]
 )
 data class KnowledgeFragmentEntity(
@@ -23,7 +26,14 @@ data class KnowledgeFragmentEntity(
     val sourceManifestId: String?,
     val startOffset: Int,
     val endOffset: Int,
-    val createdAt: Long
+    val createdAt: Long,
+    val sourceId: String? = null,
+    val parsedContentId: String? = null,
+    val knowledgeItemId: String? = null,
+    val orderIndex: Int = 0,
+    val heading: String? = null,
+    val tokenCount: Int = 0,
+    val embeddingId: String? = null
 )
 
 @Entity(

@@ -36,10 +36,15 @@ import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit) {
     val context = LocalContext.current
     val fileName = remember(uri) { getFileName(context, uri) ?: "未知文档" }
-    var selectedLibrary by remember { mutableStateOf("灵感空间") }
+    var selectedLibrary by remember { mutableStateOf("未归类") }
     var expanded by remember { mutableStateOf(false) }
     
     val knowledgeBases by viewModel.knowledgeBases.collectAsState()
+    LaunchedEffect(knowledgeBases) {
+        if (knowledgeBases.isNotEmpty() && knowledgeBases.none { it.name == selectedLibrary }) {
+            selectedLibrary = knowledgeBases.firstOrNull { it.type == "unfiled" }?.name ?: knowledgeBases.first().name
+        }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onClose,
@@ -121,7 +126,7 @@ fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit
                         mimeType.startsWith("text/") -> "文本"
                         else -> "文档"
                     }
-                    viewModel.importFile(fileName, type, buildImportedMarkdown(context, uri, fileName, mimeType), selectedLibrary)
+                    viewModel.importUri(uri, fileName, mimeType, type.toSourceType(), selectedLibrary)
                     onClose()
                 },
                 modifier = Modifier.fillMaxWidth().height(50.dp),
@@ -132,6 +137,14 @@ fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit
             }
         }
     }
+}
+
+private fun String.toSourceType(): String = when (this) {
+    "图片" -> "image"
+    "PDF" -> "pdf"
+    "Word" -> "docx"
+    "文本" -> "text"
+    else -> "file"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

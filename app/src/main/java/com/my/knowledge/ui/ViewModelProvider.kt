@@ -12,6 +12,8 @@ import com.my.knowledge.data.repository.NoteRepositoryImpl
 import com.my.knowledge.data.search.FtsSearchEngine
 import com.my.knowledge.domain.usecase.AutoSaveNoteUseCase
 import com.my.knowledge.domain.usecase.CreateNoteUseCase
+import com.my.knowledge.domain.usecase.DeleteSourceUseCase
+import com.my.knowledge.domain.usecase.ImportSourceUseCase
 import com.my.knowledge.viewmodel.*
 
 object DependencyProvider {
@@ -49,11 +51,25 @@ object DependencyProvider {
         provideDatabase(context).knowledgeFragmentDao(),
         provideDatabase(context).processingTaskLogDao(),
         provideDatabase(context).askCitationDao(),
-        provideDatabase(context).knowledgeGraphDao()
+        provideDatabase(context).knowledgeGraphDao(),
+        provideDatabase(context).reviewItemDao()
     )
     
     fun provideSearchEngine(context: Context) = FtsSearchEngine(
         provideDatabase(context).searchDao()
+    )
+
+    fun provideImportSourceUseCase(context: Context) = ImportSourceUseCase(
+        provideFileStore(context),
+        provideDatabase(context).sourceDocumentDao(),
+        provideDatabase(context).knowledgeItemDao(),
+        provideDatabase(context).processingTaskDao(),
+        provideScheduler(context)
+    )
+
+    fun provideDeleteSourceUseCase(context: Context) = DeleteSourceUseCase(
+        provideDatabase(context),
+        provideFileStore(context)
     )
 }
 
@@ -71,20 +87,23 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                     AutoSaveNoteUseCase(noteRepo),
                     noteRepo,
                     knowledgeRepo,
-                    DependencyProvider.provideScheduler(context)
+                    DependencyProvider.provideImportSourceUseCase(context)
                 ) as T
             }
             modelClass.isAssignableFrom(KnowledgeHomeViewModel::class.java) -> {
                 KnowledgeHomeViewModel(
                     knowledgeRepo,
-                    DependencyProvider.provideScheduler(context)
+                    DependencyProvider.provideImportSourceUseCase(context)
                 ) as T
             }
             modelClass.isAssignableFrom(KnowledgeManageViewModel::class.java) -> {
                 KnowledgeManageViewModel(knowledgeRepo) as T
             }
             modelClass.isAssignableFrom(KnowledgeItemListViewModel::class.java) -> {
-                KnowledgeItemListViewModel(knowledgeRepo) as T
+                KnowledgeItemListViewModel(
+                    knowledgeRepo,
+                    DependencyProvider.provideFileStore(context)
+                ) as T
             }
             modelClass.isAssignableFrom(ProfileViewModel::class.java) -> {
                 ProfileViewModel(
@@ -105,6 +124,15 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                 ProcessingStatusViewModel(
                     knowledgeRepo,
                     DependencyProvider.provideScheduler(context)
+                ) as T
+            }
+            modelClass.isAssignableFrom(ImportCenterViewModel::class.java) -> {
+                ImportCenterViewModel(
+                    DependencyProvider.provideDatabase(context).sourceDocumentDao(),
+                    DependencyProvider.provideDatabase(context).processingTaskDao(),
+                    knowledgeRepo,
+                    DependencyProvider.provideScheduler(context),
+                    DependencyProvider.provideDeleteSourceUseCase(context)
                 ) as T
             }
             modelClass.isAssignableFrom(KnowledgeItemDetailViewModel::class.java) -> {

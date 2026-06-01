@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.ai.AiPromptTemplates
 import com.my.knowledge.data.ai.ContentType
 import com.my.knowledge.data.ai.ScopeType
+import com.my.knowledge.ui.KnowledgeManager
 import com.my.knowledge.data.db.entity.AskCitationEntity
 import com.my.knowledge.data.db.entity.AiConversationEntity
 import com.my.knowledge.data.db.entity.AiMessageEntity
@@ -53,6 +54,9 @@ class AskViewModel(
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private val _debugPrompts = MutableStateFlow<Map<String, String>>(emptyMap())
+    val debugPrompts: StateFlow<Map<String, String>> = _debugPrompts.asStateFlow()
 
     fun setScope(scopeType: String, scopeId: String) {
         _currentScopeType.value = when (scopeType) {
@@ -130,6 +134,10 @@ class AskViewModel(
 
             val relevantResults = searchRelevantResults(question)
             val relevantItems = hydrateItems(relevantResults)
+            val debugPrompt = buildAskPrompt(question, relevantResults, relevantItems, _messages.value)
+            if (KnowledgeManager.modelConfig.debugPromptEnabled) {
+                _debugPrompts.value = _debugPrompts.value + (userMsg.id to debugPrompt)
+            }
             val answer = generateAnswerWithMarkers(question, relevantResults, relevantItems)
 
             val assistantMsg = AiMessageEntity(
@@ -361,6 +369,49 @@ class AskViewModel(
                 "对「$question」进行了分析。以上推断基于当前 scope 内的本地知识，仅供参考。")
             appendLine()
         }
+    }
+
+    private fun buildAskPrompt(
+        question: String,
+        relevantResults: List<KnowledgeSearchResult>,
+        relevantItems: List<KnowledgeItemEntity>,
+        messages: List<AiMessageEntity>
+    ): String {
+        val originals = buildString {
+            if (relevantResults.isNotEmpty()) {
+                relevantResults.forEachIndexed { index, result ->
+                    appendLine("[原始内容 ${index + 1}] ${result.title}")
+                    appendLine(result.snippet)
+                    appendLine()
+                }
+            } else {
+                relevantItems.forEachIndexed { index, item ->
+                    appendLine("[原始内容 ${index + 1}] ${item.title}")
+                    appendLine(item.contentMarkdown.take(1500))
+                    appendLine()
+                }
+            }
+        }.ifBlank { "未检索到可用原始内容。" }
+
+        val conversation = messages
+            .filter { it.role == "user" || it.role == "assistant" }
+            .takeLast(8)
+            .joinToString("\n") { "${if (it.role == "user") "用户" else "AI"}：${it.content.take(500)}" }
+            .ifBlank { "暂无历史上下文。" }
+
+        return """
+            系统提示：
+            ${AiPromptTemplates.BASE_SYSTEM_PROMPT}
+
+            原始内容：
+            $originals
+
+            上下文对话：
+            $conversation
+
+            用户问题：
+            $question
+        """.trimIndent()
     }
 
     private fun buildCitationJson(

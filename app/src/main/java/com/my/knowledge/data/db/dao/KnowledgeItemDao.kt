@@ -38,6 +38,9 @@ interface KnowledgeItemDao {
     @Query("SELECT * FROM knowledge_item WHERE id = :id AND deletedAt IS NULL")
     suspend fun getById(id: String): KnowledgeItemEntity?
 
+    @Query("SELECT * FROM knowledge_item WHERE sourceId = :sourceId AND deletedAt IS NULL ORDER BY createdAt ASC LIMIT 1")
+    suspend fun getBySourceId(sourceId: String): KnowledgeItemEntity?
+
     @Query("SELECT * FROM knowledge_item WHERE id = :id")
     suspend fun getByIdIncludeDeleted(id: String): KnowledgeItemEntity?
 
@@ -80,6 +83,15 @@ interface KnowledgeItemDao {
     @Query("UPDATE knowledge_item SET knowledgeBaseId = :targetKbId, updatedAt = :updatedAt WHERE id = :itemId")
     suspend fun moveToBase(itemId: String, targetKbId: String, updatedAt: Long)
 
+    @Query("UPDATE knowledge_item SET status = :status, updatedAt = :updatedAt WHERE sourceId = :sourceId AND deletedAt IS NULL")
+    suspend fun updateStatusBySourceId(sourceId: String, status: String, updatedAt: Long)
+
+    @Query("UPDATE knowledge_item SET status = 'failed', excerpt = :errorMessage, updatedAt = :updatedAt WHERE sourceId = :sourceId AND deletedAt IS NULL")
+    suspend fun updateFailureBySourceId(sourceId: String, errorMessage: String?, updatedAt: Long)
+
+    @Query("SELECT COUNT(*) FROM knowledge_item WHERE status IN (:statuses) AND deletedAt IS NULL")
+    fun observeCountByStatuses(statuses: List<String>): Flow<Int>
+
     // Batch item count update
     @Query("UPDATE knowledge_base SET itemCount = (SELECT COUNT(*) FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL) WHERE id = :kbId")
     suspend fun updateItemCount(kbId: String)
@@ -93,4 +105,7 @@ interface KnowledgeItemDao {
 
     @Query("SELECT * FROM knowledge_item WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT :limit OFFSET :offset")
     suspend fun getAllActive(limit: Int, offset: Int): List<KnowledgeItemEntity>
+
+    @Query("SELECT * FROM knowledge_item WHERE contentHash = :sourceHash AND deletedAt IS NULL")
+    suspend fun getBySourceHash(sourceHash: String): List<KnowledgeItemEntity>
 }

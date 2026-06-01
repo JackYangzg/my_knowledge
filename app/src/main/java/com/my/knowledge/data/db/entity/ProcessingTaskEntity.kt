@@ -21,5 +21,12 @@ data class ProcessingTaskEntity(
     val errorMessage: String?,
     val createdAt: Long,
     val updatedAt: Long,
-    val finishedAt: Long?
+    val finishedAt: Long?,
+    val sourceId: String? = null,
+    val itemId: String? = null,
+    val progress: Int = 0,
+    val currentStep: String? = null,
+    val inputJson: String = "{}",
+    val outputJson: String? = null,
+    val startedAt: Long? = null
 )

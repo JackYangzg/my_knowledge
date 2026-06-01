@@ -7,17 +7,15 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.db.entity.NoteEntity
-import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.domain.repository.KnowledgeRepository
-import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.usecase.AutoSaveNoteUseCase
 import com.my.knowledge.domain.usecase.CreateNoteUseCase
+import com.my.knowledge.domain.usecase.ImportSourceUseCase
 import com.my.knowledge.domain.repository.NoteRepository
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.security.MessageDigest
-import java.util.UUID
 
 @OptIn(FlowPreview::class)
 class NoteEditorViewModel(
@@ -25,7 +23,7 @@ class NoteEditorViewModel(
     private val autoSaveNoteUseCase: AutoSaveNoteUseCase,
     private val noteRepository: NoteRepository,
     private val knowledgeRepository: KnowledgeRepository,
-    private val processingTaskScheduler: ProcessingTaskScheduler
+    private val importSourceUseCase: ImportSourceUseCase
 ) : ViewModel() {
 
     var currentNote by mutableStateOf<NoteEntity?>(null)
@@ -102,8 +100,27 @@ class NoteEditorViewModel(
         }
     }
 
+    fun appendMarkdown(markdown: String) {
+        content += markdown
+        viewModelScope.launch {
+            forceSaveDraft()
+        }
+    }
+
+    suspend fun forceSaveDraft() {
+        currentNote?.let { note ->
+            try {
+                _saveStatus.value = "saving"
+                autoSaveNoteUseCase(note.id, content)
+                _saveStatus.value = "saved"
+            } catch (_: Exception) {
+                _saveStatus.value = "save_failed"
+            }
+        }
+    }
+
     suspend fun saveToKnowledgeBase(kbName: String): String {
-        currentNote?.let { autoSaveNoteUseCase(it.id, content) }
+        forceSaveDraft()
         knowledgeRepository.ensureDefaultBases()
         val bases = knowledgeRepository.observeAllBases().first()
         val targetBase = bases.find { it.name == kbName }
@@ -134,17 +151,13 @@ class NoteEditorViewModel(
             }
         }
 
-        val item = knowledgeRepository.createUnfiledItemFromNote(
-            noteId = currentNote?.id,
+        importSourceUseCase.importText(
             title = savedTitle,
-            content = savedContent,
-            sourceType = "灵感记录"
+            text = savedContent,
+            targetKbId = targetBase?.id,
+            importFrom = "manual",
+            folderHint = "灵感空间"
         )
-        if (targetBase != null && item.knowledgeBaseId != targetBase.id) {
-            knowledgeRepository.moveItemToBase(item.id, targetBase.id)
-        }
-        processingTaskScheduler.scheduleFullPipeline(item.id)
-        savedKnowledgeItemId = item.id
         return targetName
     }
 }

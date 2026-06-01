@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
+import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.flow.*
@@ -22,6 +23,13 @@ class ProcessingStatusViewModel(
         knowledgeRepository.observePendingRecommendations()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
+    val pendingReviews: StateFlow<List<ReviewItemEntity>> =
+        knowledgeRepository.observePendingReviews()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _recommendationItemTitles = MutableStateFlow<Map<String, String>>(emptyMap())
+    val recommendationItemTitles: StateFlow<Map<String, String>> = _recommendationItemTitles.asStateFlow()
+
     private val _activeTaskCount = MutableStateFlow(0)
     val activeTaskCount: StateFlow<Int> = _activeTaskCount.asStateFlow()
 
@@ -35,6 +43,13 @@ class ProcessingStatusViewModel(
         viewModelScope.launch {
             pendingRecommendations.collect { _pendingRecCount.value = it.size }
         }
+        viewModelScope.launch {
+            pendingRecommendations.collect { recommendations ->
+                _recommendationItemTitles.value = recommendations.associate { rec ->
+                    rec.itemId to (knowledgeRepository.getItemById(rec.itemId)?.title ?: "未知知识")
+                }
+            }
+        }
     }
 
     fun retryTask(taskId: String) {
@@ -43,7 +58,15 @@ class ProcessingStatusViewModel(
             knowledgeRepository.retryTask(taskId)
             if (task?.targetType == "knowledge_item") {
                 processingTaskScheduler.scheduleFullPipeline(task.targetId)
+            } else if (task?.targetType == "source_document") {
+                processingTaskScheduler.scheduleIngestQueue()
             }
+        }
+    }
+
+    fun cancelTask(taskId: String) {
+        viewModelScope.launch {
+            knowledgeRepository.cancelTask(taskId)
         }
     }
 
@@ -56,6 +79,18 @@ class ProcessingStatusViewModel(
     fun rejectRecommendation(recommendationId: String) {
         viewModelScope.launch {
             knowledgeRepository.rejectRecommendation(recommendationId)
+        }
+    }
+
+    fun acceptReview(reviewId: String) {
+        viewModelScope.launch {
+            knowledgeRepository.resolveReview(reviewId, ReviewItemEntity.STATUS_ACCEPTED)
+        }
+    }
+
+    fun skipReview(reviewId: String) {
+        viewModelScope.launch {
+            knowledgeRepository.resolveReview(reviewId, ReviewItemEntity.STATUS_SKIPPED)
         }
     }
 }

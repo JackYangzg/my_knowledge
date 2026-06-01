@@ -18,6 +18,21 @@ interface KnowledgeFragmentDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(fragments: List<KnowledgeFragmentEntity>)
 
+    @Query("SELECT * FROM knowledge_fragment WHERE sourceId = :sourceId ORDER BY orderIndex ASC")
+    suspend fun getBySource(sourceId: String): List<KnowledgeFragmentEntity>
+
+    @Query("""
+        UPDATE knowledge_fragment
+        SET itemId = :itemId,
+            knowledgeItemId = :itemId,
+            knowledgeBaseId = :knowledgeBaseId
+        WHERE sourceId = :sourceId
+    """)
+    suspend fun attachSourceFragmentsToItem(sourceId: String, itemId: String, knowledgeBaseId: String)
+
     @Query("DELETE FROM knowledge_fragment WHERE itemId = :itemId")
     suspend fun deleteByItemId(itemId: String)
+
+    @Query("DELETE FROM knowledge_fragment WHERE sourceId = :sourceId")
+    suspend fun deleteBySource(sourceId: String)
 }

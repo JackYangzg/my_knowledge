@@ -145,7 +145,8 @@ class KnowledgeProcessingWorker(
             db.knowledgeFragmentDao(),
             db.processingTaskLogDao(),
             db.askCitationDao(),
-            db.knowledgeGraphDao()
+            db.knowledgeGraphDao(),
+            db.reviewItemDao()
         )
     }
 

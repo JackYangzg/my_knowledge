@@ -3,6 +3,7 @@ package com.my.knowledge.data.processing
 import android.content.Context
 import androidx.work.*
 import com.my.knowledge.worker.ArchiveRecommendWorker
+import com.my.knowledge.worker.IngestWorker
 import com.my.knowledge.worker.SummaryWorker
 import com.my.knowledge.worker.TagWorker
 import com.my.knowledge.worker.ThreadEvolutionWorker
@@ -53,6 +54,22 @@ class ProcessingTaskScheduler(context: Context) {
         workManager.enqueueUniqueWork(
             "thread_update_$kbId",
             ExistingWorkPolicy.REPLACE,
+            request
+        )
+    }
+
+    fun scheduleIngestQueue() {
+        val request = OneTimeWorkRequestBuilder<IngestWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                    .build()
+            )
+            .build()
+
+        WorkManager.getInstance(appContext).enqueueUniqueWork(
+            "ingest_queue",
+            ExistingWorkPolicy.KEEP,
             request
         )
     }

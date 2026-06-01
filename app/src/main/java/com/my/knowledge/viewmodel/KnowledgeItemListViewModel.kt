@@ -3,7 +3,9 @@ package com.my.knowledge.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
+import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.domain.repository.KnowledgeRepository
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -14,7 +16,8 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalCoroutinesApi::class)
 class KnowledgeItemListViewModel(
-    private val knowledgeRepository: KnowledgeRepository
+    private val knowledgeRepository: KnowledgeRepository,
+    private val fileStore: LocalFileStore
 ) : ViewModel() {
 
     companion object {
@@ -23,6 +26,8 @@ class KnowledgeItemListViewModel(
 
     private val _kbId = MutableStateFlow<String?>(null)
     private val _currentPage = MutableStateFlow(0)
+    private val _exportStatus = MutableStateFlow<String?>(null)
+    val exportStatus: StateFlow<String?> = _exportStatus
     
     // Total item count for the knowledge base
     val itemCount: StateFlow<Int> = _kbId
@@ -79,6 +84,39 @@ class KnowledgeItemListViewModel(
     fun deleteItem(itemId: String) {
         viewModelScope.launch {
             knowledgeRepository.deleteItem(itemId, softDelete = true)
+        }
+    }
+
+    fun retryItem(itemId: String) {
+        viewModelScope.launch {
+            knowledgeRepository.retryProcessingForItem(itemId)
+        }
+    }
+
+    fun exportSelectedItems(itemIds: Set<String>) {
+        viewModelScope.launch {
+            if (itemIds.isEmpty()) return@launch
+            try {
+                val items = itemIds.mapNotNull { knowledgeRepository.getItemById(it) }
+                val markdown = buildString {
+                    appendLine("# Knowledge Export")
+                    appendLine()
+                    items.forEach { item ->
+                        appendLine("## ${item.title}")
+                        appendLine()
+                        if (!item.summary.isNullOrBlank()) {
+                            appendLine("> ${item.summary}")
+                            appendLine()
+                        }
+                        appendLine(item.contentMarkdown)
+                        appendLine()
+                    }
+                }
+                val file = fileStore.writeBackup("knowledge_selected_${System.currentTimeMillis()}.md", markdown)
+                _exportStatus.value = "已导出 ${items.size} 条到 ${file.absolutePath}"
+            } catch (e: Exception) {
+                _exportStatus.value = "导出失败：${e.message ?: "未知错误"}"
+            }
         }
     }
 

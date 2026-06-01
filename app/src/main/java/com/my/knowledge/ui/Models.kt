@@ -100,8 +100,15 @@ data class InternalAnalysisState(
 
 @Serializable
 data class ModelConfig(
-    val provider: String = "OpenAI",
-    val modelName: String = "gpt-4o",
+    val provider: String = "minimax",
+    val modelName: String = "MiniMax-M3",
     val apiKey: String = "",
-    val baseUrl: String = "https://api.openai.com/v1"
+    val baseUrl: String = "https://api.minimaxi.com/v1",
+    val imageAnalysisProvider: String = "minimax",
+    val imageAnalysisApiKey: String = "",
+    val imageAnalysisBaseUrl: String = "https://api.minimaxi.com/v1",
+    val searchAnalysisProvider: String = "minimax",
+    val searchAnalysisApiKey: String = "",
+    val searchAnalysisBaseUrl: String = "https://api.minimaxi.com/v1",
+    val debugPromptEnabled: Boolean = false
 )

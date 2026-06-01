@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -194,7 +195,17 @@ fun InsightRow(insight: KnowledgeInsight) {
 }
 
 @Composable
-fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit, onDelete: () -> Unit = {}, onClick: () -> Unit = {}) {
+fun KnowledgeItemRow(
+    item: KnowledgeItemEntity,
+    onAskAI: () -> Unit,
+    onDelete: () -> Unit = {},
+    onRetry: () -> Unit = {},
+    onStatusClick: () -> Unit = {},
+    selectionMode: Boolean = false,
+    selected: Boolean = false,
+    onSelectionChange: (Boolean) -> Unit = {},
+    onClick: () -> Unit = {}
+) {
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -207,6 +218,14 @@ fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit, onDelete: (
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.Top
             ) {
+                if (selectionMode) {
+                    Checkbox(
+                        checked = selected,
+                        onCheckedChange = onSelectionChange,
+                        modifier = Modifier.size(28.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
                 Text(
                     text = item.title,
                     fontSize = 15.sp,
@@ -216,6 +235,11 @@ fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit, onDelete: (
                     lineHeight = 20.sp
                 )
                 Row {
+                    if (item.status == KnowledgeItemEntity.STATUS_FAILED) {
+                        IconButton(onClick = onRetry, modifier = Modifier.size(24.dp)) {
+                            Icon(Icons.Default.Refresh, contentDescription = "重试", tint = Color(0xFF147EC5), modifier = Modifier.size(16.dp))
+                        }
+                    }
                     IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
                         Icon(Icons.Default.Delete, contentDescription = "删除", tint = Color(0xFF9CA3AF), modifier = Modifier.size(16.dp))
                     }
@@ -244,7 +268,11 @@ fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit, onDelete: (
                     Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(12.dp), tint = Color(0xFFA3A3A3))
                     Text(item.sourceType, fontSize = 11.sp, color = Color(0xFFA3A3A3))
                     Spacer(modifier = Modifier.width(8.dp))
-                    MiniTag(item.status)
+                    StatusTag(
+                        text = processingStatusLabel(item.status),
+                        isError = item.status == KnowledgeItemEntity.STATUS_FAILED,
+                        onClick = onStatusClick
+                    )
                 }
                 Surface(
                     onClick = onAskAI,
@@ -259,4 +287,31 @@ fun KnowledgeItemRow(item: KnowledgeItemEntity, onAskAI: () -> Unit, onDelete: (
             }
         }
     }
+}
+
+@Composable
+private fun StatusTag(text: String, isError: Boolean, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        color = if (isError) Color(0xFFFEF2F2) else Color(0xFFEFF7FF),
+        border = BorderStroke(1.dp, if (isError) Color(0xFFFECACA) else Color(0xFFDBEEFF)),
+        shape = RoundedCornerShape(999.dp)
+    ) {
+        Text(
+            text = text,
+            fontSize = 10.sp,
+            color = if (isError) Color(0xFFDC2626) else Color(0xFF147EC5),
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+        )
+    }
+}
+
+private fun processingStatusLabel(status: String): String = when (status) {
+    KnowledgeItemEntity.STATUS_PROCESSING -> "加工中"
+    KnowledgeItemEntity.STATUS_RECOMMEND_READY -> "待归档"
+    KnowledgeItemEntity.STATUS_NEED_REVIEW -> "待复核"
+    KnowledgeItemEntity.STATUS_ARCHIVED -> "已归档"
+    KnowledgeItemEntity.STATUS_FAILED -> "加工失败"
+    KnowledgeItemEntity.STATUS_UNFILED -> "未归档"
+    else -> status
 }

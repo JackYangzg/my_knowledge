@@ -10,6 +10,7 @@ import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.KnowledgeRelationEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
+import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.data.db.entity.SourceManifestEntity
 import com.my.knowledge.data.db.entity.AiConversationEntity
 import com.my.knowledge.data.db.entity.AiMessageEntity
@@ -67,8 +68,15 @@ interface KnowledgeRepository {
     suspend fun getPendingTask(targetType: String, targetId: String): ProcessingTaskEntity?
     suspend fun getActiveTasks(): Flow<List<ProcessingTaskEntity>>
     suspend fun retryTask(taskId: String)
+    suspend fun retryProcessingForItem(itemId: String)
+    suspend fun cancelTask(taskId: String)
     suspend fun appendProcessingLog(log: ProcessingTaskLogEntity)
     fun observeProcessingLogs(targetType: String, targetId: String): Flow<List<ProcessingTaskLogEntity>>
+
+    // === Review Queue ===
+    fun observePendingReviews(): Flow<List<ReviewItemEntity>>
+    suspend fun resolveReview(reviewId: String, status: String)
+    fun observeUnfiledWorkCount(): Flow<Int>
     
     // === ArchiveRecommendation operations ===
     suspend fun createArchiveRecommendation(recommendation: ArchiveRecommendationEntity): ArchiveRecommendationEntity

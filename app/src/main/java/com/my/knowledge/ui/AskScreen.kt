@@ -31,6 +31,7 @@ fun AskScreen(
 ) {
     val messages by viewModel.messages.collectAsState()
     val citations by viewModel.lastCitations.collectAsState()
+    val debugPrompts by viewModel.debugPrompts.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -119,7 +120,7 @@ fun AskScreen(
 
             items(messages) { msg ->
                 val visibleCitations = if (msg.role == "assistant" && msg == messages.lastOrNull { it.role == "assistant" }) citations else emptyList()
-                MessageBubble(msg, visibleCitations)
+                MessageBubble(msg, visibleCitations, debugPrompts[msg.id])
             }
 
             if (isLoading) {
@@ -197,7 +198,8 @@ fun AskScreen(
 @Composable
 private fun MessageBubble(
     msg: AiMessageEntity,
-    citations: List<AskCitationEntity>
+    citations: List<AskCitationEntity>,
+    debugPrompt: String? = null
 ) {
     val isUser = msg.role == "user"
 
@@ -223,6 +225,21 @@ private fun MessageBubble(
                     lineHeight = 22.sp,
                     color = if (isUser) Color.White else Color(0xFF0F172A)
                 )
+                if (isUser && !debugPrompt.isNullOrBlank()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(color = Color.White.copy(alpha = 0.16f), shape = RoundedCornerShape(10.dp)) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Text("调试上下文", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            Text(
+                                debugPrompt,
+                                fontSize = 10.sp,
+                                lineHeight = 15.sp,
+                                color = Color.White.copy(alpha = 0.86f),
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = if (isUser) "你" else "AI",

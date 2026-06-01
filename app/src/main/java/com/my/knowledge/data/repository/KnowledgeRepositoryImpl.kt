@@ -12,6 +12,7 @@ import com.my.knowledge.data.db.dao.KnowledgeGraphDao
 import com.my.knowledge.data.db.dao.KnowledgeThreadDao
 import com.my.knowledge.data.db.dao.KnowledgeThreadLogDao
 import com.my.knowledge.data.db.dao.ProcessingTaskLogDao
+import com.my.knowledge.data.db.dao.ReviewItemDao
 import com.my.knowledge.data.db.dao.SourceManifestDao
 import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
 import com.my.knowledge.data.db.entity.AskCitationEntity
@@ -24,6 +25,7 @@ import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
+import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.data.db.entity.SourceManifestEntity
 import com.my.knowledge.data.db.entity.AiConversationEntity
 import com.my.knowledge.data.db.entity.AiMessageEntity
@@ -47,7 +49,8 @@ class KnowledgeRepositoryImpl(
     private val fragmentDao: KnowledgeFragmentDao,
     private val taskLogDao: ProcessingTaskLogDao,
     private val askCitationDao: AskCitationDao,
-    private val graphDao: KnowledgeGraphDao
+    private val graphDao: KnowledgeGraphDao,
+    private val reviewItemDao: ReviewItemDao
 ) : KnowledgeRepository {
 
     // === KnowledgeBase operations ===
@@ -466,12 +469,43 @@ class KnowledgeRepositoryImpl(
         taskDao.retryTask(taskId, System.currentTimeMillis())
     }
 
+    override suspend fun retryProcessingForItem(itemId: String) {
+        val item = itemDao.getById(itemId) ?: return
+        val now = System.currentTimeMillis()
+        item.sourceId?.let { sourceId ->
+            taskDao.retryBySource(sourceId, now)
+            itemDao.updateStatusBySourceId(sourceId, KnowledgeItemEntity.STATUS_PROCESSING, now)
+        }
+    }
+
+    override suspend fun cancelTask(taskId: String) {
+        taskDao.cancelTask(taskId, System.currentTimeMillis())
+    }
+
     override suspend fun appendProcessingLog(log: ProcessingTaskLogEntity) {
         taskLogDao.insert(log)
     }
 
     override fun observeProcessingLogs(targetType: String, targetId: String): Flow<List<ProcessingTaskLogEntity>> =
         taskLogDao.observeByTarget(targetType, targetId)
+
+    override fun observePendingReviews(): Flow<List<ReviewItemEntity>> =
+        reviewItemDao.observePending()
+
+    override suspend fun resolveReview(reviewId: String, status: String) {
+        reviewItemDao.resolve(reviewId, status, System.currentTimeMillis())
+    }
+
+    override fun observeUnfiledWorkCount(): Flow<Int> =
+        itemDao.observeCountByStatuses(
+            listOf(
+                KnowledgeItemEntity.STATUS_UNFILED,
+                KnowledgeItemEntity.STATUS_PROCESSING,
+                KnowledgeItemEntity.STATUS_NEED_REVIEW,
+                KnowledgeItemEntity.STATUS_RECOMMEND_READY,
+                KnowledgeItemEntity.STATUS_FAILED
+            )
+        )
 
     // === ArchiveRecommendation operations ===
     override suspend fun createArchiveRecommendation(recommendation: ArchiveRecommendationEntity): ArchiveRecommendationEntity {

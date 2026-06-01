@@ -17,6 +17,12 @@ import java.net.URL
 interface AiProvider {
     suspend fun chat(prompt: String, context: String): String
     suspend fun complete(systemPrompt: String, userMessage: String): String
+    suspend fun chatJson(
+        systemPrompt: String,
+        userPrompt: String,
+        schemaHint: String,
+        temperature: Float = 0.2f
+    ): String
 }
 
 class AiGateway : AiProvider {
@@ -24,10 +30,6 @@ class AiGateway : AiProvider {
     private val json = Json { ignoreUnknownKeys = true }
 
     override suspend fun chat(prompt: String, context: String): String {
-        if (!KnowledgeManager.aiExternalCallsEnabled) {
-            return "[本地模式] 外部 AI 调用未启用，请在设置中开启。"
-        }
-
         val config = KnowledgeManager.modelConfig
         if (config.apiKey.isBlank()) {
             return "[配置缺失] 请在设置中配置 API Key。"
@@ -41,10 +43,6 @@ class AiGateway : AiProvider {
     }
 
     override suspend fun complete(systemPrompt: String, userMessage: String): String {
-        if (!KnowledgeManager.aiExternalCallsEnabled) {
-            return "[本地模式] 外部 AI 调用未启用，请在设置中开启。"
-        }
-
         val config = KnowledgeManager.modelConfig
         if (config.apiKey.isBlank()) {
             return "[配置缺失] 请在设置中配置 API Key。"
@@ -53,23 +51,39 @@ class AiGateway : AiProvider {
         return callApi(config, systemPrompt, userMessage)
     }
 
+    override suspend fun chatJson(
+        systemPrompt: String,
+        userPrompt: String,
+        schemaHint: String,
+        temperature: Float
+    ): String {
+        val config = KnowledgeManager.modelConfig
+        if (config.apiKey.isBlank()) return ""
+        return callApi(
+            config = config,
+            systemPrompt = "$systemPrompt\n\n只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n$schemaHint",
+            userMessage = userPrompt,
+            temperature = temperature
+        )
+    }
+
     suspend fun analyze(prompt: String): String {
         val config = KnowledgeManager.modelConfig
-        if (!KnowledgeManager.aiExternalCallsEnabled || config.apiKey.isBlank()) {
+        if (config.apiKey.isBlank()) {
             return ""
         }
         return callApi(config, null, prompt)
     }
 
     suspend fun isAvailable(): Boolean {
-        return KnowledgeManager.aiExternalCallsEnabled &&
-            KnowledgeManager.modelConfig.apiKey.isNotBlank()
+        return KnowledgeManager.modelConfig.apiKey.isNotBlank()
     }
 
     private suspend fun callApi(
         config: ModelConfig,
         systemPrompt: String?,
-        userMessage: String
+        userMessage: String,
+        temperature: Float = 0.7f
     ): String = withContext(Dispatchers.IO) {
         try {
             val messages = buildJsonArray {
@@ -89,7 +103,7 @@ class AiGateway : AiProvider {
                 put("model", JsonPrimitive(config.modelName))
                 put("messages", messages)
                 put("max_tokens", JsonPrimitive(2048))
-                put("temperature", JsonPrimitive(0.7))
+                put("temperature", JsonPrimitive(temperature))
             }
 
             val url = URL("${config.baseUrl}/chat/completions")

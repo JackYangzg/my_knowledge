@@ -10,11 +10,13 @@ import androidx.room.PrimaryKey
         Index("knowledgeBaseId"),
         Index("status"),
         Index("sourceType"),
-        Index("contentHash")
+        Index("contentHash"),
+        Index("sourceId")
     ]
 )
 data class KnowledgeItemEntity(
     @PrimaryKey val id: String,
+    val sourceId: String? = null,
     val knowledgeBaseId: String,
     val title: String,
     val contentMarkdown: String,
@@ -22,6 +24,8 @@ data class KnowledgeItemEntity(
     val sourceType: String,
     val status: String,
     val contentHash: String,
+    val sourceTraceJson: String = "[]",
+    val confidence: Float = 1f,
     val summary: String?,
     val tagsJson: String,
     val rawNoteId: String?,
@@ -29,6 +33,7 @@ data class KnowledgeItemEntity(
     val createdAt: Long,
     val updatedAt: Long,
     val processedAt: Long?,
+    val archivedAt: Long? = null,
     val deletedAt: Long?
 ) {
     companion object {

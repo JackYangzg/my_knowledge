@@ -11,6 +11,8 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Checklist
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,11 +39,15 @@ fun KnowledgeDetailScreen(
     val hasNext by viewModel.hasNextPage.collectAsState()
     val hasPrevious by viewModel.hasPreviousPage.collectAsState()
     val itemCount by viewModel.itemCount.collectAsState()
+    val exportStatus by viewModel.exportStatus.collectAsState()
 
     var showSearch by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var deleteTarget by remember { mutableStateOf<KnowledgeItemEntity?>(null) }
+    var statusTarget by remember { mutableStateOf<KnowledgeItemEntity?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     Column(
         modifier = Modifier
@@ -91,6 +97,41 @@ fun KnowledgeDetailScreen(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (selectionMode && selectedIds.isNotEmpty()) {
+                        IconButton(
+                            onClick = {
+                                viewModel.exportSelectedItems(selectedIds)
+                                selectedIds = emptySet()
+                                selectionMode = false
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(Color(0xFFF7FBFF), RoundedCornerShape(10.dp))
+                        ) {
+                            Icon(
+                                Icons.Default.Download,
+                                contentDescription = "导出选中",
+                                tint = Color(0xFF147EC5),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = {
+                            selectionMode = !selectionMode
+                            if (!selectionMode) selectedIds = emptySet()
+                        },
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(Color(0xFFF7FBFF), RoundedCornerShape(10.dp))
+                    ) {
+                        Icon(
+                            Icons.Default.Checklist,
+                            contentDescription = "多选",
+                            tint = if (selectionMode) Color(0xFFEA580C) else Color(0xFF147EC5),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                     IconButton(
                         onClick = { showSearch = !showSearch },
                         modifier = Modifier
@@ -123,6 +164,15 @@ fun KnowledgeDetailScreen(
                     )
                 )
             }
+
+            if (selectionMode) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "已选择 ${selectedIds.size} 条",
+                    fontSize = 12.sp,
+                    color = Color(0xFF5F87A3)
+                )
+            }
         }
 
         LazyColumn(
@@ -148,9 +198,36 @@ fun KnowledgeDetailScreen(
                             deleteTarget = item
                             showDeleteDialog = true
                         },
-                        onClick = { onOpenItem(item.id) }
+                        onRetry = { viewModel.retryItem(item.id) },
+                        onStatusClick = { statusTarget = item },
+                        selectionMode = selectionMode,
+                        selected = item.id in selectedIds,
+                        onSelectionChange = { checked ->
+                            selectedIds = if (checked) selectedIds + item.id else selectedIds - item.id
+                        },
+                        onClick = {
+                            if (selectionMode) {
+                                selectedIds = if (item.id in selectedIds) selectedIds - item.id else selectedIds + item.id
+                            } else {
+                                onOpenItem(item.id)
+                            }
+                        }
                     )
                 }
+            }
+        }
+
+        exportStatus?.let { status ->
+            Surface(
+                color = Color(0xFFEFF7FF),
+                shadowElevation = 2.dp
+            ) {
+                Text(
+                    text = status,
+                    fontSize = 12.sp,
+                    color = Color(0xFF147EC5),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)
+                )
             }
         }
 
@@ -244,6 +321,36 @@ fun KnowledgeDetailScreen(
                 }) {
                     Text("取消")
                 }
+            }
+        )
+    }
+
+    statusTarget?.let { item ->
+        AlertDialog(
+            onDismissRequest = { statusTarget = null },
+            title = { Text("处理状态：${item.title}", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    text = if (item.status == KnowledgeItemEntity.STATUS_FAILED) {
+                        item.excerpt.ifBlank { "处理失败，暂无详细错误。" }
+                    } else {
+                        "当前状态：${item.status}"
+                    }
+                )
+            },
+            confirmButton = {
+                if (item.status == KnowledgeItemEntity.STATUS_FAILED) {
+                    Button(
+                        onClick = {
+                            viewModel.retryItem(item.id)
+                            statusTarget = null
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))
+                    ) { Text("重试") }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { statusTarget = null }) { Text("关闭") }
             }
         )
     }

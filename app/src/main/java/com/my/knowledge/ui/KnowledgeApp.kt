@@ -1,6 +1,6 @@
 package com.my.knowledge.ui
 
-import androidx.compose.animation.AnimatedContent
+import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -19,12 +19,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavType
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemDetailViewModel
 import com.my.knowledge.viewmodel.KnowledgeManageViewModel
+import com.my.knowledge.viewmodel.ImportCenterViewModel
 import com.my.knowledge.viewmodel.NoteEditorViewModel
 import com.my.knowledge.viewmodel.ProcessingStatusViewModel
 import com.my.knowledge.viewmodel.ProfileViewModel
@@ -38,21 +45,47 @@ enum class Tab(val id: String, val label: String, val icon: ImageVector) {
     PROFILE("profile", "我", Icons.Default.Person)
 }
 
+sealed class Route(val path: String) {
+    data object Home : Route("home")
+    data object Inspiration : Route("inspiration")
+    data object Profile : Route("profile")
+    data object Context : Route("context")
+    data object Fragments : Route("fragments")
+    data object Manage : Route("manage")
+    data object Settings : Route("settings")
+    data object LogCenter : Route("log_center")
+    data object RecycleBin : Route("recycle_bin")
+    data object KnowledgeBaseDetail : Route("knowledge_base/{kbId}") {
+        fun create(kbId: String) = "knowledge_base/${Uri.encode(kbId)}"
+    }
+    data object KnowledgeItemDetail : Route("knowledge_item/{kbId}/{itemId}") {
+        fun create(kbId: String, itemId: String) = "knowledge_item/${Uri.encode(kbId)}/${Uri.encode(itemId)}"
+    }
+    data object Ask : Route("ask/{scopeType}/{scopeId}/{title}") {
+        fun create(scopeType: String, scopeId: String, title: String) =
+            "ask/${Uri.encode(scopeType)}/${Uri.encode(scopeId)}/${Uri.encode(title)}"
+    }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
 fun KnowledgeApp() {
-    var activeTab by remember { mutableStateOf(Tab.KNOWLEDGE) }
-    var subPage by remember { mutableStateOf<String?>(null) }
-    var selectedKbId by remember { mutableStateOf<String?>(null) }
-    var selectedItemId by remember { mutableStateOf<String?>(null) }
-    var selectedItemTitle by remember { mutableStateOf("") }
-
+    val navController = rememberNavController()
+    val backStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route ?: Route.Home.path
+    val activeTab = when (currentRoute) {
+        Route.Inspiration.path -> Tab.INSPIRATION
+        Route.Profile.path -> Tab.PROFILE
+        else -> Tab.KNOWLEDGE
+    }
+    val topLevelRoutes = setOf(Route.Home.path, Route.Inspiration.path, Route.Profile.path)
     val noteViewModel: NoteEditorViewModel = viewModel(factory = ViewModelFactory)
     val homeViewModel: KnowledgeHomeViewModel = viewModel(factory = ViewModelFactory)
     val manageViewModel: KnowledgeManageViewModel = viewModel(factory = ViewModelFactory)
     val itemViewModel: KnowledgeItemListViewModel = viewModel(factory = ViewModelFactory)
     val askViewModel: AskViewModel = viewModel(factory = ViewModelFactory)
     val processingStatusViewModel: ProcessingStatusViewModel = viewModel(factory = ViewModelFactory)
+    val importCenterViewModel: ImportCenterViewModel = viewModel(factory = ViewModelFactory)
     val profileViewModel: ProfileViewModel = viewModel(factory = ViewModelFactory)
     val threadViewModel: ThreadViewModel = viewModel(factory = ViewModelFactory)
     val detailViewModel: KnowledgeItemDetailViewModel = viewModel(factory = ViewModelFactory)
@@ -60,102 +93,139 @@ fun KnowledgeApp() {
 
     Scaffold(
         bottomBar = {
-            if (subPage == null) {
+            if (currentRoute in topLevelRoutes) {
                 BottomNavigationBar(
                     activeTab = activeTab,
-                    onTabSelected = { 
-                        activeTab = it 
-                        subPage = null
+                    onTabSelected = { tab ->
+                        val route = when (tab) {
+                            Tab.KNOWLEDGE -> Route.Home.path
+                            Tab.INSPIRATION -> Route.Inspiration.path
+                            Tab.PROFILE -> Route.Profile.path
+                        }
+                        navController.navigate(route) {
+                            popUpTo(Route.Home.path) { saveState = true }
+                            launchSingleTop = true
+                            restoreState = true
+                        }
                     }
                 )
             }
         }
     ) { paddingValues ->
         Box(modifier = Modifier.padding(paddingValues).fillMaxSize()) {
-            when {
-                subPage == "context" -> KnowledgeContextScreen(
-                    homeViewModel = homeViewModel,
-                    threadViewModel = threadViewModel,
-                    onBack = { subPage = null }
-                )
-                subPage == "fragments" -> FragmentOrganizeScreen(onBack = { subPage = null })
-                subPage == "manage" -> KnowledgeManageScreen(
-                    homeViewModel = homeViewModel,
-                    manageViewModel = manageViewModel,
-                    onBack = { subPage = null },
-                    onOpenKbDetail = { kbId ->
-                        selectedKbId = kbId
-                        subPage = "detail"
-                    }
-                )
-                subPage == "settings" -> SettingsScreen(
-                    onBack = { subPage = null }
-                )
-                subPage == "processing" -> ProcessingStatusScreen(
-                    viewModel = processingStatusViewModel,
-                    onBack = { subPage = null }
-                )
-                subPage == "detail" && selectedKbId != null -> {
-                    itemViewModel.setKnowledgeBaseId(selectedKbId!!)
-                    KnowledgeDetailScreen(
-                        kbName = homeViewModel.knowledgeBases.value.find { it.id == selectedKbId }?.name ?: "知识管理",
-                        viewModel = itemViewModel,
-                        onBack = { subPage = "manage" },
-                        onAskAI = { itemId, itemTitle ->
-                        askViewModel.setScope(ScopeType.KNOWLEDGE_ITEM, itemId)
-                        askViewModel.startNewConversation(itemTitle)
-                        selectedItemTitle = itemTitle
-                        subPage = "ask"
-                    },
-                        onOpenItem = { itemId ->
-                            selectedItemId = itemId
-                            subPage = "viewer"
-                        }
+            NavHost(
+                navController = navController,
+                startDestination = Route.Home.path,
+                modifier = Modifier.fillMaxSize()
+            ) {
+                composable(Route.Home.path) {
+                    KnowledgeScreen(
+                        viewModel = homeViewModel,
+                        askViewModel = askViewModel,
+                        onOpenContext = { navController.navigate(Route.Context.path) },
+                        onOpenFragments = { navController.navigate(Route.Fragments.path) },
+                        onOpenKbDetail = { kbId -> navController.navigate(Route.KnowledgeBaseDetail.create(kbId)) },
+                        onOpenKbManage = { navController.navigate(Route.Manage.path) }
                     )
                 }
-                subPage == "viewer" && selectedItemId != null -> {
-                    KnowledgeViewerScreen(
-                        itemId = selectedItemId!!,
-                        viewModel = detailViewModel,
-                        onBack = { subPage = "detail" }
+                composable(Route.Inspiration.path) {
+                    InspirationScreen(viewModel = noteViewModel)
+                }
+                composable(Route.Profile.path) {
+                    ProfileScreen(
+                        viewModel = profileViewModel,
+                        onOpenSettings = { navController.navigate(Route.Settings.path) },
+                        onOpenLogCenter = { navController.navigate(Route.LogCenter.path) },
+                        onOpenRecycleBin = { navController.navigate(Route.RecycleBin.path) }
                     )
                 }
-                subPage == "recycle_bin" -> {
+                composable(Route.Context.path) {
+                    KnowledgeContextScreen(
+                        homeViewModel = homeViewModel,
+                        threadViewModel = threadViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(Route.Fragments.path) {
+                    FragmentOrganizeScreen(onBack = { navController.popBackStack() })
+                }
+                composable(Route.Manage.path) {
+                    KnowledgeManageScreen(
+                        homeViewModel = homeViewModel,
+                        manageViewModel = manageViewModel,
+                        onBack = { navController.popBackStack() },
+                        onOpenKbDetail = { kbId -> navController.navigate(Route.KnowledgeBaseDetail.create(kbId)) }
+                    )
+                }
+                composable(Route.Settings.path) {
+                    SettingsScreen(onBack = { navController.popBackStack() })
+                }
+                composable(Route.LogCenter.path) {
+                    KnowledgeLogScreen(
+                        importViewModel = importCenterViewModel,
+                        processingViewModel = processingStatusViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(Route.RecycleBin.path) {
                     RecycleBinScreen(
                         viewModel = recycleBinViewModel,
-                        onBack = { subPage = null }
+                        onBack = { navController.popBackStack() }
                     )
                 }
-                subPage == "ask" -> {
-                    AskScreen(
-                        viewModel = askViewModel,
-                        itemTitle = selectedItemTitle,
-                        onBack = { subPage = "detail" }
+                composable(
+                    route = Route.KnowledgeBaseDetail.path,
+                    arguments = listOf(navArgument("kbId") { type = NavType.StringType })
+                ) { entry ->
+                    val kbId = entry.arguments?.getString("kbId").orEmpty()
+                    itemViewModel.setKnowledgeBaseId(kbId)
+                    KnowledgeDetailScreen(
+                        kbName = homeViewModel.knowledgeBases.value.find { it.id == kbId }?.name ?: "知识管理",
+                        viewModel = itemViewModel,
+                        onBack = { navController.popBackStack() },
+                        onAskAI = { itemId, itemTitle ->
+                            askViewModel.setScope(ScopeType.KNOWLEDGE_ITEM, itemId)
+                            askViewModel.startNewConversation(itemTitle)
+                            navController.navigate(Route.Ask.create(ScopeType.KNOWLEDGE_ITEM, itemId, itemTitle))
+                        },
+                        onOpenItem = { itemId -> navController.navigate(Route.KnowledgeItemDetail.create(kbId, itemId)) }
                     )
                 }
-                else -> {
-                    AnimatedContent(targetState = activeTab, label = "TabTransition") { tab ->
-                        when (tab) {
-                            Tab.KNOWLEDGE -> KnowledgeScreen(
-                                viewModel = homeViewModel,
-                                askViewModel = askViewModel,
-                                onOpenContext = { subPage = "context" },
-                                onOpenFragments = { subPage = "fragments" },
-                                onOpenKbDetail = { kbId ->
-                                    selectedKbId = kbId
-                                    subPage = "detail"
-                                },
-                                onOpenKbManage = { subPage = "manage" }
-                            )
-                            Tab.INSPIRATION -> InspirationScreen(viewModel = noteViewModel)
-                            Tab.PROFILE -> ProfileScreen(
-                                viewModel = profileViewModel,
-                                onOpenSettings = { subPage = "settings" },
-                                onOpenProcessingStatus = { subPage = "processing" },
-                                onOpenRecycleBin = { subPage = "recycle_bin" }
-                            )
+                composable(
+                    route = Route.KnowledgeItemDetail.path,
+                    arguments = listOf(
+                        navArgument("kbId") { type = NavType.StringType },
+                        navArgument("itemId") { type = NavType.StringType }
+                    )
+                ) { entry ->
+                    val itemId = entry.arguments?.getString("itemId").orEmpty()
+                    KnowledgeViewerScreen(
+                        itemId = itemId,
+                        viewModel = detailViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(
+                    route = Route.Ask.path,
+                    arguments = listOf(
+                        navArgument("scopeType") { type = NavType.StringType },
+                        navArgument("scopeId") { type = NavType.StringType },
+                        navArgument("title") { type = NavType.StringType }
+                    )
+                ) { entry ->
+                    val scopeType = entry.arguments?.getString("scopeType").orEmpty()
+                    val scopeId = entry.arguments?.getString("scopeId").orEmpty()
+                    val title = entry.arguments?.getString("title").orEmpty()
+                    LaunchedEffect(scopeType, scopeId) {
+                        if (scopeType.isNotBlank() && scopeId.isNotBlank()) {
+                            askViewModel.setScope(scopeType, scopeId)
                         }
                     }
+                    AskScreen(
+                        viewModel = askViewModel,
+                        itemTitle = title,
+                        onBack = { navController.popBackStack() }
+                    )
                 }
             }
         }
