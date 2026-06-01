@@ -36,6 +36,12 @@ class NoteEditorViewModel(
     var hasVoiceTranscriptionContent by mutableStateOf(false)
         private set
     private var savedKnowledgeItemId: String? = null
+
+    private var lastPushedTitle by mutableStateOf("")
+    private var lastPushedContent by mutableStateOf("")
+
+    val isDirty: Boolean
+        get() = title != lastPushedTitle || content != lastPushedContent
     
     private val _saveStatus = MutableStateFlow("idle")
     val saveStatus: StateFlow<String> = _saveStatus
@@ -49,8 +55,14 @@ class NoteEditorViewModel(
         viewModelScope.launch {
             noteRepository.observeCurrentDraft().firstOrNull()?.let { draft ->
                 currentNote = draft
-                title = draft.title ?: ""
-                content = noteRepository.readNoteContent(draft.id)
+                val savedTitle = draft.title ?: ""
+                val savedContent = noteRepository.readNoteContent(draft.id)
+                title = savedTitle
+                content = savedContent
+                
+                // If it was already saved to a knowledge base, it's not dirty initially
+                // Actually, currentNote.id and savedKnowledgeItemId are different.
+                // We'd need to track if THIS draft has been pushed.
             } ?: run {
                 currentNote = createNoteUseCase()
             }
@@ -98,6 +110,8 @@ class NoteEditorViewModel(
             currentNote = createNoteUseCase()
             title = ""
             content = ""
+            lastPushedTitle = ""
+            lastPushedContent = ""
             mode = "preview"
             hasVoiceTranscriptionContent = false
             savedKnowledgeItemId = null
@@ -155,6 +169,8 @@ class NoteEditorViewModel(
                     contentHash = hash,
                     updatedAt = System.currentTimeMillis()
                 ))
+                lastPushedTitle = title
+                lastPushedContent = content
                 return targetName
             }
         }
@@ -166,7 +182,32 @@ class NoteEditorViewModel(
             importFrom = "manual",
             folderHint = "灵感空间"
         )
+        lastPushedTitle = title
+        lastPushedContent = content
         return targetName
+    }
+
+    suspend fun generateTitle(): Result<String> {
+        val original = content.trim()
+        if (original.isBlank()) return Result.failure(IllegalStateException("内容为空，无法生成标题"))
+
+        val generated = AiGateway().complete(
+            systemPrompt = "你是一个起标题专家。请根据用户提供的内容，生成一个简短、有吸引力且准确的标题（通常在15字以内）。只输出标题文字，不要包含引号、解释或其他修饰。",
+            userMessage = "内容：\n$original"
+        ).trim().removeMarkdownFence().removePrefix("\"").removeSuffix("\"")
+
+        val failurePrefixes = listOf("[配置缺失]", "[AI 调用失败]", "[连接失败]", "[超时]", "[AI 调用异常]", "[API 错误]", "[解析失败]")
+        if (failurePrefixes.any { generated.startsWith(it) }) {
+            return Result.failure(IllegalStateException(generated))
+        }
+
+        title = generated
+        forceSaveDraft()
+        return Result.success(generated)
+    }
+
+    suspend fun polishContent(): Result<String> {
+        return polishVoiceTranscriptionContent()
     }
 
     suspend fun polishVoiceTranscriptionContent(): Result<String> {

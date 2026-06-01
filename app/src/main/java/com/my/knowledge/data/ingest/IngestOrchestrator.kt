@@ -155,6 +155,8 @@ class IngestOrchestrator(
         val analysis = db.analysisResultDao().getLatestBySource(source.id) ?: error("Analysis result not found")
         val kbId = source.targetKnowledgeBaseId ?: db.knowledgeBaseDao().getByType("inspiration")?.id ?: db.knowledgeBaseDao().getByType("unfiled")?.id.orEmpty()
         val now = System.currentTimeMillis()
+        
+        // Root item for the source itself
         val rootExistingItem = db.knowledgeItemDao().getBySourceId(source.id)
         val rootItem = KnowledgeItemEntity(
             id = rootExistingItem?.id ?: UUID.randomUUID().toString(),
@@ -181,10 +183,21 @@ class IngestOrchestrator(
         db.knowledgeItemDao().insert(rootItem)
         db.knowledgeFragmentDao().attachSourceFragmentsToItem(source.id, rootItem.id, kbId)
 
-        val pageDrafts = wikiCompiler.compile(source, parsed, analysis)
+        // Generate wiki pages (Step 2: AI-driven or Template-driven)
+        val pageDrafts = if (AiGateway().isAvailable()) {
+            requestAiGeneration(source, parsed, analysis)
+        } else {
+            wikiCompiler.compile(source, parsed, analysis)
+        }
+        
         val writtenItems = pageDrafts.mapIndexed { index, draft ->
             val existingPage = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
-            val mergedMarkdown = existingPage?.let { wikiCompiler.merge(it.contentMarkdown, draft.markdown) } ?: draft.markdown
+            val mergedMarkdown = if (existingPage != null && AiGateway().isAvailable()) {
+                requestAiMerge(existingPage.contentMarkdown, draft.markdown, source.title)
+            } else {
+                existingPage?.let { wikiCompiler.merge(it.contentMarkdown, draft.markdown) } ?: draft.markdown
+            }
+            
             val item = KnowledgeItemEntity(
                 id = existingPage?.id ?: UUID.randomUUID().toString(),
                 sourceId = source.id,
@@ -211,6 +224,7 @@ class IngestOrchestrator(
             item
         }
         db.knowledgeItemDao().updateItemCount(kbId)
+        // ... rest of the method
 
         val reviewReason = IngestJsonValidator.firstJsonArrayText(analysis.gapsJson)
         if (analysis.confidence < 0.6f || reviewReason != null) {
@@ -256,6 +270,67 @@ class IngestOrchestrator(
         markSuccess(task, "Embedding task acknowledged", "{}")
     }
 
+    private suspend fun requestAiGeneration(
+        source: SourceDocumentEntity,
+        parsed: ParsedContentEntity,
+        analysis: AnalysisResultEntity
+    ): List<WikiPageDraft> {
+        val ai = AiGateway()
+        val currentIndex = buildCurrentIndex(source.targetKnowledgeBaseId)
+        val analysisBrief = "Summary: ${analysis.summary}\nTags: ${analysis.tagsJson}\nEntities: ${analysis.entitiesJson}\nConcepts: ${analysis.conceptsJson}"
+
+        val userPrompt = com.my.knowledge.data.ai.AiPromptTemplates.generationPrompt(
+            fileName = source.title,
+            analysisResult = analysisBrief,
+            sourceContent = parsed.markdown,
+            currentIndex = currentIndex
+        )
+
+        val response = ai.complete(
+            systemPrompt = "You are a wiki generation assistant. Reason internally but output only FILE blocks as requested. Start immediately with '---FILE:'.",
+            userMessage = userPrompt
+        )
+
+        val blocks = FileBlockParser.parse(response)
+        return blocks.map { block ->
+            WikiPageDraft(
+                type = when {
+                    block.path.contains("/sources/") -> "source"
+                    block.path.contains("/entities/") -> "entity"
+                    block.path.contains("/concepts/") -> "concept"
+                    else -> "synthesis"
+                },
+                title = block.path.substringAfterLast("/").removeSuffix(".md"),
+                sourceType = "wiki_ai_generated",
+                markdown = block.content,
+                summary = analysis.summary,
+                tagsJson = analysis.tagsJson,
+                sourceTraceJson = """{"wikiPath":"${block.path.escapeJson()}","sourceId":"${source.id}","parsedContentId":"${parsed.id}"}"""
+            )
+        }
+    }
+
+    private suspend fun requestAiMerge(
+        existingContent: String,
+        incomingContent: String,
+        sourceTitle: String
+    ): String {
+        val ai = AiGateway()
+        val prompt = com.my.knowledge.data.ai.AiPromptTemplates.mergePrompt(
+            existingContent = existingContent,
+            incomingContent = incomingContent,
+            sourceFileName = sourceTitle
+        )
+        val response = ai.complete(
+            systemPrompt = "You are a wiki merging assistant. Output only the merged markdown content starting with '---'.",
+            userMessage = prompt
+        )
+        return if (response.startsWith("---")) response else {
+            // Fallback to template merge if AI output is invalid
+            wikiCompiler.merge(existingContent, incomingContent)
+        }
+    }
+
     private suspend fun requestAiAnalysis(
         source: SourceDocumentEntity,
         parsed: ParsedContentEntity,
@@ -263,40 +338,19 @@ class IngestOrchestrator(
     ): String? {
         val ai = AiGateway()
         if (!ai.isAvailable()) return null
-        val prompt = buildString {
-            appendLine("你正在执行 Wiki Ingest 第一阶段：只分析来源，不写页面，只输出严格 JSON。")
-            appendLine()
-            appendLine("核心目标：Raw Sources → Wiki Pages → Schema/Graph。不要把文档只切成 chunk；请识别可维护的实体页、概念页、来源摘要页和它们之间的连接。")
-            appendLine()
-            appendLine("## Source Document")
-            appendLine("title: ${source.title}")
-            appendLine("type: ${source.sourceType}")
-            appendLine("file: ${source.originalUri ?: source.localPath ?: source.title}")
-            appendLine()
-            appendLine("## Current Index")
-            appendLine(buildCurrentIndex(source.targetKnowledgeBaseId))
-            appendLine()
-            appendLine("## Wiki Purpose")
-            appendLine("把原始资料编译成可读、可维护、可演进的 Wiki 页面；通过 YAML frontmatter、sources 溯源和正文 [[wikilink]] 自然生成图谱。")
-            appendLine()
-            appendLine("## Analysis Requirements")
-            appendLine("1. Key Entities：人物、组织、产品、数据集、工具、系统、项目、地点。只保留对来源理解重要的实体。")
-            appendLine("2. Key Concepts：理论、方法、技术、现象、原则、框架、问题。只保留可复用、可链接、值得成为 Wiki 页的概念。")
-            appendLine("3. Main Arguments & Findings：核心主张、发现、证据强度。")
-            appendLine("4. Connections to Existing Wiki：指出与现有页面可能的连接。")
-            appendLine("5. Contradictions & Tensions：冲突、张力、局限、内部矛盾。")
-            appendLine("6. Recommendations：建议创建或更新哪些 source/entity/concept/paper/method 页面。")
-            appendLine("7. 保守生成页面：不要为普通名词、过短短语、无稳定含义的词创建实体/概念。")
-            appendLine()
-            appendLine("## Source Content")
-            appendLine(parsed.markdown.take(6000))
-            appendLine()
-            appendLine("## Fragment IDs")
-            fragments.take(12).forEach { appendLine("- ${it.id}: ${it.content.take(160)}") }
-        }
+
+        val currentIndex = buildCurrentIndex(source.targetKnowledgeBaseId)
+        val userPrompt = com.my.knowledge.data.ai.AiPromptTemplates.analysisPrompt(
+            title = source.title,
+            content = parsed.markdown.take(6000),
+            sourceType = source.sourceType,
+            currentIndex = currentIndex,
+            fragments = fragments.take(12).map { "${it.id}: ${it.content.take(160)}" }
+        )
+
         return ai.chatJson(
             systemPrompt = "You are an expert research analyst for a local wiki ingest pipeline. Do not output chain-of-thought. Read the source and produce concise, structured JSON analysis for later wiki page generation. Every entity, concept, claim, relation, gap, and page recommendation must be grounded in source evidence.",
-            userPrompt = prompt,
+            userPrompt = userPrompt,
             schemaHint = ANALYSIS_SCHEMA,
             temperature = 0.2f
         ).takeIf { it.isNotBlank() && !it.startsWith("[") }

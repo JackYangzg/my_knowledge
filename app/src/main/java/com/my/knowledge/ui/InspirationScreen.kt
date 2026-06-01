@@ -22,6 +22,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -51,11 +52,7 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
 
     var showMoreMenu by remember { mutableStateOf(false) }
     var selectedLibrary by remember { mutableStateOf("灵感空间") }
-    var showLibraryPicker by remember { mutableStateOf(false) }
     var showNewConfirmDialog by remember { mutableStateOf(false) }
-    var showVoicePolishDialog by remember { mutableStateOf(false) }
-    var isPolishingVoiceContent by remember { mutableStateOf(false) }
-    var voicePolishError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val focusRequester = remember { FocusRequester() }
 
@@ -176,12 +173,7 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
             commitVoiceTranscript(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
-        if (viewModel.hasVoiceTranscriptionContent) {
-            voicePolishError = null
-            showVoicePolishDialog = true
-        } else {
-            saveDirectly()
-        }
+        saveDirectly()
     }
 
     // Voice input - check permission and record
@@ -207,56 +199,47 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("灵感", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Surface(
-                        onClick = {
-                            if (title.isNotBlank() || content.isNotBlank()) {
-                                showNewConfirmDialog = true
-                            } else {
-                                viewModel.createNewNote()
-                                Toast.makeText(context, "已新建灵感", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, Color(0xFFDBEEFF))
-                    ) {
-                        Text(
-                            "新建",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color(0xFF147EC5),
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        )
-                    }
-                    if (mode == "edit") {
-                        Surface(
-                            onClick = { requestSave() },
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color(0xFF111827)
-                        ) {
-                            Text(
-                                "保存",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                            )
-                        }
-                    }
+                IconButton(onClick = { showMoreMenu = true }) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "更多", tint = Color(0xFF0F172A))
                 }
             }
 
-            // Markdown Tab Bar
+            // Quick Actions Bar (Old Edit/View position)
             Row(
                 modifier = Modifier
                     .padding(horizontal = 20.dp, vertical = 8.dp)
-                    .background(Color(0xFFEFF7FF), RoundedCornerShape(999.dp))
-                    .padding(3.dp),
-                verticalAlignment = Alignment.CenterVertically
+                    .fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                MarkdownModeBtn("编辑", mode == "edit") { viewModel.updateMode("edit") }
-                MarkdownModeBtn("查看", mode == "preview") { viewModel.updateMode("preview") }
+                Surface(
+                    onClick = { imagePickerLauncher.launch("image/*") },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFF3F4F6)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFF4B5563))
+                        Text("图片", fontSize = 13.sp, color = Color(0xFF4B5563))
+                    }
+                }
+                Surface(
+                    onClick = { attachmentPickerLauncher.launch("*/*") },
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFF3F4F6)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFF4B5563))
+                        Text("附件", fontSize = 13.sp, color = Color(0xFF4B5563))
+                    }
+                }
                 Spacer(modifier = Modifier.weight(1f))
             }
 
@@ -332,66 +315,59 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                 }
                 
                 // Floating Action Buttons
-                Row(
+                Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
                         .imePadding()
-                        .padding(bottom = 16.dp, end = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        .padding(bottom = 24.dp, end = 24.dp)
                 ) {
-                    if (mode == "edit") {
-                        SmallFloatingActionButton(
-                            onClick = {
-                                val hasPermission = ContextCompat.checkSelfPermission(
-                                    context, Manifest.permission.RECORD_AUDIO
-                                ) == PackageManager.PERMISSION_GRANTED
-                                if (hasPermission) {
-                                    startSpeechInput()
-                                } else {
-                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                }
-                            },
-                            containerColor = if (voiceState.isRecording) Color(0xFFDBEEFF) else Color.White,
-                            contentColor = Color(0xFF147EC5),
-                            shape = CircleShape,
-                            modifier = Modifier.size(48.dp).shadow(4.dp, CircleShape)
-                        ) {
-                            if (voiceState.isRecording) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(24.dp),
-                                    color = Color(0xFF147EC5),
-                                    strokeWidth = 2.dp
-                                )
-                            } else {
-                                Icon(Icons.Default.Mic, contentDescription = null)
-                            }
-                        }
-                    }
                     FloatingActionButton(
-                        onClick = { showMoreMenu = true },
-                        containerColor = Color(0xFF147EC5),
-                        contentColor = Color.White,
+                        onClick = {
+                            val hasPermission = ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.RECORD_AUDIO
+                            ) == PackageManager.PERMISSION_GRANTED
+                            if (hasPermission) {
+                                startSpeechInput()
+                            } else {
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                            }
+                        },
+                        containerColor = if (voiceState.isRecording) Color(0xFFDBEEFF) else Color(0xFF147EC5),
+                        contentColor = if (voiceState.isRecording) Color(0xFF147EC5) else Color.White,
                         shape = CircleShape,
-                        modifier = Modifier.size(48.dp).shadow(12.dp, CircleShape)
+                        modifier = Modifier.size(72.dp).shadow(12.dp, CircleShape)
                     ) {
-                        Icon(Icons.Default.MoreHoriz, contentDescription = null)
+                        if (voiceState.isRecording) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(36.dp),
+                                color = Color(0xFF147EC5),
+                                strokeWidth = 3.dp
+                            )
+                        } else {
+                            Icon(
+                                Icons.Default.Mic, 
+                                contentDescription = null,
+                                modifier = Modifier.size(36.dp)
+                            )
+                        }
                     }
                 }
             }
-        }
 
-        if (voiceState.isRecording || voiceState.partialTranscript.isNotBlank() || voiceState.errorMessage != null) {
-            VoiceRealtimePanel(
-                state = voiceState,
-                onStop = {
-                    commitVoiceTranscript(voiceState.partialTranscript)
-                    voiceService.stopRecording()
-                },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .imePadding()
-                    .padding(horizontal = 20.dp, vertical = 82.dp)
-            )
+            if (voiceState.isRecording || voiceState.partialTranscript.isNotBlank() || voiceState.errorMessage != null) {
+                VoiceRealtimePanel(
+                    state = voiceState,
+                    onStop = {
+                        commitVoiceTranscript(voiceState.partialTranscript)
+                        voiceService.stopRecording()
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .imePadding()
+                        .padding(horizontal = 20.dp)
+                        .padding(bottom = 16.dp)
+                )
+            }
         }
 
         // More Menu Overlay
@@ -423,7 +399,7 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("更多", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF111827))
+                            Text("更多操作", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF111827))
                             IconButton(
                                 onClick = { showMoreMenu = false },
                                 modifier = Modifier.size(28.dp).background(Color(0xFFF5F5F5), CircleShape)
@@ -432,60 +408,72 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                             }
                         }
                         HorizontalDivider(color = Color(0xFFF3F4F6))
+                        
                         MoreMenuItem(
-                            label = "添加图片到文档",
-                            rightText = "",
-                            onClick = { imagePickerLauncher.launch("image/*") }
-                        )
-                        MoreMenuItem(
-                            label = "添加附件到文档",
-                            rightText = "",
-                            onClick = { attachmentPickerLauncher.launch("*/*") }
-                        )
-
-                        // Library Picker Item
-                        Box(modifier = Modifier.fillMaxWidth()) {
-                            MoreMenuItem(
-                                label = "保存到",
-                                rightText = selectedLibrary,
-                                isStrong = true,
-                                onClick = { showLibraryPicker = !showLibraryPicker }
-                            )
-                            DropdownMenu(
-                                expanded = showLibraryPicker,
-                                onDismissRequest = { showLibraryPicker = false },
-                                modifier = Modifier.fillMaxWidth(0.8f).background(Color.White)
-                            ) {
-                                val kbNames by viewModel.knowledgeBaseNames.collectAsState()
-                                kbNames.forEach { name ->
-                                    DropdownMenuItem(
-                                        text = { Text(name) },
-                                        onClick = {
-                                            selectedLibrary = name
-                                            showLibraryPicker = false
-                                        }
-                                    )
+                            label = "大模型润色",
+                            rightText = "AI",
+                            onClick = {
+                                showMoreMenu = false
+                                scope.launch {
+                                    val result = viewModel.polishContent()
+                                    if (result.isSuccess) {
+                                        Toast.makeText(context, "润色完成", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, result.exceptionOrNull()?.message ?: "润色失败", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             }
-                        }
-
-                        MoreMenuItem("添加标签", "›")
-                        MoreMenuItem("移动到知识库", "›")
-                        MoreMenuItem("标记需要整理", "›")
+                        )
                         MoreMenuItem(
-                            label = "删除",
-                            rightText = "",
-                            isDestructive = true,
+                            label = "标题生成",
+                            rightText = "AI",
                             onClick = {
-                                viewModel.content = ""
-                                viewModel.title = ""
                                 showMoreMenu = false
+                                scope.launch {
+                                    val result = viewModel.generateTitle()
+                                    if (result.isSuccess) {
+                                        Toast.makeText(context, "标题已更新", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        Toast.makeText(context, result.exceptionOrNull()?.message ?: "生成失败", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            }
+                        )
+                        MoreMenuItem(
+                            label = if (mode == "edit") "切换到预览模式" else "切换到编辑模式",
+                            rightText = if (mode == "edit") "查看" else "编辑",
+                            onClick = {
+                                showMoreMenu = false
+                                viewModel.toggleMode()
+                            }
+                        )
+                        MoreMenuItem(
+                            label = "新建灵感",
+                            rightText = "",
+                            isStrong = true,
+                            onClick = {
+                                showMoreMenu = false
+                                if (title.isNotBlank() || content.isNotBlank()) {
+                                    showNewConfirmDialog = true
+                                } else {
+                                    viewModel.createNewNote()
+                                    Toast.makeText(context, "已新建灵感", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        )
+                        MoreMenuItem(
+                            label = "保存到知识库",
+                            rightText = selectedLibrary,
+                            enabled = viewModel.isDirty,
+                            isStrong = true,
+                            onClick = {
+                                showMoreMenu = false
+                                requestSave()
                             }
                         )
                     }
                 }
             }
-
         }
     }
 
@@ -525,78 +513,10 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
             }
         )
     }
-
-    if (showVoicePolishDialog) {
-        AlertDialog(
-            onDismissRequest = {
-                if (!isPolishingVoiceContent) showVoicePolishDialog = false
-            },
-            icon = {
-                Icon(
-                    Icons.Default.AutoFixHigh,
-                    contentDescription = null,
-                    tint = Color(0xFF147EC5),
-                    modifier = Modifier.size(24.dp)
-                )
-            },
-            title = { Text("润色语音转写内容？", fontWeight = FontWeight.Bold) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("检测到当前灵感包含语音转写内容。是否先通过大模型修正错别字、标点和格式后再保存？不会改变原文含义。")
-                    voicePolishError?.let {
-                        Text(it, fontSize = 13.sp, color = Color(0xFFDC2626))
-                    }
-                }
-            },
-            confirmButton = {
-                Button(
-                    enabled = !isPolishingVoiceContent,
-                    onClick = {
-                        scope.launch {
-                            isPolishingVoiceContent = true
-                            voicePolishError = null
-                            val polishResult = viewModel.polishVoiceTranscriptionContent()
-                            isPolishingVoiceContent = false
-                            polishResult
-                                .onSuccess {
-                                    showVoicePolishDialog = false
-                                    saveDirectly()
-                                }
-                                .onFailure {
-                                    voicePolishError = it.message ?: "润色失败，请检查模型配置后重试"
-                                }
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
-                ) {
-                    if (isPolishingVoiceContent) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Text("润色后保存", color = Color.White)
-                    }
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    enabled = !isPolishingVoiceContent,
-                    onClick = {
-                        showVoicePolishDialog = false
-                        saveDirectly()
-                    }
-                ) {
-                    Text("直接保存原文")
-                }
-            }
-        )
-    }
 }
 
 @Composable
-private fun VoiceRealtimePanel(
+fun VoiceRealtimePanel(
     state: VoiceRecognitionState,
     onStop: () -> Unit,
     modifier: Modifier = Modifier
@@ -666,13 +586,19 @@ private fun String.deltaAfter(prefixText: String): String {
     val prefix = prefixText.trim()
     if (current.isBlank()) return ""
     if (prefix.isBlank()) return current
-    if (current == prefix || prefix.contains(current)) return ""
+    
+    // Fuzzy check: if current's normalized version is already in prefix's normalized version
+    if (prefix.containsNormalized(current)) return ""
+    
     if (current.startsWith(prefix)) return current.removePrefix(prefix).trimStart(' ', '\n', '，', '。', ',', '.')
 
     val maxOverlap = minOf(prefix.length, current.length)
-    for (size in maxOverlap downTo 4) {
-        if (prefix.takeLast(size) == current.take(size)) {
-            return current.drop(size).trimStart(' ', '\n', '，', '。', ',', '.')
+    // Reduce min overlap to 2 to catch more duplication cases in speech
+    for (size in maxOverlap downTo 2) {
+        if (prefix.takeLast(size).equals(current.take(size), ignoreCase = true)) {
+            val delta = current.drop(size).trimStart(' ', '\n', '，', '。', ',', '.')
+            // One more check to see if the resulting delta is still present in prefix
+            return if (prefix.containsNormalized(delta)) "" else delta
         }
     }
     return if (prefix.containsNormalized(current)) "" else current
@@ -710,7 +636,7 @@ fun MarkdownModeBtn(text: String, active: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun MarkdownPreview(markdown: String) {
+fun MarkdownPreview(markdown: String) {
     MarkDown(
         modifier = Modifier.fillMaxWidth(),
         text = markdown,
@@ -724,11 +650,12 @@ fun MoreMenuItem(
     rightText: String, 
     isStrong: Boolean = false, 
     isDestructive: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit = {}
 ) {
     Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        onClick = if (enabled) onClick else ({}),
+        modifier = Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.4f),
         color = Color.White
     ) {
         Column {
