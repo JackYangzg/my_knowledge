@@ -11,6 +11,15 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.ImageSearch
 import androidx.compose.material.icons.filled.Info
+import android.provider.Settings
+import android.net.Uri
+import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.BugReport
@@ -45,6 +54,10 @@ fun SettingsScreen(onBack: () -> Unit) {
     var searchAnalysisProvider by remember { mutableStateOf(currentConfig.searchAnalysisProvider) }
     var searchAnalysisApiKey by remember { mutableStateOf(currentConfig.searchAnalysisApiKey) }
     var searchAnalysisBaseUrl by remember { mutableStateOf(currentConfig.searchAnalysisBaseUrl) }
+    var voiceProvider by remember { mutableStateOf(currentConfig.voiceProvider) }
+    var voiceApiKey by remember { mutableStateOf(currentConfig.voiceApiKey) }
+    var voiceAppId by remember { mutableStateOf(currentConfig.voiceAppId) }
+    var voiceClusterId by remember { mutableStateOf(currentConfig.voiceClusterId) }
     var debugPromptEnabled by remember { mutableStateOf(currentConfig.debugPromptEnabled) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -69,6 +82,13 @@ fun SettingsScreen(onBack: () -> Unit) {
         if (nextProvider == "minimax") searchAnalysisBaseUrl = "https://api.minimaxi.com/v1"
     }
 
+    fun applyVoiceProviderDefaults(nextProvider: String) {
+        voiceProvider = nextProvider
+        if (nextProvider == "volcengine") {
+            voiceClusterId = "volc_ent_asr_streaming"
+        }
+    }
+
     fun saveConfig() {
         KnowledgeManager.updateModelConfig(
             ModelConfig(
@@ -82,6 +102,10 @@ fun SettingsScreen(onBack: () -> Unit) {
                 searchAnalysisProvider = searchAnalysisProvider,
                 searchAnalysisApiKey = searchAnalysisApiKey,
                 searchAnalysisBaseUrl = searchAnalysisBaseUrl,
+                voiceProvider = voiceProvider,
+                voiceApiKey = voiceApiKey,
+                voiceAppId = voiceAppId,
+                voiceClusterId = voiceClusterId,
                 debugPromptEnabled = debugPromptEnabled
             )
         )
@@ -151,6 +175,12 @@ fun SettingsScreen(onBack: () -> Unit) {
                         title = "搜索分析接口",
                         desc = "$searchAnalysisProvider · ${if (searchAnalysisApiKey.isBlank()) "未配置 API Key" else "已配置"}",
                         onClick = { section = SettingsSection.Search }
+                    )
+                    SettingsSectionRow(
+                        icon = Icons.Default.Mic,
+                        title = "语音功能配置",
+                        desc = "$voiceProvider · ${if (voiceApiKey.isBlank()) "未配置 API Key" else "已配置"}",
+                        onClick = { section = SettingsSection.Voice }
                     )
                     Surface(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
@@ -222,6 +252,51 @@ fun SettingsScreen(onBack: () -> Unit) {
                         }
                     )
                 }
+                SettingsSection.Voice -> {
+                    val context = LocalContext.current
+                    
+                    Surface(
+                        onClick = {
+                            val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                                data = Uri.fromParts("package", context.packageName, null)
+                            }
+                            context.startActivity(intent)
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = Color(0xFFF0F9FF),
+                        border = BorderStroke(1.dp, Color(0xFFBAE6FD))
+                    ) {
+                        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Settings, contentDescription = null, tint = Color(0xFF0284C7), modifier = Modifier.size(20.dp))
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("系统权限管理", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1))
+                                Text("前往系统设置开启麦克风权限", fontSize = 12.sp, color = Color(0xFF0284C7))
+                            }
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color(0xFF0284C7))
+                        }
+                    }
+
+                    VoiceProviderDropdown(label = "语音服务商", value = voiceProvider, onValueChange = ::applyVoiceProviderDefaults)
+                    SettingsTextField(label = "API Key (Access Token)", value = voiceApiKey, onValueChange = { voiceApiKey = it }, placeholder = "输入火山引擎 Access Token", isPassword = true)
+                    SettingsTextField(label = "App ID", value = voiceAppId, onValueChange = { voiceAppId = it }, placeholder = "输入火山引擎 App ID")
+                    SettingsTextField(label = "Cluster ID", value = voiceClusterId, onValueChange = { voiceClusterId = it }, placeholder = "volc_ent_asr_streaming")
+                    SaveButton(
+                        statusMessage = statusMessage,
+                        onSave = { saveConfig() },
+                        onTest = {
+                            statusMessage = "正在检查语音接口配置..."
+                            scope.launch {
+                                statusMessage = if (voiceApiKey.isBlank() || voiceAppId.isBlank()) {
+                                    "请先填写火山引擎 App ID 和 API Key"
+                                } else {
+                                    "语音配置格式已就绪，录音时将使用实时 WebSocket 识别"
+                                }
+                            }
+                        }
+                    )
+                }
             }
             
             Spacer(modifier = Modifier.height(100.dp))
@@ -232,7 +307,8 @@ fun SettingsScreen(onBack: () -> Unit) {
 private enum class SettingsSection(val title: String) {
     Model("模型配置"),
     Image("图片分析接口"),
-    Search("搜索分析接口")
+    Search("搜索分析接口"),
+    Voice("语音功能配置")
 }
 
 @Composable
@@ -258,6 +334,42 @@ fun SettingsTextField(
                 unfocusedBorderColor = Color(0xFFDBEEFF)
             )
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun VoiceProviderDropdown(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Column(modifier = Modifier.padding(bottom = 20.dp)) {
+        Text(label, fontSize = 14.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(bottom = 8.dp))
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+            OutlinedTextField(
+                value = value,
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF147EC5),
+                    unfocusedBorderColor = Color(0xFFDBEEFF)
+                )
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(
+                    text = { Text("volcengine (豆包语音)") },
+                    onClick = {
+                        onValueChange("volcengine")
+                        expanded = false
+                    }
+                )
+            }
+        }
     }
 }
 
@@ -392,6 +504,7 @@ private suspend fun testMinimaxEndpoint(
         SettingsSection.Model -> """{"model":"${modelName.escapeJson()}","messages":[{"role":"user","content":"只回复OK"}],"max_tokens":32,"temperature":0}"""
         SettingsSection.Image -> """{"model":"${modelName.escapeJson()}","messages":[{"role":"user","content":[{"type":"text","text":"这张图片是什么颜色？只答颜色。"},{"type":"image_url","image_url":{"url":"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP8z8AARQAEXgH+LKVrAAAAAElFTkSuQmCC"}}]}],"max_tokens":64,"temperature":0}"""
         SettingsSection.Search -> """{"model":"${modelName.escapeJson()}","messages":[{"role":"user","content":"使用搜索能力回答今天日期，只输出一句话。"}],"tools":[{"type":"web_search"}],"max_tokens":96,"temperature":0}"""
+        SettingsSection.Voice -> return@withContext "语音测试暂未通过 REST 接口实现"
     }
     runCatching {
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {

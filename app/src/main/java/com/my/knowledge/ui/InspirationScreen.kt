@@ -1,11 +1,8 @@
 package com.my.knowledge.ui
 
 import android.Manifest
-import android.app.Activity
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -28,12 +25,18 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import com.my.knowledge.data.ai.VoiceRecognitionState
+import com.my.knowledge.data.ai.VolcengineVoiceService
 import com.my.knowledge.viewmodel.NoteEditorViewModel
 import com.mukesh.MarkDown
 import kotlinx.coroutines.launch
@@ -50,7 +53,73 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
     var selectedLibrary by remember { mutableStateOf("灵感空间") }
     var showLibraryPicker by remember { mutableStateOf(false) }
     var showNewConfirmDialog by remember { mutableStateOf(false) }
+    var showVoicePolishDialog by remember { mutableStateOf(false) }
+    var isPolishingVoiceContent by remember { mutableStateOf(false) }
+    var voicePolishError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val focusRequester = remember { FocusRequester() }
+
+    val voiceService = remember { VolcengineVoiceService(context) }
+    val voiceState by voiceService.stateFlow.collectAsState()
+    var lastCommittedVoiceText by remember { mutableStateOf("") }
+    var voiceSessionBaseText by remember { mutableStateOf("") }
+    var voiceCommittedInSession by remember { mutableStateOf("") }
+
+    var contentValue by remember {
+        mutableStateOf(TextFieldValue(content, selection = TextRange(content.length)))
+    }
+
+    fun commitVoiceTranscript(rawText: String) {
+        val transcript = normalizeVoiceText(rawText)
+        if (transcript.isBlank() || transcript == lastCommittedVoiceText) return
+        val committed = normalizeVoiceText(voiceCommittedInSession)
+        val delta = transcript.deltaAfter(committed)
+            .ifBlank { transcript.deltaAfter(normalizeVoiceText(voiceSessionBaseText)) }
+            .ifBlank { if (contentValue.text.containsNormalized(transcript)) "" else transcript }
+        if (delta.isBlank()) return
+        val base = contentValue.text.trimEnd()
+        if (base.containsNormalized(delta) || base.endsWith(delta)) return
+        val nextText = if (base.isBlank()) delta else "$base\n$delta"
+        contentValue = TextFieldValue(nextText, selection = TextRange(nextText.length))
+        viewModel.content = nextText
+        viewModel.markVoiceTranscriptionContent()
+        voiceCommittedInSession = normalizeVoiceText("$voiceCommittedInSession $delta")
+        lastCommittedVoiceText = delta
+    }
+
+    val commitVoiceTranscriptLatest by rememberUpdatedState(newValue = ::commitVoiceTranscript)
+
+    LaunchedEffect(voiceService) {
+        voiceService.finalTranscriptFlow.collect { finalTranscript ->
+            commitVoiceTranscriptLatest(finalTranscript)
+        }
+    }
+
+    // Sync contentValue when viewModel.content changes
+    LaunchedEffect(content) {
+        if (contentValue.text != content) {
+            contentValue = TextFieldValue(
+                text = content,
+                selection = TextRange(content.length)
+            )
+        }
+    }
+
+    // When switching to edit mode, move cursor to the end and request focus
+    LaunchedEffect(mode) {
+        if (mode == "edit") {
+            contentValue = contentValue.copy(selection = TextRange(contentValue.text.length))
+            kotlinx.coroutines.delay(100) // Small delay to ensure TextField is composed
+            focusRequester.requestFocus()
+        }
+    }
+
+    LaunchedEffect(voiceState.isRecording, voiceState.statusMessage) {
+        if (!voiceState.isRecording && voiceState.statusMessage.contains("30 秒")) {
+            commitVoiceTranscriptLatest(voiceState.partialTranscript)
+            Toast.makeText(context, "30 秒未检测到人声，已停止录音", Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // Image picker
     val imagePickerLauncher = rememberLauncherForActivityResult(
@@ -71,30 +140,48 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
         }
     }
 
-    val speechLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        if (result.resultCode == Activity.RESULT_OK) {
-            val transcript = result.data
-                ?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-                ?.trim()
-                .orEmpty()
-            if (transcript.isNotBlank()) {
-                viewModel.appendMarkdown("\n\n> 语音转写\n\n$transcript\n")
-                Toast.makeText(context, "语音已插入 Markdown", Toast.LENGTH_SHORT).show()
-            }
+    DisposableEffect(Unit) {
+        onDispose {
+            voiceService.release()
         }
     }
 
     fun startSpeechInput() {
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, "zh-CN")
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "说出要记录的灵感")
+        if (mode != "edit") {
+            Toast.makeText(context, "请切换到编辑模式以使用语音输入", Toast.LENGTH_SHORT).show()
+            return
         }
-        runCatching { speechLauncher.launch(intent) }
-            .onFailure { Toast.makeText(context, "当前设备不支持语音识别", Toast.LENGTH_SHORT).show() }
+
+        if (voiceState.isRecording) {
+            commitVoiceTranscript(voiceState.partialTranscript)
+            voiceService.stopRecording()
+            return
+        }
+
+        lastCommittedVoiceText = ""
+        voiceCommittedInSession = ""
+        voiceSessionBaseText = contentValue.text
+        voiceService.startRealtimeTranscription()
+    }
+
+    fun saveDirectly() {
+        scope.launch {
+            val savedTo = viewModel.saveToKnowledgeBase(selectedLibrary)
+            Toast.makeText(context, "已保存到「${savedTo}」知识库", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun requestSave() {
+        if (voiceState.isRecording) {
+            commitVoiceTranscript(voiceState.partialTranscript)
+            voiceService.stopRecording()
+        }
+        if (viewModel.hasVoiceTranscriptionContent) {
+            voicePolishError = null
+            showVoicePolishDialog = true
+        } else {
+            saveDirectly()
+        }
     }
 
     // Voice input - check permission and record
@@ -142,23 +229,20 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
                         )
                     }
-                    Surface(
-                        onClick = {
-                            scope.launch {
-                                val savedTo = viewModel.saveToKnowledgeBase(selectedLibrary)
-                                Toast.makeText(context, "已保存到「${savedTo}」知识库", Toast.LENGTH_SHORT).show()
-                            }
-                        },
-                        shape = RoundedCornerShape(20.dp),
-                        color = Color(0xFF111827)
-                    ) {
-                        Text(
-                            "保存",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = Color.White,
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
-                        )
+                    if (mode == "edit") {
+                        Surface(
+                            onClick = { requestSave() },
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color(0xFF111827)
+                        ) {
+                            Text(
+                                "保存",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -202,10 +286,28 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         TextField(
-                            value = content,
-                            onValueChange = { viewModel.content = it },
+                            value = if (voiceState.partialTranscript.isNotEmpty()) {
+                                val preview = voiceState.partialTranscript.previewDelta(
+                                    baseText = contentValue.text,
+                                    committedText = voiceCommittedInSession
+                                )
+                                val liveText = if (preview.isBlank()) {
+                                    contentValue.text
+                                } else {
+                                    "${contentValue.text.trimEnd()}\n$preview".trimStart()
+                                }
+                                TextFieldValue(liveText, selection = TextRange(liveText.length))
+                            } else {
+                                contentValue
+                            },
+                            onValueChange = { 
+                                if (voiceState.partialTranscript.isEmpty() && !voiceState.isRecording) {
+                                    contentValue = it
+                                    viewModel.content = it.text
+                                }
+                            },
                             placeholder = { Text("先记下来，不必马上整理。", fontSize = 16.sp, color = Color(0xFFD4D4D4)) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                             textStyle = TextStyle(fontSize = 16.sp, lineHeight = 28.sp, color = Color(0xFF262626)),
                             colors = TextFieldDefaults.colors(
                                 focusedContainerColor = Color.Transparent,
@@ -233,26 +335,37 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                 Row(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
+                        .imePadding()
                         .padding(bottom = 16.dp, end = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    SmallFloatingActionButton(
-                        onClick = {
-                            val hasPermission = ContextCompat.checkSelfPermission(
-                                context, Manifest.permission.RECORD_AUDIO
-                            ) == PackageManager.PERMISSION_GRANTED
-                            if (hasPermission) {
-                                startSpeechInput()
+                    if (mode == "edit") {
+                        SmallFloatingActionButton(
+                            onClick = {
+                                val hasPermission = ContextCompat.checkSelfPermission(
+                                    context, Manifest.permission.RECORD_AUDIO
+                                ) == PackageManager.PERMISSION_GRANTED
+                                if (hasPermission) {
+                                    startSpeechInput()
+                                } else {
+                                    audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                }
+                            },
+                            containerColor = if (voiceState.isRecording) Color(0xFFDBEEFF) else Color.White,
+                            contentColor = Color(0xFF147EC5),
+                            shape = CircleShape,
+                            modifier = Modifier.size(48.dp).shadow(4.dp, CircleShape)
+                        ) {
+                            if (voiceState.isRecording) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(24.dp),
+                                    color = Color(0xFF147EC5),
+                                    strokeWidth = 2.dp
+                                )
                             } else {
-                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                Icon(Icons.Default.Mic, contentDescription = null)
                             }
-                        },
-                        containerColor = Color.White,
-                        contentColor = Color(0xFF147EC5),
-                        shape = CircleShape,
-                        modifier = Modifier.size(48.dp).shadow(4.dp, CircleShape)
-                    ) {
-                        Icon(Icons.Default.Mic, contentDescription = null)
+                        }
                     }
                     FloatingActionButton(
                         onClick = { showMoreMenu = true },
@@ -265,6 +378,20 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
                     }
                 }
             }
+        }
+
+        if (voiceState.isRecording || voiceState.partialTranscript.isNotBlank() || voiceState.errorMessage != null) {
+            VoiceRealtimePanel(
+                state = voiceState,
+                onStop = {
+                    commitVoiceTranscript(voiceState.partialTranscript)
+                    voiceService.stopRecording()
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .imePadding()
+                    .padding(horizontal = 20.dp, vertical = 82.dp)
+            )
         }
 
         // More Menu Overlay
@@ -398,7 +525,172 @@ fun InspirationScreen(viewModel: NoteEditorViewModel) {
             }
         )
     }
+
+    if (showVoicePolishDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isPolishingVoiceContent) showVoicePolishDialog = false
+            },
+            icon = {
+                Icon(
+                    Icons.Default.AutoFixHigh,
+                    contentDescription = null,
+                    tint = Color(0xFF147EC5),
+                    modifier = Modifier.size(24.dp)
+                )
+            },
+            title = { Text("润色语音转写内容？", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("检测到当前灵感包含语音转写内容。是否先通过大模型修正错别字、标点和格式后再保存？不会改变原文含义。")
+                    voicePolishError?.let {
+                        Text(it, fontSize = 13.sp, color = Color(0xFFDC2626))
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    enabled = !isPolishingVoiceContent,
+                    onClick = {
+                        scope.launch {
+                            isPolishingVoiceContent = true
+                            voicePolishError = null
+                            val polishResult = viewModel.polishVoiceTranscriptionContent()
+                            isPolishingVoiceContent = false
+                            polishResult
+                                .onSuccess {
+                                    showVoicePolishDialog = false
+                                    saveDirectly()
+                                }
+                                .onFailure {
+                                    voicePolishError = it.message ?: "润色失败，请检查模型配置后重试"
+                                }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
+                ) {
+                    if (isPolishingVoiceContent) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            color = Color.White,
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Text("润色后保存", color = Color.White)
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isPolishingVoiceContent,
+                    onClick = {
+                        showVoicePolishDialog = false
+                        saveDirectly()
+                    }
+                ) {
+                    Text("直接保存原文")
+                }
+            }
+        )
+    }
 }
+
+@Composable
+private fun VoiceRealtimePanel(
+    state: VoiceRecognitionState,
+    onStop: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val level = (state.rms * 18f).coerceIn(0.04f, 1f)
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = Color.White,
+        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+        shadowElevation = 8.dp
+    ) {
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(10.dp)
+                        .background(if (state.errorMessage == null) Color(0xFF22C55E) else Color(0xFFEF4444), CircleShape)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = state.statusMessage,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF0F172A)
+                    )
+                    Text(
+                        text = "中英双语 · 手动停止或 30 秒无人声自动停止",
+                        fontSize = 11.sp,
+                        color = Color(0xFF64748B)
+                    )
+                }
+                TextButton(onClick = onStop, enabled = state.isRecording) {
+                    Text("停止")
+                }
+            }
+            LinearProgressIndicator(
+                progress = { level },
+                modifier = Modifier.fillMaxWidth().height(5.dp),
+                color = Color(0xFF147EC5),
+                trackColor = Color(0xFFEFF7FF)
+            )
+            val displayText = state.errorMessage ?: state.partialTranscript.ifBlank { "正在等待语音..." }
+            Text(
+                text = displayText,
+                fontSize = 14.sp,
+                lineHeight = 21.sp,
+                color = if (state.errorMessage == null) Color(0xFF334155) else Color(0xFFB91C1C),
+                modifier = Modifier.fillMaxWidth()
+            )
+        }
+    }
+}
+
+private fun String.previewDelta(baseText: String, committedText: String): String {
+    val transcript = normalizeVoiceText(this)
+    if (transcript.isBlank()) return ""
+    val committed = normalizeVoiceText(committedText)
+    val delta = transcript.deltaAfter(committed)
+        .ifBlank { if (baseText.containsNormalized(transcript)) "" else transcript }
+    return delta.trim()
+}
+
+private fun String.deltaAfter(prefixText: String): String {
+    val current = trim()
+    val prefix = prefixText.trim()
+    if (current.isBlank()) return ""
+    if (prefix.isBlank()) return current
+    if (current == prefix || prefix.contains(current)) return ""
+    if (current.startsWith(prefix)) return current.removePrefix(prefix).trimStart(' ', '\n', '，', '。', ',', '.')
+
+    val maxOverlap = minOf(prefix.length, current.length)
+    for (size in maxOverlap downTo 4) {
+        if (prefix.takeLast(size) == current.take(size)) {
+            return current.drop(size).trimStart(' ', '\n', '，', '。', ',', '.')
+        }
+    }
+    return if (prefix.containsNormalized(current)) "" else current
+}
+
+private fun String.containsNormalized(value: String): Boolean {
+    val haystack = normalizeVoiceText(this).compactVoiceText()
+    val needle = normalizeVoiceText(value).compactVoiceText()
+    return needle.isNotBlank() && haystack.contains(needle)
+}
+
+private fun normalizeVoiceText(text: String): String =
+    text.replace(Regex("\\s+"), " ")
+        .replace(Regex("([，。！？,.!?])\\1+"), "$1")
+        .trim()
+
+private fun String.compactVoiceText(): String =
+    replace(Regex("[\\s，。！？,.!?；;：:、]"), "")
 
 @Composable
 fun MarkdownModeBtn(text: String, active: Boolean, onClick: () -> Unit) {

@@ -17,6 +17,7 @@ class IngestOrchestrator(
     private val fileStore: LocalFileStore
 ) {
     private val fragmenter = MarkdownFragmenter()
+    private val wikiCompiler = WikiPageCompiler()
 
     suspend fun runUntilIdle(maxTasks: Int = 20) {
         repeat(maxTasks) {
@@ -152,12 +153,11 @@ class IngestOrchestrator(
         val source = db.sourceDocumentDao().getById(sourceId) ?: error("Source not found: $sourceId")
         val parsed = db.parsedContentDao().getLatestBySource(source.id) ?: error("Parsed content not found")
         val analysis = db.analysisResultDao().getLatestBySource(source.id) ?: error("Analysis result not found")
-        val reviewReason = IngestJsonValidator.firstJsonArrayText(analysis.gapsJson)
         val kbId = source.targetKnowledgeBaseId ?: db.knowledgeBaseDao().getByType("inspiration")?.id ?: db.knowledgeBaseDao().getByType("unfiled")?.id.orEmpty()
         val now = System.currentTimeMillis()
-        val existingItem = db.knowledgeItemDao().getBySourceId(source.id)
-        val item = KnowledgeItemEntity(
-            id = existingItem?.id ?: UUID.randomUUID().toString(),
+        val rootExistingItem = db.knowledgeItemDao().getBySourceId(source.id)
+        val rootItem = KnowledgeItemEntity(
+            id = rootExistingItem?.id ?: UUID.randomUUID().toString(),
             sourceId = source.id,
             knowledgeBaseId = kbId,
             title = source.title,
@@ -166,27 +166,59 @@ class IngestOrchestrator(
             sourceType = source.sourceType,
             status = if (analysis.confidence < 0.6f) KnowledgeItemEntity.STATUS_NEED_REVIEW else KnowledgeItemEntity.STATUS_ARCHIVED,
             contentHash = source.sha256,
-            sourceTraceJson = """{"sourceId":"${source.id}","parsedContentId":"${parsed.id}"}""",
+            sourceTraceJson = """{"sourceId":"${source.id}","parsedContentId":"${parsed.id}","localPath":"${source.localPath.orEmpty().escapeJson()}"}""",
             confidence = analysis.confidence,
             summary = analysis.summary,
             tagsJson = analysis.tagsJson,
             rawNoteId = null,
-            importance = 1,
-            createdAt = existingItem?.createdAt ?: now,
+            importance = 2,
+            createdAt = rootExistingItem?.createdAt ?: now,
             updatedAt = now,
             processedAt = now,
+            archivedAt = now,
             deletedAt = null
         )
-        db.knowledgeItemDao().insert(item)
-        db.knowledgeItemDao().updateItemCount(kbId)
-        db.knowledgeFragmentDao().attachSourceFragmentsToItem(source.id, item.id, kbId)
+        db.knowledgeItemDao().insert(rootItem)
+        db.knowledgeFragmentDao().attachSourceFragmentsToItem(source.id, rootItem.id, kbId)
 
+        val pageDrafts = wikiCompiler.compile(source, parsed, analysis)
+        val writtenItems = pageDrafts.mapIndexed { index, draft ->
+            val existingPage = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
+            val mergedMarkdown = existingPage?.let { wikiCompiler.merge(it.contentMarkdown, draft.markdown) } ?: draft.markdown
+            val item = KnowledgeItemEntity(
+                id = existingPage?.id ?: UUID.randomUUID().toString(),
+                sourceId = source.id,
+                knowledgeBaseId = kbId,
+                title = draft.title,
+                contentMarkdown = mergedMarkdown,
+                excerpt = draft.summary.take(120),
+                sourceType = draft.sourceType,
+                status = KnowledgeItemEntity.STATUS_ARCHIVED,
+                contentHash = fileStore.sha256Text(mergedMarkdown),
+                sourceTraceJson = draft.sourceTraceJson,
+                confidence = analysis.confidence,
+                summary = draft.summary,
+                tagsJson = draft.tagsJson,
+                rawNoteId = null,
+                importance = if (index == 0) 2 else 1,
+                createdAt = existingPage?.createdAt ?: now,
+                updatedAt = now,
+                processedAt = now,
+                archivedAt = now,
+                deletedAt = null
+            )
+            db.knowledgeItemDao().insert(item)
+            item
+        }
+        db.knowledgeItemDao().updateItemCount(kbId)
+
+        val reviewReason = IngestJsonValidator.firstJsonArrayText(analysis.gapsJson)
         if (analysis.confidence < 0.6f || reviewReason != null) {
             db.reviewItemDao().insert(
                 ReviewItemEntity(
                     id = UUID.randomUUID().toString(),
                     sourceId = source.id,
-                    itemId = item.id,
+                    itemId = rootItem.id,
                     type = "low_confidence",
                     title = "需要确认：${source.title}",
                     description = reviewReason ?: "本地分析置信度较低，请确认摘要、标签和归档位置。",
@@ -198,9 +230,25 @@ class IngestOrchestrator(
                 )
             )
         }
+        com.my.knowledge.data.repository.KnowledgeRepositoryImpl(
+            db.knowledgeBaseDao(),
+            db.knowledgeItemDao(),
+            db.processingTaskDao(),
+            db.archiveRecommendationDao(),
+            db.aiConversationDao(),
+            db.aiMessageDao(),
+            db.knowledgeThreadDao(),
+            db.knowledgeThreadLogDao(),
+            db.sourceManifestDao(),
+            db.knowledgeFragmentDao(),
+            db.processingTaskLogDao(),
+            db.askCitationDao(),
+            db.knowledgeGraphDao(),
+            db.reviewItemDao()
+        ).rebuildGraphForBase(kbId)
         db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_GENERATED, null, now)
-        markSuccess(task, "Generated knowledge item", """{"itemId":"${item.id}"}""")
-        enqueue(source.id, "embedding", 5, """{"itemId":"${item.id}"}""")
+        markSuccess(task, "Generated ${writtenItems.size} processed wiki pages", """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
+        enqueue(source.id, "embedding", 5, """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
     }
 
     private suspend fun embeddingTask(task: ProcessingTaskEntity) {
@@ -216,21 +264,51 @@ class IngestOrchestrator(
         val ai = AiGateway()
         if (!ai.isAvailable()) return null
         val prompt = buildString {
-            appendLine("请分析以下本地知识来源，生成结构化 ingest analysis JSON。")
-            appendLine("标题：${source.title}")
-            appendLine("来源类型：${source.sourceType}")
-            appendLine("内容：")
+            appendLine("你正在执行 Wiki Ingest 第一阶段：只分析来源，不写页面，只输出严格 JSON。")
+            appendLine()
+            appendLine("核心目标：Raw Sources → Wiki Pages → Schema/Graph。不要把文档只切成 chunk；请识别可维护的实体页、概念页、来源摘要页和它们之间的连接。")
+            appendLine()
+            appendLine("## Source Document")
+            appendLine("title: ${source.title}")
+            appendLine("type: ${source.sourceType}")
+            appendLine("file: ${source.originalUri ?: source.localPath ?: source.title}")
+            appendLine()
+            appendLine("## Current Index")
+            appendLine(buildCurrentIndex(source.targetKnowledgeBaseId))
+            appendLine()
+            appendLine("## Wiki Purpose")
+            appendLine("把原始资料编译成可读、可维护、可演进的 Wiki 页面；通过 YAML frontmatter、sources 溯源和正文 [[wikilink]] 自然生成图谱。")
+            appendLine()
+            appendLine("## Analysis Requirements")
+            appendLine("1. Key Entities：人物、组织、产品、数据集、工具、系统、项目、地点。只保留对来源理解重要的实体。")
+            appendLine("2. Key Concepts：理论、方法、技术、现象、原则、框架、问题。只保留可复用、可链接、值得成为 Wiki 页的概念。")
+            appendLine("3. Main Arguments & Findings：核心主张、发现、证据强度。")
+            appendLine("4. Connections to Existing Wiki：指出与现有页面可能的连接。")
+            appendLine("5. Contradictions & Tensions：冲突、张力、局限、内部矛盾。")
+            appendLine("6. Recommendations：建议创建或更新哪些 source/entity/concept/paper/method 页面。")
+            appendLine("7. 保守生成页面：不要为普通名词、过短短语、无稳定含义的词创建实体/概念。")
+            appendLine()
+            appendLine("## Source Content")
             appendLine(parsed.markdown.take(6000))
             appendLine()
-            appendLine("片段 ID：")
+            appendLine("## Fragment IDs")
             fragments.take(12).forEach { appendLine("- ${it.id}: ${it.content.take(160)}") }
         }
         return ai.chatJson(
-            systemPrompt = "你是本地优先知识库的 Two-Step Ingest 分析器。所有结论必须可追溯到输入片段。",
+            systemPrompt = "You are an expert research analyst for a local wiki ingest pipeline. Do not output chain-of-thought. Read the source and produce concise, structured JSON analysis for later wiki page generation. Every entity, concept, claim, relation, gap, and page recommendation must be grounded in source evidence.",
             userPrompt = prompt,
             schemaHint = ANALYSIS_SCHEMA,
             temperature = 0.2f
         ).takeIf { it.isNotBlank() && !it.startsWith("[") }
+    }
+
+    private suspend fun buildCurrentIndex(kbId: String?): String {
+        if (kbId.isNullOrBlank()) return "No existing index."
+        val pages = db.knowledgeItemDao().getAllByKb(kbId)
+            .filter { it.sourceType.startsWith("wiki_") }
+            .take(120)
+        if (pages.isEmpty()) return "No existing wiki pages."
+        return pages.joinToString("\n") { "- ${it.title} (${it.sourceType.removePrefix("wiki_")})" }
     }
 
     private suspend fun enqueue(sourceId: String, taskType: String, priority: Int, inputJson: String) {
@@ -302,11 +380,12 @@ class IngestOrchestrator(
   "title": "string",
   "summary": "string",
   "tags": ["string"],
-  "entities": [{"name":"string","type":"concept","description":"string","evidenceFragmentIds":["string"],"confidence":0.9}],
-  "concepts": [{"name":"string","definition":"string","evidenceFragmentIds":["string"]}],
-  "relations": [{"source":"string","target":"string","type":"related_to","reason":"string","evidenceFragmentIds":["string"],"confidence":0.8}],
-  "claims": [{"claim":"string","evidenceFragmentIds":["string"],"confidence":0.8}],
-  "gaps": [{"gap":"string","whyItMatters":"string","suggestedAction":"ask_user"}],
+  "entities": [{"name":"string","type":"Person|Organization|Product|Dataset|Tool|System|Project|Place","aliases":["string"],"description":"string","role_in_source":"central|supporting|peripheral","evidence":"string","source_refs":["fragmentId"],"related_concepts":["string"],"related_entities":["string"],"confidence":0.9}],
+  "concepts": [{"name":"string","category":"Theory|Method|Technique|Phenomenon|Principle|Framework|Problem","definition":"string","why_it_matters":"string","source_context":"string","related_entities":["string"],"related_concepts":["string"],"examples":["string"],"limitations":["string"],"source_refs":["fragmentId"],"confidence":0.9}],
+  "relations": [{"source":"string","target":"string","type":"supports|contradicts|extends|uses|part_of|related_to","reason":"string","evidenceFragmentIds":["string"],"confidence":0.8}],
+  "claims": [{"claim":"string","evidence":"string","evidenceFragmentIds":["string"],"confidence":0.8}],
+  "gaps": [{"gap":"string","whyItMatters":"string","suggestedAction":"ask_user|web_research|connect_nodes|validate_claim"}],
+  "pageRecommendations": [{"path":"wiki/entities/name.md","type":"entity|concept|source|paper|method|synthesis","title":"string","action":"create|update","reason":"string"}],
   "archiveRecommendation": {"targetKnowledgeBaseId":null,"targetKnowledgeBaseName":"","confidence":0.75,"reason":"string","suggestCreateNewBase":false,"newBaseName":null},
   "confidence": 0.75,
   "needHumanReview": true,

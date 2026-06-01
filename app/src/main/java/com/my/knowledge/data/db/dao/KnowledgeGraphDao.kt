@@ -24,6 +24,15 @@ interface KnowledgeGraphDao {
     @Query("DELETE FROM knowledge_embedding WHERE itemId = :itemId")
     suspend fun deleteEmbeddingsByItem(itemId: String)
 
+    @Query("SELECT * FROM knowledge_entity ORDER BY weight DESC, name ASC")
+    fun observeAllEntities(): Flow<List<KnowledgeEntityEntity>>
+
+    @Query("SELECT * FROM knowledge_relation ORDER BY confidence DESC")
+    fun observeAllRelations(): Flow<List<KnowledgeRelationEntity>>
+
+    @Query("SELECT * FROM knowledge_community ORDER BY updatedAt DESC")
+    fun observeAllCommunities(): Flow<List<KnowledgeCommunityEntity>>
+
     @Query("SELECT * FROM knowledge_entity WHERE knowledgeBaseId = :kbId ORDER BY weight DESC, name ASC")
     fun observeEntities(kbId: String): Flow<List<KnowledgeEntityEntity>>
 

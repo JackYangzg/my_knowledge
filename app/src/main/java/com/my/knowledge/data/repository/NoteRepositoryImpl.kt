@@ -35,15 +35,21 @@ class NoteRepositoryImpl(
         return note
     }
 
-    override suspend fun saveNote(id: String, content: String) {
+    override suspend fun saveNote(id: String, content: String, title: String?) {
         val note = noteDao.getById(id)
+        val normalizedTitle = title?.trim()?.ifBlank { null }
         if (note != null) {
-            noteDao.update(note.copy(autoSaveStatus = "saving", updatedAt = System.currentTimeMillis()))
+            noteDao.update(note.copy(
+                title = normalizedTitle ?: note.title,
+                autoSaveStatus = "saving",
+                updatedAt = System.currentTimeMillis()
+            ))
         }
         try {
             fileStore.writeMarkdown(id, content)
             if (note != null) {
                 noteDao.update(note.copy(
+                    title = normalizedTitle ?: note.title,
                     updatedAt = System.currentTimeMillis(),
                     autoSaveStatus = "saved",
                     contentHash = sha256(content)

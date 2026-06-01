@@ -24,12 +24,14 @@ fun ProfileScreen(
     viewModel: ProfileViewModel,
     onOpenSettings: () -> Unit,
     onOpenLogCenter: () -> Unit = {},
-    onOpenRecycleBin: () -> Unit = {}
+    onOpenRecycleBin: () -> Unit = {},
+    onOpenIntermediateData: () -> Unit = {}
 ) {
     val originalFiles = KnowledgeManager.originalFiles
     val unfiledWorkCount by viewModel.unfiledWorkCount.collectAsState()
     val pendingRecommendationCount by viewModel.pendingRecommendationCount.collectAsState()
     val profileStats by viewModel.profileStats.collectAsState()
+    val processingSummaries by viewModel.processingSummaries.collectAsState()
 
     LazyColumn(
         modifier = Modifier
@@ -43,6 +45,7 @@ fun ProfileScreen(
 
         item {
             Card(
+                onClick = onOpenIntermediateData,
                 modifier = Modifier
                     .padding(horizontal = 20.dp)
                     .fillMaxWidth(),
@@ -76,6 +79,35 @@ fun ProfileScreen(
                             fontSize = 12.sp,
                             color = Color(0xFFA3A3A3),
                             modifier = Modifier.padding(top = 2.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            Section(title = "知识加工数据", more = "查看详情", onMoreClick = onOpenIntermediateData) {
+                val visibleSummaries = processingSummaries.take(6)
+                if (visibleSummaries.isEmpty()) {
+                    QuietCell(
+                        icon = Icons.Default.Hub,
+                        title = "暂无加工数据",
+                        desc = "导入并完成知识加工后，会按知识库展示实体、概念和关系"
+                    )
+                } else {
+                    visibleSummaries.forEachIndexed { index, summary ->
+                        if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
+                        QuietCell(
+                            icon = Icons.Default.Hub,
+                            title = summary.knowledgeBaseName,
+                            desc = "${summary.itemCount} 条知识 · ${summary.entityCount} 个实体 · ${summary.conceptCount} 个概念 · ${summary.relationCount} 条关系 · ${summary.communityCount} 个主题群",
+                            right = {
+                                val topText = summary.topTerms.take(2).joinToString("、")
+                                if (topText.isNotBlank()) {
+                                    Text(topText, fontSize = 11.sp, color = Color(0xFF6AA8D0), maxLines = 1)
+                                }
+                            },
+                            onClick = onOpenIntermediateData
                         )
                     }
                 }

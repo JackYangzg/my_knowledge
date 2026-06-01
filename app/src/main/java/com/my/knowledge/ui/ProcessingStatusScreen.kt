@@ -1,6 +1,7 @@
 package com.my.knowledge.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -110,7 +111,8 @@ fun ProcessingStatusScreen(
                     TaskCard(
                         task = task,
                         onRetry = { viewModel.retryTask(task.id) },
-                        onCancel = { viewModel.cancelTask(task.id) }
+                        onCancel = { viewModel.cancelTask(task.id) },
+                        viewModel = viewModel
                     )
                 }
             }
@@ -267,13 +269,21 @@ private fun EmptyHint(text: String) {
 private fun TaskCard(
     task: ProcessingTaskEntity,
     onRetry: () -> Unit,
-    onCancel: () -> Unit
+    onCancel: () -> Unit,
+    viewModel: ProcessingStatusViewModel
 ) {
+    var expanded by remember { mutableStateOf(false) }
+    val logs by if (expanded) {
+        viewModel.observeLogs(task.targetType, task.targetId).collectAsState(emptyList())
+    } else {
+        remember { mutableStateOf(emptyList<com.my.knowledge.data.db.entity.ProcessingTaskLogEntity>()) }
+    }
+
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = Color.White,
         shadowElevation = 1.dp,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -295,6 +305,61 @@ private fun TaskCard(
                             "目标: ${task.targetType}/${task.targetId.take(8)}...",
                             fontSize = 12.sp,
                             color = Color(0xFF5F87A3)
+                        )
+                    }
+                }
+                Icon(
+                    if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = null,
+                    tint = Color(0xFFA3A3A3),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
+            if (task.status == "running" || task.progress > 0) {
+                Spacer(modifier = Modifier.height(12.dp))
+                LinearProgressIndicator(
+                    progress = { task.progress / 100f },
+                    modifier = Modifier.fillMaxWidth().height(4.dp),
+                    color = Color(0xFF147EC5),
+                    trackColor = Color(0xFFDBEEFF)
+                )
+                Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(task.currentStep ?: "执行中", fontSize = 11.sp, color = Color(0xFF5F87A3))
+                    Text("${task.progress}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF147EC5))
+                }
+            }
+
+            if (expanded) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("加工详情", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                // Pipeline Stages
+                val stages = listOf(
+                    "summary" to "内容摘要",
+                    "tag" to "自动打标",
+                    "archive_recommend" to "归档建议"
+                )
+                
+                stages.forEach { (type, label) ->
+                    val stageLog = logs.find { it.stage == type }
+                    StageRow(
+                        label = label,
+                        status = stageLog?.status ?: "pending",
+                        message = stageLog?.message
+                    )
+                }
+
+                if (logs.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text("最近日志", fontSize = 12.sp, color = Color(0xFF5F87A3))
+                    logs.take(3).forEach { log ->
+                        Text(
+                            "• [${log.status}] ${log.message}",
+                            fontSize = 11.sp,
+                            color = Color(0xFF737373),
+                            modifier = Modifier.padding(top = 4.dp)
                         )
                     }
                 }
@@ -357,6 +422,29 @@ private fun TaskCard(
                         Text("取消", fontSize = 12.sp, color = Color(0xFFDC2626))
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StageRow(label: String, status: String, message: String?) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        val (icon, color) = when (status) {
+            "success" -> Icons.Default.CheckCircle to Color(0xFF16A34A)
+            "running" -> Icons.Default.Sync to Color(0xFF147EC5)
+            "failed" -> Icons.Default.Error to Color(0xFFDC2626)
+            else -> Icons.Default.RadioButtonUnchecked to Color(0xFFD4D4D4)
+        }
+        Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Column {
+            Text(label, fontSize = 12.sp, color = if (status == "pending") Color(0xFFA3A3A3) else Color(0xFF0F172A))
+            if (!message.isNullOrBlank()) {
+                Text(message, fontSize = 11.sp, color = Color(0xFF5F87A3))
             }
         }
     }

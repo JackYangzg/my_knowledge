@@ -110,5 +110,9 @@ data class ModelConfig(
     val searchAnalysisProvider: String = "minimax",
     val searchAnalysisApiKey: String = "",
     val searchAnalysisBaseUrl: String = "https://api.minimaxi.com/v1",
+    val voiceProvider: String = "volcengine",
+    val voiceApiKey: String = "",
+    val voiceAppId: String = "",
+    val voiceClusterId: String = "volc_ent_asr_streaming",
     val debugPromptEnabled: Boolean = false
 )

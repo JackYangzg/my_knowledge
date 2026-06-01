@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
+import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
 import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
@@ -80,6 +81,10 @@ class ProcessingStatusViewModel(
         viewModelScope.launch {
             knowledgeRepository.rejectRecommendation(recommendationId)
         }
+    }
+
+    fun observeLogs(targetType: String, targetId: String): Flow<List<ProcessingTaskLogEntity>> {
+        return knowledgeRepository.observeProcessingLogs(targetType, targetId)
     }
 
     fun acceptReview(reviewId: String) {

@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.domain.repository.ProfileStats
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +33,31 @@ class ProfileViewModel(
     val profileStats: StateFlow<ProfileStats> = knowledgeRepository.observeProfileStats()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ProfileStats(0, 0, 0, 0))
 
+    val processingSummaries: StateFlow<List<KnowledgeBaseProcessingSummary>> =
+        combine(
+            knowledgeRepository.observeAllBases(),
+            knowledgeRepository.observeAllKnowledgeEntities(),
+            knowledgeRepository.observeAllKnowledgeRelations(),
+            knowledgeRepository.observeAllKnowledgeCommunities()
+        ) { bases, entities, relations, communities ->
+            val entitiesByKb = entities.groupBy { it.knowledgeBaseId }
+            val relationsByKb = relations.groupBy { it.knowledgeBaseId }
+            val communitiesByKb = communities.groupBy { it.knowledgeBaseId }
+            bases.map { base ->
+                val kbEntities = entitiesByKb[base.id].orEmpty()
+                KnowledgeBaseProcessingSummary(
+                    knowledgeBaseId = base.id,
+                    knowledgeBaseName = base.name,
+                    itemCount = base.itemCount,
+                    entityCount = kbEntities.count { it.type != "concept" },
+                    conceptCount = kbEntities.count { it.type == "concept" },
+                    relationCount = relationsByKb[base.id].orEmpty().size,
+                    communityCount = communitiesByKb[base.id].orEmpty().size,
+                    topTerms = kbEntities.sortedByDescending { it.weight }.take(5).map { it.name }
+                )
+            }
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     fun exportMarkdownBackup() {
         viewModelScope.launch {
             try {
@@ -44,3 +70,14 @@ class ProfileViewModel(
         }
     }
 }
+
+data class KnowledgeBaseProcessingSummary(
+    val knowledgeBaseId: String,
+    val knowledgeBaseName: String,
+    val itemCount: Int,
+    val entityCount: Int,
+    val conceptCount: Int,
+    val relationCount: Int,
+    val communityCount: Int,
+    val topTerms: List<String>
+)

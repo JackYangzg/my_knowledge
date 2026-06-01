@@ -27,6 +27,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.viewmodel.AskViewModel
+import com.my.knowledge.viewmodel.IntermediateDataViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemDetailViewModel
@@ -55,6 +56,7 @@ sealed class Route(val path: String) {
     data object Settings : Route("settings")
     data object LogCenter : Route("log_center")
     data object RecycleBin : Route("recycle_bin")
+    data object IntermediateData : Route("intermediate_data")
     data object KnowledgeBaseDetail : Route("knowledge_base/{kbId}") {
         fun create(kbId: String) = "knowledge_base/${Uri.encode(kbId)}"
     }
@@ -90,6 +92,7 @@ fun KnowledgeApp() {
     val threadViewModel: ThreadViewModel = viewModel(factory = ViewModelFactory)
     val detailViewModel: KnowledgeItemDetailViewModel = viewModel(factory = ViewModelFactory)
     val recycleBinViewModel: RecycleBinViewModel = viewModel(factory = ViewModelFactory)
+    val intermediateDataViewModel: IntermediateDataViewModel = viewModel(factory = ViewModelFactory)
 
     Scaffold(
         bottomBar = {
@@ -136,7 +139,8 @@ fun KnowledgeApp() {
                         viewModel = profileViewModel,
                         onOpenSettings = { navController.navigate(Route.Settings.path) },
                         onOpenLogCenter = { navController.navigate(Route.LogCenter.path) },
-                        onOpenRecycleBin = { navController.navigate(Route.RecycleBin.path) }
+                        onOpenRecycleBin = { navController.navigate(Route.RecycleBin.path) },
+                        onOpenIntermediateData = { navController.navigate(Route.IntermediateData.path) }
                     )
                 }
                 composable(Route.Context.path) {
@@ -173,6 +177,12 @@ fun KnowledgeApp() {
                         onBack = { navController.popBackStack() }
                     )
                 }
+                composable(Route.IntermediateData.path) {
+                    IntermediateDataScreen(
+                        viewModel = intermediateDataViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                }
                 composable(
                     route = Route.KnowledgeBaseDetail.path,
                     arguments = listOf(navArgument("kbId") { type = NavType.StringType })
@@ -202,7 +212,11 @@ fun KnowledgeApp() {
                     KnowledgeViewerScreen(
                         itemId = itemId,
                         viewModel = detailViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onOpenItem = { nextItemId ->
+                            val kbId = entry.arguments?.getString("kbId").orEmpty()
+                            navController.navigate(Route.KnowledgeItemDetail.create(kbId, nextItemId))
+                        }
                     )
                 }
                 composable(

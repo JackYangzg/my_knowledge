@@ -196,6 +196,12 @@ class KnowledgeRepositoryImpl(
 
     override suspend fun getItemById(id: String): KnowledgeItemEntity? = itemDao.getById(id)
 
+    override suspend fun getItemBySourceId(sourceId: String): KnowledgeItemEntity? =
+        itemDao.getBySourceId(sourceId)
+
+    override fun observeProcessedItemsBySource(sourceId: String): Flow<List<KnowledgeItemEntity>> =
+        itemDao.observeProcessedBySource(sourceId)
+
     override suspend fun updateItem(item: KnowledgeItemEntity) {
         val updated = item.copy(updatedAt = System.currentTimeMillis())
         itemDao.update(updated)
@@ -378,61 +384,101 @@ class KnowledgeRepositoryImpl(
         graphDao.clearRelations(kbId)
         graphDao.clearCommunities(kbId)
 
-        val entityCandidates = items.flatMap { item ->
-            extractConcepts("${item.title} ${item.summary ?: ""} ${item.tagsJson}").map { concept -> concept to item.id }
+        val wikiPages = items.filter { it.sourceType.startsWith("wiki_") }
+            .ifEmpty { items }
+        val pageMeta = wikiPages.map { item ->
+            WikiPageMeta(
+                item = item,
+                title = frontMatterValue(item.contentMarkdown, "title") ?: item.title,
+                type = frontMatterValue(item.contentMarkdown, "type") ?: when (item.sourceType) {
+                    "wiki_entity" -> "entity"
+                    "wiki_concept" -> "concept"
+                    "wiki_source" -> "source"
+                    else -> "concept"
+                },
+                sources = frontMatterList(item.contentMarkdown, "sources"),
+                links = extractWikiLinks(item.contentMarkdown)
+            )
         }
-        val grouped = entityCandidates.groupBy({ it.first }, { it.second })
-        val entities = grouped.map { (name, itemIds) ->
+
+        val entities = pageMeta.map { page ->
             KnowledgeEntityEntity(
                 id = UUID.randomUUID().toString(),
                 knowledgeBaseId = kbId,
-                name = name,
-                type = "concept",
+                name = page.title,
+                type = page.type,
                 aliasesJson = "[]",
-                sourceItemIdsJson = itemIds.distinct().joinToString(",", "[", "]") { "\"$it\"" },
-                weight = itemIds.distinct().size.toFloat(),
+                sourceItemIdsJson = "[\"${page.item.id}\"]",
+                weight = (1 + page.links.size + page.sources.size).toFloat(),
                 createdAt = now,
                 updatedAt = now
             )
-        }.sortedByDescending { it.weight }.take(80)
+        }.sortedByDescending { it.weight }.take(200)
         graphDao.upsertEntities(entities)
 
-        val byName = entities.associateBy { it.name }
+        val byName = entities.associateBy { it.name.lowercase(Locale.ROOT) }
+        val pageByName = pageMeta.associateBy { it.title.lowercase(Locale.ROOT) }
         val relations = mutableListOf<KnowledgeRelationEntity>()
-        items.forEach { item ->
-            val concepts = extractConcepts("${item.title} ${item.summary ?: ""} ${item.tagsJson}")
-                .mapNotNull { byName[it] }
-                .distinctBy { it.id }
-                .take(8)
-            for (i in 0 until concepts.size) {
-                for (j in i + 1 until concepts.size) {
-                    relations.add(
-                        KnowledgeRelationEntity(
-                            id = UUID.randomUUID().toString(),
-                            knowledgeBaseId = kbId,
-                            fromEntityId = concepts[i].id,
-                            toEntityId = concepts[j].id,
-                            relationType = "co_occurs",
-                            evidenceItemIdsJson = "[\"${item.id}\"]",
-                            confidence = 0.6f,
-                            createdAt = now,
-                            updatedAt = now
-                        )
+
+        pageMeta.forEach { page ->
+            val from = byName[page.title.lowercase(Locale.ROOT)] ?: return@forEach
+            page.links.forEach { link ->
+                val to = byName[link.lowercase(Locale.ROOT)] ?: return@forEach
+                if (from.id != to.id) {
+                    relations += KnowledgeRelationEntity(
+                        id = UUID.randomUUID().toString(),
+                        knowledgeBaseId = kbId,
+                        fromEntityId = from.id,
+                        toEntityId = to.id,
+                        relationType = "wikilink",
+                        evidenceItemIdsJson = "[\"${page.item.id}\"]",
+                        confidence = 1.0f,
+                        createdAt = now,
+                        updatedAt = now
                     )
                 }
             }
         }
+
+        val relationKeys = relations.map { it.fromEntityId to it.toEntityId }.toMutableSet()
+        for (i in pageMeta.indices) {
+            for (j in i + 1 until pageMeta.size) {
+                val left = pageMeta[i]
+                val right = pageMeta[j]
+                val overlap = left.sources.intersect(right.sources.toSet())
+                if (overlap.isEmpty()) continue
+                val from = byName[left.title.lowercase(Locale.ROOT)] ?: continue
+                val to = byName[right.title.lowercase(Locale.ROOT)] ?: continue
+                val key = from.id to to.id
+                if (key in relationKeys) continue
+                relations += KnowledgeRelationEntity(
+                    id = UUID.randomUUID().toString(),
+                    knowledgeBaseId = kbId,
+                    fromEntityId = from.id,
+                    toEntityId = to.id,
+                    relationType = "source_overlap",
+                    evidenceItemIdsJson = "[\"${left.item.id}\",\"${right.item.id}\"]",
+                    confidence = 0.8f,
+                    createdAt = now,
+                    updatedAt = now
+                )
+                relationKeys += key
+            }
+        }
         graphDao.upsertRelations(relations.take(200))
 
-        val communities = entities.groupBy { it.name.firstOrNull()?.toString() ?: "#" }
+        val communities = pageMeta.groupBy { page ->
+            page.sources.firstOrNull() ?: page.type
+        }
             .filter { it.value.size >= 2 }
             .map { (key, group) ->
                 KnowledgeCommunityEntity(
                     id = UUID.randomUUID().toString(),
                     knowledgeBaseId = kbId,
-                    name = "主题群 $key",
-                    entityIdsJson = group.joinToString(",", "[", "]") { "\"${it.id}\"" },
-                    summary = group.take(6).joinToString("、") { it.name },
+                    name = "来源群 $key",
+                    entityIdsJson = group.mapNotNull { byName[it.title.lowercase(Locale.ROOT)] }
+                        .joinToString(",", "[", "]") { "\"${it.id}\"" },
+                    summary = group.take(6).joinToString("、") { it.title },
                     createdAt = now,
                     updatedAt = now
                 )
@@ -443,11 +489,20 @@ class KnowledgeRepositoryImpl(
     override fun observeKnowledgeEntities(kbId: String): Flow<List<KnowledgeEntityEntity>> =
         graphDao.observeEntities(kbId)
 
+    override fun observeAllKnowledgeEntities(): Flow<List<KnowledgeEntityEntity>> =
+        graphDao.observeAllEntities()
+
     override fun observeKnowledgeRelations(kbId: String): Flow<List<KnowledgeRelationEntity>> =
         graphDao.observeRelations(kbId)
 
+    override fun observeAllKnowledgeRelations(): Flow<List<KnowledgeRelationEntity>> =
+        graphDao.observeAllRelations()
+
     override fun observeKnowledgeCommunities(kbId: String): Flow<List<KnowledgeCommunityEntity>> =
         graphDao.observeCommunities(kbId)
+
+    override fun observeAllKnowledgeCommunities(): Flow<List<KnowledgeCommunityEntity>> =
+        graphDao.observeAllCommunities()
 
     // === ProcessingTask operations ===
     override suspend fun createProcessingTask(task: ProcessingTaskEntity): ProcessingTaskEntity {
@@ -674,4 +729,39 @@ class KnowledgeRepositoryImpl(
             .map { it.trim() }
             .filter { it.isNotBlank() }
     }
+
+    private data class WikiPageMeta(
+        val item: KnowledgeItemEntity,
+        val title: String,
+        val type: String,
+        val sources: List<String>,
+        val links: List<String>
+    )
+
+    private fun frontMatterValue(markdown: String, key: String): String? {
+        val frontMatter = markdown.substringAfter("---", "").substringBefore("---", "")
+        return frontMatter.lines()
+            .firstOrNull { it.trimStart().startsWith("$key:") }
+            ?.substringAfter(":")
+            ?.trim()
+            ?.trim('"')
+            ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
+    }
+
+    private fun frontMatterList(markdown: String, key: String): List<String> {
+        val frontMatter = markdown.substringAfter("---", "").substringBefore("---", "")
+        val line = frontMatter.lines().firstOrNull { it.trimStart().startsWith("$key:") } ?: return emptyList()
+        return line.substringAfter("[", "").substringBefore("]", "")
+            .split(",")
+            .map { it.trim().trim('"') }
+            .filter { it.isNotBlank() }
+    }
+
+    private fun extractWikiLinks(markdown: String): List<String> =
+        Regex("\\[\\[([^\\]]+)]]")
+            .findAll(markdown)
+            .map { it.groupValues[1].substringBefore("|").trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .toList()
 }

@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
+import com.mukesh.MarkDown
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -350,13 +351,21 @@ private fun MessageBubble(
                 color = bgColor,
                 shadowElevation = 0.dp
             ) {
-                Text(
-                    msg.content,
-                    fontSize = 13.sp,
-                    color = textColor,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    lineHeight = 20.sp
-                )
+                if (isUser) {
+                    Text(
+                        msg.content,
+                        fontSize = 13.sp,
+                        color = textColor,
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        lineHeight = 20.sp
+                    )
+                } else {
+                    MarkDown(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        text = msg.content.ifBlank { "..." },
+                        shouldOpenUrlInBrowser = true
+                    )
+                }
             }
         }
 

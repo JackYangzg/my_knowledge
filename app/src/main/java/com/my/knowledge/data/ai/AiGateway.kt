@@ -3,11 +3,16 @@ package com.my.knowledge.data.ai
 import com.my.knowledge.ui.KnowledgeManager
 import com.my.knowledge.ui.ModelConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -17,6 +22,7 @@ import java.net.URL
 interface AiProvider {
     suspend fun chat(prompt: String, context: String): String
     suspend fun complete(systemPrompt: String, userMessage: String): String
+    fun completeStream(systemPrompt: String, userMessage: String): Flow<String>
     suspend fun chatJson(
         systemPrompt: String,
         userPrompt: String,
@@ -50,6 +56,69 @@ class AiGateway : AiProvider {
 
         return callApi(config, systemPrompt, userMessage)
     }
+
+    override fun completeStream(systemPrompt: String, userMessage: String): Flow<String> = flow {
+        val config = KnowledgeManager.modelConfig
+        if (config.apiKey.isBlank()) {
+            emit("[配置缺失] 请在设置中配置 API Key。")
+            return@flow
+        }
+
+        val messages = buildJsonArray {
+            add(buildJsonObject {
+                put("role", JsonPrimitive("system"))
+                put("content", JsonPrimitive(systemPrompt))
+            })
+            add(buildJsonObject {
+                put("role", JsonPrimitive("user"))
+                put("content", JsonPrimitive(userMessage))
+            })
+        }
+
+        val requestBody = buildJsonObject {
+            put("model", JsonPrimitive(config.modelName))
+            put("messages", messages)
+            put("max_tokens", JsonPrimitive(2048))
+            put("temperature", JsonPrimitive(0.7f))
+            put("stream", JsonPrimitive(true))
+        }
+
+        val url = URL("${config.baseUrl.trimEnd('/')}/chat/completions")
+        val connection = url.openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = "POST"
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Authorization", "Bearer ${config.apiKey}")
+            connection.setRequestProperty("Accept", "text/event-stream")
+            connection.doOutput = true
+            connection.connectTimeout = 30_000
+            connection.readTimeout = 60_000
+            connection.outputStream.use { it.write(requestBody.toString().toByteArray(Charsets.UTF_8)) }
+
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                val errorText = connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+                emit("[AI 调用失败] HTTP $responseCode: $errorText")
+                return@flow
+            }
+
+            connection.inputStream.bufferedReader().useLines { lines ->
+                lines.forEach { line ->
+                    val payload = line.trim().removePrefix("data:").trim()
+                    if (payload.isBlank() || payload == "[DONE]") return@forEach
+                    parseStreamDelta(payload)?.takeIf { it.isNotBlank() }?.let { emit(it) }
+                }
+            }
+        } catch (e: java.net.ConnectException) {
+            emit("[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。")
+        } catch (e: java.net.SocketTimeoutException) {
+            emit("[超时] AI 服务响应超时，请稍后重试。")
+        } catch (e: Exception) {
+            emit("[AI 调用异常] ${e.localizedMessage ?: "未知错误"}")
+        } finally {
+            connection.disconnect()
+        }
+    }.flowOn(Dispatchers.IO)
 
     override suspend fun chatJson(
         systemPrompt: String,
@@ -106,7 +175,7 @@ class AiGateway : AiProvider {
                 put("temperature", JsonPrimitive(temperature))
             }
 
-            val url = URL("${config.baseUrl}/chat/completions")
+            val url = URL("${config.baseUrl.trimEnd('/')}/chat/completions")
             val connection = url.openConnection() as HttpURLConnection
             try {
                 connection.requestMethod = "POST"
@@ -156,6 +225,21 @@ class AiGateway : AiProvider {
             "[解析失败] ${e.localizedMessage ?: "无法解析 AI 响应"}"
         }
     }
+
+    private fun parseStreamDelta(payload: String): String? {
+        return try {
+            val responseObj = json.parseToJsonElement(payload).jsonObject
+            val choice = responseObj["choices"]?.jsonArray?.firstOrNull()?.jsonObject ?: return null
+            val delta = choice["delta"]?.jsonObject
+            val message = choice["message"]?.jsonObject
+            (delta?.getString("content") ?: message?.getString("content"))?.stripThinkBlock()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    private fun Map<String, JsonElement>.getString(key: String): String? =
+        this[key]?.jsonPrimitive?.contentOrNull
 
     private fun String.stripThinkBlock(): String =
         replace(Regex("<think>[\\s\\S]*?</think>"), "").trim()

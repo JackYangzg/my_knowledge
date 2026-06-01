@@ -8,13 +8,14 @@ import kotlinx.coroutines.flow.Flow
 interface KnowledgeItemDao {
     @Query("""
         SELECT * FROM knowledge_item 
-        WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL 
+        WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL
+        AND sourceType NOT LIKE 'wiki_%'
         ORDER BY updatedAt DESC 
         LIMIT :limit OFFSET :offset
     """)
     fun observePagedByKb(kbId: String, limit: Int, offset: Int): Flow<List<KnowledgeItemEntity>>
 
-    @Query("SELECT COUNT(*) FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL")
+    @Query("SELECT COUNT(*) FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL AND sourceType NOT LIKE 'wiki_%'")
     fun observeCountByKb(kbId: String): Flow<Int>
 
     // Unfiled items
@@ -40,6 +41,24 @@ interface KnowledgeItemDao {
 
     @Query("SELECT * FROM knowledge_item WHERE sourceId = :sourceId AND deletedAt IS NULL ORDER BY createdAt ASC LIMIT 1")
     suspend fun getBySourceId(sourceId: String): KnowledgeItemEntity?
+
+    @Query("""
+        SELECT * FROM knowledge_item
+        WHERE sourceId = :sourceId AND deletedAt IS NULL
+        AND sourceType LIKE 'wiki_%'
+        ORDER BY
+            CASE sourceType
+                WHEN 'wiki_source' THEN 0
+                WHEN 'wiki_entity' THEN 1
+                WHEN 'wiki_concept' THEN 2
+                WHEN 'wiki_overview' THEN 3
+                WHEN 'wiki_index' THEN 4
+                WHEN 'wiki_log' THEN 5
+                ELSE 9
+            END,
+            title ASC
+    """)
+    fun observeProcessedBySource(sourceId: String): Flow<List<KnowledgeItemEntity>>
 
     @Query("SELECT * FROM knowledge_item WHERE id = :id")
     suspend fun getByIdIncludeDeleted(id: String): KnowledgeItemEntity?
@@ -92,11 +111,11 @@ interface KnowledgeItemDao {
     @Query("SELECT COUNT(*) FROM knowledge_item WHERE status IN (:statuses) AND deletedAt IS NULL")
     fun observeCountByStatuses(statuses: List<String>): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM knowledge_item WHERE deletedAt IS NULL")
+    @Query("SELECT COUNT(*) FROM knowledge_item WHERE deletedAt IS NULL AND sourceType NOT LIKE 'wiki_%'")
     fun observeActiveItemCount(): Flow<Int>
 
     // Batch item count update
-    @Query("UPDATE knowledge_base SET itemCount = (SELECT COUNT(*) FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL) WHERE id = :kbId")
+    @Query("UPDATE knowledge_base SET itemCount = (SELECT COUNT(*) FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL AND sourceType NOT LIKE 'wiki_%') WHERE id = :kbId")
     suspend fun updateItemCount(kbId: String)
 
     // Status queries
@@ -105,6 +124,9 @@ interface KnowledgeItemDao {
 
     @Query("SELECT * FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL")
     suspend fun getAllByKb(kbId: String): List<KnowledgeItemEntity>
+
+    @Query("SELECT * FROM knowledge_item WHERE knowledgeBaseId = :kbId AND sourceType = :sourceType AND title = :title AND deletedAt IS NULL LIMIT 1")
+    suspend fun getByKbSourceTypeAndTitle(kbId: String, sourceType: String, title: String): KnowledgeItemEntity?
 
     @Query("SELECT * FROM knowledge_item WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT :limit OFFSET :offset")
     suspend fun getAllActive(limit: Int, offset: Int): List<KnowledgeItemEntity>

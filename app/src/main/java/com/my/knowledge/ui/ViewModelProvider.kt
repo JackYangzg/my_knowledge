@@ -141,6 +141,9 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
             modelClass.isAssignableFrom(RecycleBinViewModel::class.java) -> {
                 RecycleBinViewModel(knowledgeRepo) as T
             }
+            modelClass.isAssignableFrom(IntermediateDataViewModel::class.java) -> {
+                IntermediateDataViewModel(knowledgeRepo) as T
+            }
             else -> throw IllegalArgumentException("Unknown ViewModel class")
         }
     }

@@ -121,6 +121,7 @@ class AskViewModel(
         viewModelScope.launch {
             val conversationId = ensureActiveConversation()
             _isLoading.value = true
+            val previousMessages = _messages.value
 
             val userMsg = AiMessageEntity(
                 id = UUID.randomUUID().toString(),
@@ -135,18 +136,45 @@ class AskViewModel(
 
             val relevantResults = searchRelevantResults(question)
             val relevantItems = hydrateItems(relevantResults)
-            val debugPrompt = buildAskPrompt(question, relevantResults, relevantItems, _messages.value)
+            val debugPrompt = buildAskPrompt(question, relevantResults, relevantItems, previousMessages)
             if (KnowledgeManager.modelConfig.debugPromptEnabled) {
                 _debugPrompts.value = _debugPrompts.value + (userMsg.id to debugPrompt)
             }
-            val answer = runCatching {
-                AiGateway().complete(AiPromptTemplates.BASE_SYSTEM_PROMPT, debugPrompt)
-            }.getOrNull()
-                ?.takeIf { it.isNotBlank() && !it.startsWith("[配置缺失]") && !it.startsWith("[AI 调用") && !it.startsWith("[连接失败]") && !it.startsWith("[超时]") }
-                ?: generateAnswerWithMarkers(question, relevantResults, relevantItems)
+            val assistantMsgId = UUID.randomUUID().toString()
+            val streamingMsg = AiMessageEntity(
+                id = assistantMsgId,
+                conversationId = conversationId,
+                role = "assistant",
+                content = "",
+                contentType = ContentType.GENERAL,
+                citationJson = buildCitationJson(relevantResults, relevantItems),
+                sourceItemIdsJson = relevantResults.map { it.itemId }
+                    .ifEmpty { relevantItems.map { it.id } }
+                    .distinct()
+                    .joinToString(",", "[", "]") { "\"$it\"" },
+                createdAt = System.currentTimeMillis()
+            )
+            _messages.value = _messages.value + streamingMsg
+
+            var answer = ""
+            runCatching {
+                AiGateway().completeStream(AiPromptTemplates.BASE_SYSTEM_PROMPT, debugPrompt)
+                    .collect { chunk ->
+                        answer += chunk
+                        _messages.value = _messages.value.map {
+                            if (it.id == assistantMsgId) it.copy(content = answer) else it
+                        }
+                    }
+            }
+            if (answer.isBlank() || isAiFailure(answer)) {
+                answer = generateAnswerWithMarkers(question, relevantResults, relevantItems)
+                _messages.value = _messages.value.map {
+                    if (it.id == assistantMsgId) it.copy(content = answer) else it
+                }
+            }
 
             val assistantMsg = AiMessageEntity(
-                id = UUID.randomUUID().toString(),
+                id = assistantMsgId,
                 conversationId = conversationId,
                 role = "assistant",
                 content = answer,
@@ -162,7 +190,7 @@ class AskViewModel(
             val citations = buildCitations(assistantMsg.id, relevantResults, relevantItems, answer)
             knowledgeRepository.replaceCitationsForMessage(assistantMsg.id, citations)
             _lastCitations.value = citations
-            _messages.value = _messages.value + assistantMsg
+            _messages.value = _messages.value.map { if (it.id == assistantMsgId) assistantMsg else it }
 
             val conversation = knowledgeRepository.getConversation(conversationId)
             if (conversation != null && conversation.title == "新对话") {
@@ -173,6 +201,11 @@ class AskViewModel(
 
             _isLoading.value = false
         }
+    }
+
+    private fun isAiFailure(text: String): Boolean {
+        return listOf("[配置缺失]", "[AI 调用失败]", "[连接失败]", "[超时]", "[AI 调用异常]", "[API 错误]", "[解析失败]")
+            .any { text.trimStart().startsWith(it) }
     }
 
     private suspend fun ensureActiveConversation(): String {
@@ -353,16 +386,13 @@ class AskViewModel(
             if (relevantResults.isNotEmpty()) {
                 for (result in relevantResults) {
                     appendLine("【来自原文】")
-                    appendLine(result.snippet.take(300))
-                    appendLine("来源：知识条目「${result.title}」${result.fragmentId?.let { " · 片段 ${it.take(8)}" } ?: ""}")
+                    appendLine("来源：${result.title}")
                     appendLine()
                 }
             } else {
                 for (item in relevantItems) {
                     appendLine("【来自原文】")
-                    appendLine(item.contentMarkdown.take(300))
-                    appendLine("来源：知识条目「${item.title}」")
-                    if (item.summary != null) appendLine("摘要：${item.summary}")
+                    appendLine("来源：${item.title}")
                     appendLine()
                 }
             }
@@ -416,6 +446,11 @@ class AskViewModel(
 
             用户问题：
             $question
+
+            输出要求：
+            - 回答可以使用 Markdown。
+            - 如需列出【来自原文】，只写原文标题或文件名，不要粘贴原文正文。
+            - 将分析、归纳、建议放在【AI推理】下。
         """.trimIndent()
     }
 

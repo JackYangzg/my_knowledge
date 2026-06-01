@@ -32,6 +32,8 @@ interface KnowledgeRepository {
     suspend fun createItem(item: KnowledgeItemEntity): KnowledgeItemEntity
     suspend fun createUnfiledItemFromNote(noteId: String?, title: String, content: String, sourceType: String = "note"): KnowledgeItemEntity
     suspend fun getItemById(id: String): KnowledgeItemEntity?
+    suspend fun getItemBySourceId(sourceId: String): KnowledgeItemEntity?
+    fun observeProcessedItemsBySource(sourceId: String): Flow<List<KnowledgeItemEntity>>
     suspend fun updateItem(item: KnowledgeItemEntity)
     suspend fun deleteItem(id: String, softDelete: Boolean = true)
     suspend fun permanentDeleteItem(id: String)
@@ -58,8 +60,11 @@ interface KnowledgeRepository {
     suspend fun rebuildFragmentsForItem(item: KnowledgeItemEntity, sourceManifestId: String? = null): List<KnowledgeFragmentEntity>
     suspend fun rebuildGraphForBase(kbId: String)
     fun observeKnowledgeEntities(kbId: String): Flow<List<KnowledgeEntityEntity>>
+    fun observeAllKnowledgeEntities(): Flow<List<KnowledgeEntityEntity>>
     fun observeKnowledgeRelations(kbId: String): Flow<List<KnowledgeRelationEntity>>
+    fun observeAllKnowledgeRelations(): Flow<List<KnowledgeRelationEntity>>
     fun observeKnowledgeCommunities(kbId: String): Flow<List<KnowledgeCommunityEntity>>
+    fun observeAllKnowledgeCommunities(): Flow<List<KnowledgeCommunityEntity>>
     
     // === ProcessingTask operations ===
     suspend fun createProcessingTask(task: ProcessingTaskEntity): ProcessingTaskEntity
