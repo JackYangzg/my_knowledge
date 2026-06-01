@@ -146,7 +146,7 @@ class AiGateway : AiProvider {
             val choices = responseObj["choices"]?.jsonArray
             if (choices != null && choices.isNotEmpty()) {
                 val message = choices[0].jsonObject["message"]?.jsonObject
-                message?.get("content")?.jsonPrimitive?.content ?: responseText
+                message?.get("content")?.jsonPrimitive?.content?.stripThinkBlock() ?: responseText
             } else {
                 val error = responseObj["error"]?.jsonObject
                 val errorMsg = error?.get("message")?.jsonPrimitive?.content ?: "Unknown error"
@@ -156,4 +156,7 @@ class AiGateway : AiProvider {
             "[解析失败] ${e.localizedMessage ?: "无法解析 AI 响应"}"
         }
     }
+
+    private fun String.stripThinkBlock(): String =
+        replace(Regex("<think>[\\s\\S]*?</think>"), "").trim()
 }

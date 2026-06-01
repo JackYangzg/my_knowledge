@@ -32,6 +32,8 @@ import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
 import com.my.knowledge.domain.repository.KnowledgeRepository
+import com.my.knowledge.domain.repository.ProfileStats
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.Flow
 import java.security.MessageDigest
 import java.util.*
@@ -506,6 +508,16 @@ class KnowledgeRepositoryImpl(
                 KnowledgeItemEntity.STATUS_FAILED
             )
         )
+
+    override fun observeProfileStats(): Flow<ProfileStats> =
+        combine(
+            kbDao.observeActiveBaseCount(),
+            itemDao.observeActiveItemCount(),
+            graphDao.observeEntityCount(),
+            graphDao.observeConceptCount()
+        ) { baseCount, itemCount, entityCount, conceptCount ->
+            ProfileStats(baseCount, itemCount, entityCount, conceptCount)
+        }
 
     // === ArchiveRecommendation operations ===
     override suspend fun createArchiveRecommendation(recommendation: ArchiveRecommendationEntity): ArchiveRecommendationEntity {

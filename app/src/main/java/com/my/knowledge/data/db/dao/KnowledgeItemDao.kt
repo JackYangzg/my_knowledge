@@ -92,6 +92,9 @@ interface KnowledgeItemDao {
     @Query("SELECT COUNT(*) FROM knowledge_item WHERE status IN (:statuses) AND deletedAt IS NULL")
     fun observeCountByStatuses(statuses: List<String>): Flow<Int>
 
+    @Query("SELECT COUNT(*) FROM knowledge_item WHERE deletedAt IS NULL")
+    fun observeActiveItemCount(): Flow<Int>
+
     // Batch item count update
     @Query("UPDATE knowledge_base SET itemCount = (SELECT COUNT(*) FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL) WHERE id = :kbId")
     suspend fun updateItemCount(kbId: String)

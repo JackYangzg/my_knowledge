@@ -33,6 +33,12 @@ interface KnowledgeGraphDao {
     @Query("SELECT * FROM knowledge_community WHERE knowledgeBaseId = :kbId ORDER BY updatedAt DESC")
     fun observeCommunities(kbId: String): Flow<List<KnowledgeCommunityEntity>>
 
+    @Query("SELECT COUNT(*) FROM knowledge_entity")
+    fun observeEntityCount(): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM knowledge_entity WHERE type = 'concept'")
+    fun observeConceptCount(): Flow<Int>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertEntities(entities: List<KnowledgeEntityEntity>)
 

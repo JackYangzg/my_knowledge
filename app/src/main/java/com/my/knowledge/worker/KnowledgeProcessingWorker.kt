@@ -57,52 +57,18 @@ class KnowledgeProcessingWorker(
             summary = summary,
             tagsJson = tags,
             contentHash = currentHash,
-            status = "processed",
+            status = com.my.knowledge.data.db.entity.KnowledgeItemEntity.STATUS_ARCHIVED,
             processedAt = System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis()
         )
         repository.updateItem(updatedItem)
-
-        // Create archive recommendation if not exists
-        val existingRec = repository.getRecommendationForItem(itemId)
-        if (existingRec == null) {
-            val base = repository.getUnfiledBase()
-            val recommendation = com.my.knowledge.data.db.entity.ArchiveRecommendationEntity(
-                id = java.util.UUID.randomUUID().toString(),
-                itemId = itemId,
-                recommendedKnowledgeBaseId = base?.id,
-                recommendedKnowledgeBaseName = base?.name ?: "未归类",
-                confidence = 0.5f,
-                reason = "基于内容主题分析推荐",
-                alternativeJson = "[]",
-                suggestCreateNewBase = false,
-                status = "pending",
-                createdAt = System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis()
-            )
-            repository.createArchiveRecommendation(recommendation)
-        }
     }
 
     private suspend fun processArchiveRecommendation(itemId: String) {
         val repository = getRepository()
         val item = repository.getItemById(itemId) ?: return
         
-        val base = repository.getUnfiledBase()
-        val recommendation = com.my.knowledge.data.db.entity.ArchiveRecommendationEntity(
-            id = java.util.UUID.randomUUID().toString(),
-            itemId = itemId,
-            recommendedKnowledgeBaseId = base?.id,
-            recommendedKnowledgeBaseName = base?.name ?: "未归类",
-            confidence = 0.6f,
-            reason = "内容分析归档推荐",
-            alternativeJson = "[]",
-            suggestCreateNewBase = false,
-            status = "pending",
-            createdAt = System.currentTimeMillis(),
-            updatedAt = System.currentTimeMillis()
-        )
-        repository.createArchiveRecommendation(recommendation)
+        repository.updateItem(item.copy(status = com.my.knowledge.data.db.entity.KnowledgeItemEntity.STATUS_ARCHIVED))
     }
 
     private suspend fun processSummary(itemId: String) {

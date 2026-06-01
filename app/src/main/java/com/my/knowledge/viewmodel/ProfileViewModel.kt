@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.domain.repository.KnowledgeRepository
+import com.my.knowledge.domain.repository.ProfileStats
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -27,6 +28,9 @@ class ProfileViewModel(
                 recs.size + reviews.size
             }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
         }
+
+    val profileStats: StateFlow<ProfileStats> = knowledgeRepository.observeProfileStats()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), ProfileStats(0, 0, 0, 0))
 
     fun exportMarkdownBackup() {
         viewModelScope.launch {

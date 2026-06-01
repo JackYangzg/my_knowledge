@@ -29,6 +29,7 @@ fun ProfileScreen(
     val originalFiles = KnowledgeManager.originalFiles
     val unfiledWorkCount by viewModel.unfiledWorkCount.collectAsState()
     val pendingRecommendationCount by viewModel.pendingRecommendationCount.collectAsState()
+    val profileStats by viewModel.profileStats.collectAsState()
 
     LazyColumn(
         modifier = Modifier
@@ -64,7 +65,18 @@ fun ProfileScreen(
                     }
                     Column(modifier = Modifier.weight(1f)) {
                         Text("个人知识空间", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                        Text("309 条知识，5 个知识库", fontSize = 14.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
+                        Text(
+                            "${profileStats.knowledgeItemCount} 条知识，${profileStats.knowledgeBaseCount} 个知识库",
+                            fontSize = 14.sp,
+                            color = Color(0xFF5F87A3),
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Text(
+                            "${profileStats.entityCount} 个实体，${profileStats.conceptCount} 个概念",
+                            fontSize = 12.sp,
+                            color = Color(0xFFA3A3A3),
+                            modifier = Modifier.padding(top = 2.dp)
+                        )
                     }
                 }
             }

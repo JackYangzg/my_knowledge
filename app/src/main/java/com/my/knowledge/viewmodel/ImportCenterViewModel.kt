@@ -6,6 +6,7 @@ import com.my.knowledge.data.db.dao.ProcessingTaskDao
 import com.my.knowledge.data.db.dao.SourceDocumentDao
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.SourceDocumentEntity
+import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.domain.usecase.DeleteSourceUseCase
@@ -42,6 +43,9 @@ class ImportCenterViewModel(
             )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val knowledgeBases: StateFlow<List<KnowledgeBaseEntity>> = knowledgeRepository.observeAllBases()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun retrySource(sourceId: String) {
         viewModelScope.launch {

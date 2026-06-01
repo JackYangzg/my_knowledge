@@ -2,8 +2,6 @@ package com.my.knowledge.ui
 
 import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
-import android.net.Uri
-import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,14 +18,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.fragment.app.FragmentActivity
-import androidx.fragment.app.FragmentContainerView
-import androidx.pdf.viewer.fragment.PdfViewerFragment
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.ui.component.MiniTag
 import com.my.knowledge.viewmodel.KnowledgeItemDetailViewModel
@@ -164,11 +157,6 @@ private fun PdfContentViewer(item: KnowledgeItemEntity) {
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (!localPath.isNullOrBlank() && Build.VERSION.SDK_INT >= 31) {
-            AndroidxPdfViewer(localPath)
-            return@Column
-        }
-
         if (pages.isEmpty() && error == null) {
             CircularProgressIndicator(color = Color(0xFF147EC5))
         }
@@ -199,31 +187,6 @@ private fun PdfContentViewer(item: KnowledgeItemEntity) {
             }
         }
     }
-}
-
-@Composable
-private fun AndroidxPdfViewer(path: String) {
-    val context = LocalContext.current
-    val containerId = remember(path) { android.view.View.generateViewId() }
-    AndroidView(
-        modifier = Modifier.fillMaxWidth().height(620.dp),
-        factory = { ctx ->
-            FragmentContainerView(ctx).apply { id = containerId }
-        },
-        update = {
-            val activity = context as? FragmentActivity ?: return@AndroidView
-            val tag = "pdf_viewer_$containerId"
-            if (activity.supportFragmentManager.findFragmentByTag(tag) == null) {
-                val fragment = PdfViewerFragment().apply {
-                    documentUri = Uri.fromFile(File(path))
-                    isToolboxVisible = true
-                }
-                activity.supportFragmentManager.beginTransaction()
-                    .replace(containerId, fragment, tag)
-                    .commitAllowingStateLoss()
-            }
-        }
-    )
 }
 
 private suspend fun renderPdfPages(path: String): Result<List<Bitmap>> = withContext(Dispatchers.IO) {

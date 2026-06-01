@@ -77,6 +77,7 @@ interface KnowledgeRepository {
     fun observePendingReviews(): Flow<List<ReviewItemEntity>>
     suspend fun resolveReview(reviewId: String, status: String)
     fun observeUnfiledWorkCount(): Flow<Int>
+    fun observeProfileStats(): Flow<ProfileStats>
     
     // === ArchiveRecommendation operations ===
     suspend fun createArchiveRecommendation(recommendation: ArchiveRecommendationEntity): ArchiveRecommendationEntity
@@ -108,3 +109,10 @@ interface KnowledgeRepository {
     fun observeThreadLogs(threadId: String): Flow<List<com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity>>
     suspend fun appendThreadLog(log: com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity)
 }
+
+data class ProfileStats(
+    val knowledgeBaseCount: Int,
+    val knowledgeItemCount: Int,
+    val entityCount: Int,
+    val conceptCount: Int
+)

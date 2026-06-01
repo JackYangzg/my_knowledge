@@ -65,9 +65,8 @@ fun KnowledgeLogScreen(
     onBack: () -> Unit
 ) {
     val rows by importViewModel.rows.collectAsState()
+    val bases by importViewModel.knowledgeBases.collectAsState()
     val reviews by processingViewModel.pendingReviews.collectAsState()
-    val recommendations by processingViewModel.pendingRecommendations.collectAsState()
-    val recommendationTitles by processingViewModel.recommendationItemTitles.collectAsState()
     var deleteSourceId by remember { mutableStateOf<String?>(null) }
     var detailRow by remember { mutableStateOf<ImportCenterRow?>(null) }
 
@@ -94,11 +93,11 @@ fun KnowledgeLogScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                     LogSummaryCard(rows.count { it.latestTask?.status == "pending" || it.latestTask?.status == "running" }, "处理中", Color(0xFF147EC5), Modifier.weight(1f))
                     LogSummaryCard(rows.count { it.latestTask?.status == "failed" || it.source.status == SourceDocumentEntity.STATUS_FAILED }, "失败", Color(0xFFDC2626), Modifier.weight(1f))
-                    LogSummaryCard(reviews.size + recommendations.size, "待确认", Color(0xFFEA580C), Modifier.weight(1f))
+                    LogSummaryCard(reviews.size, "待确认", Color(0xFFEA580C), Modifier.weight(1f))
                 }
             }
 
-            if (rows.isEmpty() && reviews.isEmpty() && recommendations.isEmpty()) {
+            if (rows.isEmpty() && reviews.isEmpty()) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
                         Text("暂无日志", color = Color(0xFF5F87A3), fontSize = 14.sp)
@@ -138,21 +137,6 @@ fun KnowledgeLogScreen(
                 }
             }
 
-            items(recommendations) { rec ->
-                Surface(shape = RoundedCornerShape(12.dp), color = Color.White, shadowElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text("归档推荐", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                        Text("知识：${recommendationTitles[rec.itemId] ?: "未知知识"} · 建议目标：${rec.recommendedKnowledgeBaseName ?: rec.recommendedKnowledgeBaseId ?: "未指定"}", fontSize = 11.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
-                        Text(rec.reason, fontSize = 12.sp, lineHeight = 18.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 8.dp))
-                        Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = { processingViewModel.rejectRecommendation(rec.id) }) { Text("拒绝", fontSize = 13.sp, color = Color(0xFFA3A3A3)) }
-                            Button(onClick = { processingViewModel.acceptRecommendation(rec.id) }, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))) {
-                                Text("接受", fontSize = 13.sp)
-                            }
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -180,7 +164,7 @@ fun KnowledgeLogScreen(
                     Text("来源类型：${row.source.sourceType}")
                     Text("MIME：${row.source.mimeType ?: "unknown"}")
                     Text("导入状态：${row.source.status}")
-                    Text("目标知识库：${row.source.targetKnowledgeBaseId ?: "未归档"}")
+                    Text("目标知识库：${row.source.targetKnowledgeBaseId?.let { id -> bases.firstOrNull { it.id == id }?.name } ?: "未归档"}")
                     row.latestTask?.let { task ->
                         HorizontalDivider()
                         Text("任务：${task.taskType}")

@@ -3,6 +3,7 @@ package com.my.knowledge.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.ai.AiPromptTemplates
+import com.my.knowledge.data.ai.AiGateway
 import com.my.knowledge.data.ai.ContentType
 import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.ui.KnowledgeManager
@@ -138,7 +139,11 @@ class AskViewModel(
             if (KnowledgeManager.modelConfig.debugPromptEnabled) {
                 _debugPrompts.value = _debugPrompts.value + (userMsg.id to debugPrompt)
             }
-            val answer = generateAnswerWithMarkers(question, relevantResults, relevantItems)
+            val answer = runCatching {
+                AiGateway().complete(AiPromptTemplates.BASE_SYSTEM_PROMPT, debugPrompt)
+            }.getOrNull()
+                ?.takeIf { it.isNotBlank() && !it.startsWith("[配置缺失]") && !it.startsWith("[AI 调用") && !it.startsWith("[连接失败]") && !it.startsWith("[超时]") }
+                ?: generateAnswerWithMarkers(question, relevantResults, relevantItems)
 
             val assistantMsg = AiMessageEntity(
                 id = UUID.randomUUID().toString(),
@@ -248,7 +253,7 @@ class AskViewModel(
                         fragmentId = null,
                         knowledgeBaseId = item.knowledgeBaseId,
                         title = item.title,
-                        snippet = item.contentMarkdown.take(500),
+                    snippet = item.contentMarkdown,
                         sourceType = item.sourceType,
                         score = 3f,
                         matchType = "item_scope"
@@ -381,13 +386,13 @@ class AskViewModel(
             if (relevantResults.isNotEmpty()) {
                 relevantResults.forEachIndexed { index, result ->
                     appendLine("[原始内容 ${index + 1}] ${result.title}")
-                    appendLine(result.snippet)
+                    appendLine(result.snippet.take(8000))
                     appendLine()
                 }
             } else {
                 relevantItems.forEachIndexed { index, item ->
                     appendLine("[原始内容 ${index + 1}] ${item.title}")
-                    appendLine(item.contentMarkdown.take(1500))
+                    appendLine(item.contentMarkdown.take(8000))
                     appendLine()
                 }
             }

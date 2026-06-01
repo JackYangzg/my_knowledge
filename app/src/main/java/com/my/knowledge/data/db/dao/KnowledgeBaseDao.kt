@@ -35,4 +35,7 @@ interface KnowledgeBaseDao {
 
     @Query("SELECT id FROM knowledge_base WHERE deletedAt IS NULL")
     suspend fun getAllIds(): List<String>
+
+    @Query("SELECT COUNT(*) FROM knowledge_base WHERE deletedAt IS NULL")
+    fun observeActiveBaseCount(): Flow<Int>
 }

@@ -2,7 +2,6 @@ package com.my.knowledge.data.ingest
 
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.entity.AnalysisResultEntity
-import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.ParsedContentEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
@@ -153,18 +152,6 @@ class IngestOrchestrator(
         val source = db.sourceDocumentDao().getById(sourceId) ?: error("Source not found: $sourceId")
         val parsed = db.parsedContentDao().getLatestBySource(source.id) ?: error("Parsed content not found")
         val analysis = db.analysisResultDao().getLatestBySource(source.id) ?: error("Analysis result not found")
-        val archiveObj = IngestJsonValidator.parseObjectOrNull(analysis.archiveRecommendationJson)
-        val recommendedKbId = archiveObj
-            ?.let { IngestJsonValidator.stringOrNull(it, "targetKnowledgeBaseId") }
-            ?: source.targetKnowledgeBaseId
-        val recommendedKbName = archiveObj
-            ?.let { IngestJsonValidator.string(it, "targetKnowledgeBaseName") }
-            ?.takeIf { it.isNotBlank() }
-            ?: recommendedKbId?.let { db.knowledgeBaseDao().getById(it)?.name }
-        val recommendationReason = archiveObj
-            ?.let { IngestJsonValidator.string(it, "reason") }
-            ?.takeIf { it.isNotBlank() }
-            ?: "Two-Step Ingest 生成的归档推荐"
         val reviewReason = IngestJsonValidator.firstJsonArrayText(analysis.gapsJson)
         val kbId = source.targetKnowledgeBaseId ?: db.knowledgeBaseDao().getByType("inspiration")?.id ?: db.knowledgeBaseDao().getByType("unfiled")?.id.orEmpty()
         val now = System.currentTimeMillis()
@@ -177,7 +164,7 @@ class IngestOrchestrator(
             contentMarkdown = parsed.markdown,
             excerpt = analysis.summary.take(120),
             sourceType = source.sourceType,
-            status = if (analysis.confidence < 0.6f) KnowledgeItemEntity.STATUS_NEED_REVIEW else KnowledgeItemEntity.STATUS_RECOMMEND_READY,
+            status = if (analysis.confidence < 0.6f) KnowledgeItemEntity.STATUS_NEED_REVIEW else KnowledgeItemEntity.STATUS_ARCHIVED,
             contentHash = source.sha256,
             sourceTraceJson = """{"sourceId":"${source.id}","parsedContentId":"${parsed.id}"}""",
             confidence = analysis.confidence,
@@ -193,22 +180,6 @@ class IngestOrchestrator(
         db.knowledgeItemDao().insert(item)
         db.knowledgeItemDao().updateItemCount(kbId)
         db.knowledgeFragmentDao().attachSourceFragmentsToItem(source.id, item.id, kbId)
-
-        db.archiveRecommendationDao().insert(
-            ArchiveRecommendationEntity(
-                id = UUID.randomUUID().toString(),
-                itemId = item.id,
-                recommendedKnowledgeBaseId = recommendedKbId,
-                recommendedKnowledgeBaseName = recommendedKbName,
-                confidence = analysis.confidence,
-                reason = recommendationReason,
-                alternativeJson = "[]",
-                suggestCreateNewBase = false,
-                status = "pending",
-                createdAt = now,
-                updatedAt = now
-            )
-        )
 
         if (analysis.confidence < 0.6f || reviewReason != null) {
             db.reviewItemDao().insert(

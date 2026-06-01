@@ -145,29 +145,6 @@ fun KnowledgeScreen(
                 }
             }
 
-            item {
-                Section(title = "继续处理", more = "稍后") {
-                    QuietCell(
-                        title = "未分类内容处理",
-                        desc = "系统已准备好建议",
-                        leftContent = {
-                            Box(
-                                modifier = Modifier
-                                    .size(36.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(Color(0xFFF5F5F5)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text("○", color = Color(0xFF525252), fontSize = 18.sp)
-                            }
-                        },
-                        right = {
-                            Text("5 条建议", fontSize = 12.sp, color = Color(0xFFEA580C))
-                        },
-                        onClick = onOpenFragments
-                    )
-                }
-            }
         }
 
         // Floating Action Button for "Ask"
