@@ -61,6 +61,7 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.okhttp)
+    implementation(libs.jsoup)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.text.recognition.chinese)
     implementation("androidx.pdf:pdf-viewer-fragment:1.0.0-alpha05")

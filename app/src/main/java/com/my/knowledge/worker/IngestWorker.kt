@@ -6,6 +6,7 @@ import androidx.work.WorkerParameters
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.ingest.IngestOrchestrator
+import com.my.knowledge.ui.DependencyProvider
 
 class IngestWorker(
     context: Context,
@@ -15,7 +16,9 @@ class IngestWorker(
         return try {
             IngestOrchestrator(
                 db = AppDatabase.getInstance(applicationContext),
-                fileStore = LocalFileStore(applicationContext)
+                fileStore = LocalFileStore(applicationContext),
+                repository = DependencyProvider.provideKnowledgeRepository(applicationContext),
+                scheduler = DependencyProvider.provideScheduler(applicationContext)
             ).runUntilIdle()
             Result.success()
         } catch (e: Exception) {

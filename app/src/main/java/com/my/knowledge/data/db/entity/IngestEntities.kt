@@ -96,6 +96,7 @@ data class ReviewItemEntity(
         const val STATUS_PENDING = "pending"
         const val STATUS_ACCEPTED = "accepted"
         const val STATUS_REJECTED = "rejected"
+        const val STATUS_RESOLVED = "resolved"
         const val STATUS_SKIPPED = "skipped"
     }
 }

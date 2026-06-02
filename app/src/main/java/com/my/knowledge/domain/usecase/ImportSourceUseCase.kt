@@ -24,7 +24,8 @@ class ImportSourceUseCase(
         text: String,
         targetKbId: String?,
         importFrom: String = "manual",
-        folderHint: String? = null
+        folderHint: String? = null,
+        linkedNoteId: String? = null
     ): String {
         val sourceId = UUID.randomUUID().toString()
         val file = fileStore.saveTextSource(sourceId, text)
@@ -37,7 +38,8 @@ class ImportSourceUseCase(
             mimeType = "text/plain",
             importFrom = importFrom,
             folderHint = folderHint,
-            targetKbId = targetKbId
+            targetKbId = targetKbId,
+            linkedNoteId = linkedNoteId
         )
     }
 
@@ -74,7 +76,8 @@ class ImportSourceUseCase(
         mimeType: String?,
         importFrom: String,
         folderHint: String?,
-        targetKbId: String?
+        targetKbId: String?,
+        linkedNoteId: String? = null
     ): String {
         val sha256 = fileStore.sha256(file)
         val existing = sourceDao.findBySha256(sha256)
@@ -86,7 +89,8 @@ class ImportSourceUseCase(
                 file = file,
                 mimeType = existing.mimeType,
                 sha256 = existing.sha256,
-                targetKbId = targetKbId ?: existing.targetKnowledgeBaseId
+                targetKbId = targetKbId ?: existing.targetKnowledgeBaseId,
+                linkedNoteId = linkedNoteId
             )
             return existing.id
         }
@@ -111,7 +115,7 @@ class ImportSourceUseCase(
                 updatedAt = now
             )
         )
-        ensureVisibleKnowledgeItem(sourceId, sourceType, title, file, mimeType, sha256, targetKbId)
+        ensureVisibleKnowledgeItem(sourceId, sourceType, title, file, mimeType, sha256, targetKbId, linkedNoteId)
         fileStore.writeSourceManifest(
             sourceId,
             """{"id":"$sourceId","title":"${title.escapeJson()}","sha256":"$sha256","mimeType":"${mimeType.orEmpty().escapeJson()}"}"""
@@ -149,7 +153,8 @@ class ImportSourceUseCase(
         file: File,
         mimeType: String?,
         sha256: String,
-        targetKbId: String?
+        targetKbId: String?,
+        linkedNoteId: String? = null
     ) {
         val kbId = targetKbId ?: return
         val now = System.currentTimeMillis()
@@ -175,7 +180,9 @@ class ImportSourceUseCase(
             confidence = existingItem?.confidence ?: 0f,
             summary = existingItem?.summary,
             tagsJson = existingItem?.tagsJson ?: "[]",
-            rawNoteId = existingItem?.rawNoteId,
+            // If the caller is the inspiration editor, pin the knowledge item
+            // to the originating note so re-saving updates the same row.
+            rawNoteId = linkedNoteId ?: existingItem?.rawNoteId,
             importance = existingItem?.importance ?: 1,
             createdAt = existingItem?.createdAt ?: now,
             updatedAt = now,

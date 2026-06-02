@@ -42,6 +42,17 @@ interface KnowledgeItemDao {
     @Query("SELECT * FROM knowledge_item WHERE sourceId = :sourceId AND deletedAt IS NULL ORDER BY createdAt ASC LIMIT 1")
     suspend fun getBySourceId(sourceId: String): KnowledgeItemEntity?
 
+    @Query("SELECT * FROM knowledge_item WHERE sourceId = :sourceId AND deletedAt IS NULL ORDER BY createdAt ASC")
+    suspend fun getAllBySourceId(sourceId: String): List<KnowledgeItemEntity>
+
+    /**
+     * Find the live knowledge item linked to a given inspiration note. Used
+     * by `NoteEditorViewModel.saveToKnowledgeBase` so that re-saving the
+     * same note updates the same item rather than creating a fresh one.
+     */
+    @Query("SELECT * FROM knowledge_item WHERE rawNoteId = :noteId AND deletedAt IS NULL ORDER BY createdAt ASC LIMIT 1")
+    suspend fun getByRawNoteId(noteId: String): KnowledgeItemEntity?
+
     @Query("""
         SELECT * FROM knowledge_item
         WHERE sourceId = :sourceId AND deletedAt IS NULL
@@ -77,6 +88,9 @@ interface KnowledgeItemDao {
 
     @Query("UPDATE knowledge_item SET deletedAt = :deletedAt, status = 'deleted' WHERE id = :id")
     suspend fun softDelete(id: String, deletedAt: Long)
+
+    @Query("UPDATE knowledge_item SET deletedAt = :deletedAt, status = 'deleted' WHERE sourceId = :sourceId AND deletedAt IS NULL")
+    suspend fun softDeleteBySource(sourceId: String, deletedAt: Long)
 
     @Query("DELETE FROM knowledge_item WHERE id = :id")
     suspend fun hardDelete(id: String)

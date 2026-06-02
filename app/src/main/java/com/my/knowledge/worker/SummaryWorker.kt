@@ -98,7 +98,10 @@ ${item.contentMarkdown.take(3000)}
             db.knowledgeThreadDao(), db.knowledgeThreadLogDao(),
             db.sourceManifestDao(), db.knowledgeFragmentDao(),
             db.processingTaskLogDao(), db.askCitationDao(),
-            db.knowledgeGraphDao(), db.reviewItemDao()
+            db.knowledgeGraphDao(), db.reviewItemDao(),
+            db.analysisResultDao(),
+            db.parsedContentDao(),
+            db.sourceDocumentDao()
         )
     }
 

@@ -34,4 +34,10 @@ interface AiConversationDao {
 
     @Query("DELETE FROM ai_conversation WHERE id = :id")
     suspend fun hardDelete(id: String)
+
+    @Query("DELETE FROM ai_conversation WHERE scopeType = :scopeType AND scopeId = :scopeId")
+    suspend fun deleteByScope(scopeType: String, scopeId: String)
+
+    @Query("SELECT id FROM ai_conversation WHERE scopeType = :scopeType AND scopeId = :scopeId")
+    suspend fun getIdsByScope(scopeType: String, scopeId: String): List<String>
 }

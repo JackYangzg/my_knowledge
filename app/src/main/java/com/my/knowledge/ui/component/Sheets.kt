@@ -15,11 +15,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -30,7 +33,7 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
-import com.mukesh.MarkDown
+import com.my.knowledge.ui.ComposeMarkdown
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -57,95 +60,87 @@ fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 32.dp)
         ) {
-            Text("确认导入", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            Text("导入知识", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
             Spacer(modifier = Modifier.height(16.dp))
-
+            
             Surface(
-                modifier = Modifier.fillMaxWidth(),
-                color = Color(0xFFF7FBFF),
                 shape = RoundedCornerShape(12.dp),
+                color = Color(0xFFF7FBFF),
                 border = BorderStroke(1.dp, Color(0xFFDBEEFF))
             ) {
                 Row(
                     modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null, tint = Color(0xFF147EC5))
-                    Column {
-                        Text(fileName, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                        Text("准备导入到知识库", fontSize = 12.sp, color = Color(0xFF5F87A3))
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(fileName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                        Text("将通过本地加工引擎进行解析与归纳", fontSize = 12.sp, color = Color(0xFF5F87A3))
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
-
-            Box(modifier = Modifier.fillMaxWidth()) {
-                OutlinedTextField(
-                    value = selectedLibrary,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text("目标知识库") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    trailingIcon = {
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+            Text("归档位置", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF737373))
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            Box {
+                Surface(
+                    onClick = { expanded = true },
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color.White,
+                    border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(selectedLibrary, fontSize = 14.sp, color = Color(0xFF262626))
+                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color(0xFFA3A3A3))
                     }
-                )
+                }
+                
                 DropdownMenu(
                     expanded = expanded,
                     onDismissRequest = { expanded = false },
-                    modifier = Modifier.fillMaxWidth(0.9f).background(Color.White)
+                    modifier = Modifier.background(Color.White).fillMaxWidth(0.85f)
                 ) {
-                    knowledgeBases.forEach { lib ->
+                    knowledgeBases.forEach { kb ->
                         DropdownMenuItem(
-                            text = { Text(lib.name) },
+                            text = { Text(kb.name) },
                             onClick = {
-                                selectedLibrary = lib.name
+                                selectedLibrary = kb.name
                                 expanded = false
                             }
                         )
                     }
                 }
-                Box(modifier = Modifier.matchParentSize().clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = { expanded = true }
-                ))
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
-
+            Spacer(modifier = Modifier.height(32.dp))
             Button(
                 onClick = {
-                    val mimeType = context.contentResolver.getType(uri) ?: "unknown"
-                    val type = when {
-                        mimeType.startsWith("image/") -> "图片"
-                        mimeType.contains("pdf") -> "PDF"
-                        mimeType.contains("word") -> "Word"
-                        mimeType.startsWith("text/") -> "文本"
-                        else -> "文档"
-                    }
-                    viewModel.importUri(uri, fileName, mimeType, type.toSourceType(), selectedLibrary)
+                    val mimeType = context.contentResolver.getType(uri)
+                    viewModel.importUri(
+                        uri = uri,
+                        displayName = fileName,
+                        mimeType = mimeType,
+                        sourceType = "file_import",
+                        targetLibrary = selectedLibrary
+                    )
                     onClose()
                 },
-                modifier = Modifier.fillMaxWidth().height(50.dp),
-                shape = RoundedCornerShape(16.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
             ) {
-                Text("开始分析并导入", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text("开始导入", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
     }
-}
-
-private fun String.toSourceType(): String = when (this) {
-    "图片" -> "image"
-    "PDF" -> "pdf"
-    "Word" -> "docx"
-    "文本" -> "text"
-    else -> "file"
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -156,12 +151,20 @@ fun AskSheet(
 ) {
     val messages by askViewModel.messages.collectAsState()
     val isLoading by askViewModel.isLoading.collectAsState()
-    val conversations by askViewModel.conversations.collectAsState()
     val activeConversationId by askViewModel.activeConversationId.collectAsState()
+    val conversationsWithCount by askViewModel.conversationsWithCount.collectAsState()
     var inputText by remember { mutableStateOf("") }
+    // History drawer: collapsed by default so the message stream is the
+    // primary surface; a single tap on the chevron in the header expands
+    // it. State is per-sheet (not saved across recompositions of the
+    // sheet) so reopening the sheet returns to the conversation view.
+    var historyExpanded by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     ModalBottomSheet(
         onDismissRequest = onClose,
+        sheetState = sheetState,
+        modifier = Modifier.fillMaxHeight(0.92f),
         containerColor = Color.White,
         dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFEEEEEE)) }
     ) {
@@ -169,8 +172,9 @@ fun AskSheet(
             modifier = Modifier
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 32.dp)
-                .heightIn(max = 560.dp)
+                .fillMaxSize()
         ) {
+            // ---- Header: title + new-conversation + history toggle + close ----
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -187,41 +191,118 @@ fun AskSheet(
                         }
                     }
                 }
-                IconButton(
-                    onClick = onClose,
-                    modifier = Modifier.background(Color(0xFFF5F5F5), CircleShape).size(28.dp)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    // Inline history toggle. Replaces the previous
+                    // standalone AskHistorySheet — every conversation the
+                    // user has ever had in this scope is now reachable
+                    // from inside the sheet itself.
+                    if (conversationsWithCount.isNotEmpty()) {
+                        TextButton(
+                            onClick = { historyExpanded = !historyExpanded },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                        ) {
+                            Icon(
+                                if (historyExpanded) Icons.Default.ExpandLess else Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = Color(0xFF147EC5)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                if (historyExpanded) "收起历史" else "历史（${conversationsWithCount.size}）",
+                                fontSize = 12.sp,
+                                color = Color(0xFF147EC5)
+                            )
+                        }
+                    }
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.background(Color(0xFFF5F5F5), CircleShape).size(28.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                    }
+                }
+            }
+
+            // ---- Inline history drawer ----
+            if (historyExpanded && conversationsWithCount.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xFFF7FBFF),
+                    border = BorderStroke(0.5.dp, Color(0xFFDBEEFF)),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Text(
+                            "本范围内的对话",
+                            fontSize = 11.sp,
+                            color = Color(0xFF94A3B8),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                        )
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            items(conversationsWithCount, key = { it.conversation.id }) { row ->
+                                val isActive = row.conversation.id == activeConversationId
+                                Surface(
+                                    onClick = {
+                                        askViewModel.selectConversation(row.conversation.id)
+                                        historyExpanded = false
+                                    },
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (isActive) Color(0xFFE0F2FE) else Color.White,
+                                    border = if (isActive) BorderStroke(0.5.dp, Color(0xFF147EC5))
+                                    else BorderStroke(0.5.dp, Color(0xFFEEEEEE)),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                row.conversation.title,
+                                                fontSize = 13.sp,
+                                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
+                                                color = Color(0xFF0F172A),
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                "${formatAskTime(row.conversation.updatedAt)} · ${row.messageCount} 条消息",
+                                                fontSize = 10.sp,
+                                                color = Color(0xFF94A3B8)
+                                            )
+                                        }
+                                        if (isActive) {
+                                            Surface(
+                                                color = Color(0xFF147EC5),
+                                                shape = RoundedCornerShape(6.dp)
+                                            ) {
+                                                Text(
+                                                    "当前",
+                                                    fontSize = 10.sp,
+                                                    color = Color.White,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Conversations list (when no active conversation or showing history)
-            if (activeConversationId == null && conversations.isNotEmpty()) {
-                Text("历史对话", fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(bottom = 8.dp))
-                conversations.take(5).forEach { conv ->
-                    Surface(
-                        onClick = { askViewModel.selectConversation(conv.id) },
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFFF7FBFF),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
-                    ) {
-                        Text(
-                            conv.title,
-                            fontSize = 13.sp,
-                            color = Color(0xFF0F172A),
-                            modifier = Modifier.padding(12.dp)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(8.dp))
-            }
-
-            // Messages area
+            // ---- Messages area ----
             if (messages.isNotEmpty()) {
                 LazyColumn(
-                    modifier = Modifier.weight(1f, fill = false).heightIn(max = 300.dp),
+                    modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(messages) { msg ->
@@ -247,7 +328,6 @@ fun AskSheet(
                     }
                 }
             } else if (activeConversationId == null) {
-                // Suggested questions
                 val suggestions = listOf(
                     "这个知识库现在主要在讲什么？",
                     "帮我整理明天会议可以讲的观点",
@@ -271,7 +351,7 @@ fun AskSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            // Input area
+            // ---- Input area ----
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
@@ -319,6 +399,160 @@ fun AskSheet(
     }
 }
 
+private fun formatAskTime(timestamp: Long): String {
+    if (timestamp <= 0) return "—"
+    val now = System.currentTimeMillis()
+    val diff = now - timestamp
+    return when {
+        diff < 60_000 -> "刚刚"
+        diff < 3_600_000 -> "${diff / 60_000} 分钟前"
+        diff < 86_400_000 -> "${diff / 3_600_000} 小时前"
+        diff < 7L * 86_400_000 -> "${diff / 86_400_000} 天前"
+        else -> {
+            val format = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+            format.format(java.util.Date(timestamp))
+        }
+    }
+}
+
+@Composable
+fun AiMessageContent(
+    content: String,
+    isUser: Boolean,
+    messageKey: String = content,
+    modifier: Modifier = Modifier
+) {
+    if (isUser) {
+        Text(
+            text = content,
+            fontSize = 14.sp,
+            lineHeight = 22.sp,
+            color = Color(0xFF0F172A)
+        )
+    } else {
+        // Models differ on how they delimit their reasoning:
+        //   - <think>...</think>   (DeepSeek-R1, Qwen-QwQ, OpenAI o-series)
+        //   - <thinking>...</thinking>
+        //   - <reasoning>...</reasoning>
+        //   - <reflection>...</reflection>
+        // The original implementation only knew `<think>`, which meant
+        // every other provider's chain-of-thought got folded into the
+        // user-visible answer — making the "思考过程折叠" toggle useless
+        // in practice. We accept any of them, case-insensitive, and pick
+        // the EARLIEST open tag in the content (some models emit a stray
+        // `</think>` after the body, which we also need to clean up).
+        val parsed = remember(content) { splitThinkAndBody(content) }
+        val thinkPart = parsed.think
+        val actualContent = parsed.body
+        val isStreaming = parsed.thinkingInProgress
+
+        Column(modifier = modifier) {
+            // Collapsible "思考过程" surface. Visible only when the model
+            // produced (or is producing) a reasoning block — the toggle
+            // is a single tap, expanded state persists per-message via
+            // rememberSaveable so the user can leave it open while
+            // scrolling.
+            if (thinkPart != null) {
+                var expanded by rememberSaveable(messageKey) { mutableStateOf(false) }
+                Surface(
+                    onClick = { expanded = !expanded },
+                    color = Color(0xFFF3F4F6),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                if (expanded) Icons.Default.ExpandLess else Icons.Default.AutoAwesome,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = Color(0xFF6B7280)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                buildString {
+                                    append(if (expanded) "收起思考过程" else "已折叠思考过程")
+                                    if (isStreaming) append(" · 思考中…")
+                                },
+                                fontSize = 12.sp,
+                                color = Color(0xFF6B7280),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                        if (expanded && thinkPart.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                thinkPart,
+                                fontSize = 12.sp,
+                                color = Color(0xFF6B7280),
+                                lineHeight = 18.sp
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (actualContent.isNotBlank()) {
+                ComposeMarkdown(
+                    markdown = actualContent,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
+private data class ThinkSplit(
+    val think: String?,
+    val body: String,
+    val thinkingInProgress: Boolean
+)
+
+/**
+ * Pull the model's chain-of-thought out of [content] and return the
+ * think text, the post-think body, and a flag telling the caller
+ * whether the open tag has not yet been closed (we're still streaming).
+ *
+ * Strategy: scan for the first open tag (`<think>` / `<thinking>` /
+ * `<reasoning>` / `<reflection>`, case-insensitive). If we find one,
+ * look for the matching close tag. If found, return everything between
+ * them as `think` and everything after as `body`. If not found, treat
+ * the rest of the content as a `think` in progress and the body as
+ * empty — the streaming UI shows a "思考中…" hint and the body appears
+ * once the model closes the tag.
+ *
+ * Models that don't emit a reasoning tag at all return `think = null`
+ * and the body is the full content. That matches the prior behaviour
+ * for non-thinking models and keeps the toggle invisible.
+ */
+private fun splitThinkAndBody(content: String): ThinkSplit {
+    if (content.isEmpty()) return ThinkSplit(null, "", false)
+    val openTags = listOf("<think>", "<thinking>", "<reasoning>", "<reflection>")
+    val closeTags = mapOf(
+        "<think>" to "</think>",
+        "<thinking>" to "</thinking>",
+        "<reasoning>" to "</reasoning>",
+        "<reflection>" to "</reflection>"
+    )
+    val lower = content.lowercase()
+    val firstOpen = openTags
+        .map { it to lower.indexOf(it) }
+        .filter { it.second >= 0 }
+        .minByOrNull { it.second }
+        ?: return ThinkSplit(null, content.trim(), false)
+    val openTag = firstOpen.first
+    val openIdx = firstOpen.second
+    val closeTag = closeTags[openTag]!!
+    val closeIdx = lower.indexOf(closeTag, startIndex = openIdx + openTag.length)
+    return if (closeIdx == -1) {
+        ThinkSplit(content.substring(openIdx + openTag.length).trim(), "", true)
+    } else {
+        val think = content.substring(openIdx + openTag.length, closeIdx).trim()
+        val body = content.substring(closeIdx + closeTag.length).trim()
+        ThinkSplit(think, body, false)
+    }
+}
+
 @Composable
 private fun MessageBubble(
     msg: AiMessageEntity,
@@ -327,14 +561,13 @@ private fun MessageBubble(
     val isUser = msg.role == "user"
     val alignment = if (isUser) Arrangement.End else Arrangement.Start
     val bgColor = if (isUser) Color(0xFFEFF7FF) else Color(0xFFF9FAFB)
-    val textColor = Color(0xFF0F172A)
 
     Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment = Alignment.Top,
             horizontalArrangement = alignment,
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -342,35 +575,24 @@ private fun MessageBubble(
                 Icon(
                     Icons.Default.Person,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp).padding(end = 4.dp),
+                    modifier = Modifier.size(20.dp).padding(top = 8.dp, end = 4.dp),
                     tint = Color(0xFF147EC5)
                 )
             }
             Surface(
-                shape = RoundedCornerShape(if (isUser) 16.dp else 16.dp),
+                shape = RoundedCornerShape(16.dp),
                 color = bgColor,
-                shadowElevation = 0.dp
+                shadowElevation = 0.dp,
+                modifier = Modifier.widthIn(max = 360.dp)
             ) {
-                if (isUser) {
-                    Text(
-                        msg.content,
-                        fontSize = 13.sp,
-                        color = textColor,
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        lineHeight = 20.sp
-                    )
-                } else {
-                    MarkDown(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        text = msg.content.ifBlank { "..." },
-                        shouldOpenUrlInBrowser = true
-                    )
+                Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    AiMessageContent(content = msg.content, isUser = isUser, messageKey = msg.id)
                 }
             }
         }
 
         // Save as knowledge button for all assistant messages
-        if (!isUser && msg.savedAsKnowledgeItemId == null) {
+        if (!isUser && msg.savedAsKnowledgeItemId == null && msg.content.isNotBlank()) {
             TextButton(
                 onClick = { onSaveAsKnowledge(msg.id) },
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
@@ -470,7 +692,7 @@ private fun readSize(context: android.content.Context, uri: Uri): Long? {
     val cursor = context.contentResolver.query(uri, null, null, null, null)
     return try {
         if (cursor != null && cursor.moveToFirst()) {
-            val index = cursor.getColumnIndex(OpenableColumns.SIZE)
+            val index = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
             if (index != -1 && !cursor.isNull(index)) cursor.getLong(index) else null
         } else {
             null

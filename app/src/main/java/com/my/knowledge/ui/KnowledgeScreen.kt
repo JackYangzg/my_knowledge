@@ -24,6 +24,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.ui.component.KnowledgeDigestSection
 import com.my.knowledge.ui.component.AskSheet
 import com.my.knowledge.ui.component.ImportSheet
@@ -35,13 +36,14 @@ import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 fun KnowledgeScreen(
     viewModel: KnowledgeHomeViewModel,
     askViewModel: AskViewModel,
+    knowledgeRepository: com.my.knowledge.domain.repository.KnowledgeRepository,
     onOpenContext: () -> Unit,
     onOpenFragments: () -> Unit,
     onOpenKbDetail: (String) -> Unit,
     onOpenKbManage: () -> Unit
 ) {
     val knowledgeBases by viewModel.knowledgeBases.collectAsState()
-    
+
     var showAskSheet by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
     var selectedFileUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
@@ -70,7 +72,7 @@ fun KnowledgeScreen(
                     hint = "少打扰，多沉淀",
                     action = {
                         TextButton(
-                            onClick = { 
+                            onClick = {
                                 filePickerLauncher.launch(arrayOf(
                                     "application/pdf",
                                     "application/msword",
@@ -147,20 +149,36 @@ fun KnowledgeScreen(
 
         }
 
-        // Floating Action Button for "Ask"
+        // Floating "AI 问一问" button. Same look as the rest of the app's
+        // detail pages, but scoped to GLOBAL — the model is told it can
+        // see every knowledge base in the app and must search across
+        // them itself.
         Box(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(bottom = 16.dp, end = 20.dp)
+                .padding(bottom = 24.dp, end = 20.dp)
         ) {
-            FloatingActionButton(
-                onClick = { showAskSheet = true },
-                containerColor = Color(0xFF111827),
-                contentColor = Color.White,
+            Surface(
+                onClick = {
+                    askViewModel.setScope(ScopeType.GLOBAL, "")
+                    askViewModel.startNewConversation("全局知识库问答")
+                    showAskSheet = true
+                },
                 shape = CircleShape,
-                modifier = Modifier.size(48.dp).shadow(12.dp, CircleShape)
+                color = Color(0xFF111827),
+                shadowElevation = 12.dp,
+                modifier = Modifier
+                    .size(56.dp)
+                    .shadow(12.dp, CircleShape)
             ) {
-                Text("AI", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Box(contentAlignment = Alignment.Center) {
+                    Text(
+                        text = "AI",
+                        color = Color.White,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
 

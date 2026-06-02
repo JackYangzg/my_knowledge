@@ -25,7 +25,7 @@ fun ProfileScreen(
     onOpenSettings: () -> Unit,
     onOpenLogCenter: () -> Unit = {},
     onOpenRecycleBin: () -> Unit = {},
-    onOpenIntermediateData: () -> Unit = {}
+    onOpenIntermediateData: (String?) -> Unit = {}
 ) {
     val originalFiles = KnowledgeManager.originalFiles
     val unfiledWorkCount by viewModel.unfiledWorkCount.collectAsState()
@@ -45,7 +45,9 @@ fun ProfileScreen(
 
         item {
             Card(
-                onClick = onOpenIntermediateData,
+                onClick = {
+                    onOpenIntermediateData(processingSummaries.firstOrNull()?.knowledgeBaseId)
+                },
                 modifier = Modifier
                     .padding(horizontal = 20.dp)
                     .fillMaxWidth(),
@@ -86,7 +88,13 @@ fun ProfileScreen(
         }
 
         item {
-            Section(title = "知识加工数据", more = "查看详情", onMoreClick = onOpenIntermediateData) {
+            Section(
+                title = "知识加工数据",
+                more = "查看详情",
+                onMoreClick = {
+                    onOpenIntermediateData(processingSummaries.firstOrNull()?.knowledgeBaseId)
+                }
+            ) {
                 val visibleSummaries = processingSummaries.take(6)
                 if (visibleSummaries.isEmpty()) {
                     QuietCell(
@@ -107,7 +115,7 @@ fun ProfileScreen(
                                     Text(topText, fontSize = 11.sp, color = Color(0xFF6AA8D0), maxLines = 1)
                                 }
                             },
-                            onClick = onOpenIntermediateData
+                            onClick = { onOpenIntermediateData(summary.knowledgeBaseId) }
                         )
                     }
                 }

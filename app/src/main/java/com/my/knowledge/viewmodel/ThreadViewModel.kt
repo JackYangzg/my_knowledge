@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
+import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
@@ -11,7 +12,8 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class ThreadViewModel(
-    private val knowledgeRepository: KnowledgeRepository
+    private val knowledgeRepository: KnowledgeRepository,
+    private val scheduler: ProcessingTaskScheduler
 ) : ViewModel() {
 
     private val _kbId = MutableStateFlow<String?>(null)
@@ -65,21 +67,14 @@ class ThreadViewModel(
     }
 
     fun triggerManualEvolution() {
-        viewModelScope.launch {
-            val kbId = _kbId.value ?: return@launch
-            knowledgeRepository.rebuildGraphForBase(kbId)
-            val log = KnowledgeThreadLogEntity(
-                id = java.util.UUID.randomUUID().toString(),
-                threadId = thread.value?.id ?: "",
-                triggerType = "manual",
-                triggerId = kbId,
-                beforeHash = null,
-                afterHash = null,
-                summary = "用户手动触发知识脉络更新",
-                createdAt = System.currentTimeMillis()
-            )
-            knowledgeRepository.appendThreadLog(log)
-        }
+        val kbId = _kbId.value ?: return
+        // Hand off to the worker instead of doing the work inline. The
+        // worker has the full rewrite (input hash + tag cluster + wikilink
+        // graph + score-driven gaps) and writes the resulting thread +
+        // log atomically. The previous in-line path only updated the
+        // graph and dropped a log row, so users saw an empty
+        // "知识主线" list with a fake "刷新成功" toast.
+        scheduler.scheduleThreadUpdate(kbId)
     }
 
     private fun parseStringList(json: String?): List<String> {

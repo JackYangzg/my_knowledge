@@ -7,19 +7,25 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.AnnotatedString
@@ -31,9 +37,12 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
+import com.my.knowledge.data.ai.ScopeType
+import com.my.knowledge.ui.component.AskSheet
 import com.my.knowledge.ui.component.MiniTag
+import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemDetailViewModel
-import com.mukesh.MarkDown
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -42,9 +51,13 @@ import java.io.File
 fun KnowledgeViewerScreen(
     itemId: String,
     viewModel: KnowledgeItemDetailViewModel,
+    askViewModel: AskViewModel,
+    knowledgeRepository: com.my.knowledge.domain.repository.KnowledgeRepository,
     onBack: () -> Unit,
-    onOpenItem: (String) -> Unit = {}
+    onOpenItem: (String) -> Unit = {},
+    onEditItem: (String) -> Unit = {}
 ) {
+    val context = LocalContext.current
     LaunchedEffect(itemId) {
         viewModel.loadItem(itemId)
     }
@@ -53,10 +66,16 @@ fun KnowledgeViewerScreen(
     val processedItems by viewModel.processedItems.collectAsState()
     val sourceItem by viewModel.sourceItem.collectAsState()
     var showProcessedItems by remember(itemId) { mutableStateOf(false) }
+    var showAskSheet by remember { mutableStateOf(false) }
     val linkTargets = remember(processedItems, sourceItem) {
         buildLinkTargets(processedItems, sourceItem)
     }
 
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.White)
+    ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -104,85 +123,122 @@ fun KnowledgeViewerScreen(
                             Text(if (showProcessedItems) "原文" else "加工数据", fontSize = 12.sp, color = Color(0xFF147EC5))
                         }
                     }
+                    // Per-item ask history used to open AskHistorySheet; the
+                    // history list now lives inside AskSheet itself, so this
+                    // entry has been removed.
+                    if (canEditItem(currentItem)) {
+                        TextButton(
+                            onClick = { onEditItem(currentItem.id) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Edit,
+                                contentDescription = null,
+                                tint = Color(0xFF147EC5),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("编辑", fontSize = 12.sp, color = Color(0xFF147EC5))
+                        }
+                    }
                     MiniTag(fileTypeLabel(currentItem.sourceType))
                 }
             }
         }
 
         item?.let { knowledgeItem ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp)
-            ) {
-                Text(
-                    text = if (showProcessedItems) "加工数据" else knowledgeItem.title,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A),
-                    lineHeight = 32.sp
+            if (!showProcessedItems && knowledgeItem.sourceType == "pdf") {
+                PdfContentViewer(
+                    item = knowledgeItem,
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)
                 )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Meta info
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp)
                 ) {
-                    MiniTag(knowledgeItem.status)
-                    MiniTag(knowledgeItem.sourceType)
-                    Text(
-                        formatTimestamp(knowledgeItem.updatedAt),
-                        fontSize = 12.sp,
-                        color = Color(0xFFA3A3A3)
+                    KnowledgeBodyHeader(
+                        title = if (showProcessedItems) "加工数据" else knowledgeItem.title,
+                        item = knowledgeItem
                     )
-                }
 
-                Spacer(modifier = Modifier.height(4.dp))
-                HorizontalDivider(color = Color(0xFFF3F4F6))
-                Spacer(modifier = Modifier.height(16.dp))
-
-                if (showProcessedItems) {
-                    ProcessedWikiSection(
-                        items = processedItems,
-                        onOpenItem = onOpenItem
-                    )
-                } else {
-                    when {
-                        knowledgeItem.sourceType == "pdf" -> {
-                            PdfContentViewer(knowledgeItem)
-                        }
-                        isImageType(knowledgeItem.sourceType) -> {
-                            ImagePlaceholder(knowledgeItem.contentMarkdown)
-                        }
-                        else -> {
-                            if (knowledgeItem.sourceType.startsWith("wiki_")) {
+                    if (showProcessedItems) {
+                        ProcessedWikiSection(
+                            items = processedItems,
+                            onOpenItem = onOpenItem
+                        )
+                    } else {
+                        when {
+                            isImageType(knowledgeItem.sourceType) -> {
+                                ImagePlaceholder(knowledgeItem.contentMarkdown)
+                            }
+                            knowledgeItem.sourceType.startsWith("wiki_") -> {
                                 WikiMarkdownContent(
                                     markdown = knowledgeItem.contentMarkdown.ifBlank { "暂无内容" },
                                     linkTargets = linkTargets,
                                     onOpenItem = onOpenItem
                                 )
-                            } else {
-                                MarkDown(
+                            }
+                            else -> {
+                                ComposeMarkdown(
                                     modifier = Modifier.fillMaxWidth(),
-                                    text = knowledgeItem.contentMarkdown.ifBlank { "暂无内容" },
-                                    shouldOpenUrlInBrowser = true
+                                    markdown = knowledgeItem.contentMarkdown.ifBlank { "暂无内容" },
+                                    onLinkClick = { openFile(context, it) }
                                 )
                             }
                         }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(60.dp))
+                    Spacer(modifier = Modifier.height(60.dp))
+                }
             }
         } ?: run {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFF147EC5))
             }
         }
-    }
+    } // close outer Column
+
+        // Floating "AI 问一问" button. Same look as the rest of the
+        // app's screens, but scoped to KNOWLEDGE_ITEM — the model
+        // only sees this one item and must not generalize beyond it.
+        item?.let { currentItem ->
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 24.dp, end = 20.dp)
+            ) {
+                Surface(
+                    onClick = {
+                        askViewModel.setScope(ScopeType.KNOWLEDGE_ITEM, currentItem.id)
+                        askViewModel.startNewConversation(currentItem.title)
+                        showAskSheet = true
+                    },
+                    shape = CircleShape,
+                    color = Color(0xFF111827),
+                    shadowElevation = 12.dp,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .shadow(12.dp, CircleShape)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "AI",
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showAskSheet) {
+            AskSheet(askViewModel = askViewModel, onClose = { showAskSheet = false })
+        }
+    } // close outer Box
 }
 
 @Composable
@@ -328,6 +384,36 @@ private fun extractFrontMatterList(markdown: String, key: String): List<String> 
 private const val TAG_INTERNAL_LINK = "internal_link"
 
 @Composable
+private fun KnowledgeBodyHeader(
+    title: String,
+    item: KnowledgeItemEntity
+) {
+    Text(
+        text = title,
+        fontSize = 24.sp,
+        fontWeight = FontWeight.Bold,
+        color = Color(0xFF0F172A),
+        lineHeight = 32.sp
+    )
+    Spacer(modifier = Modifier.height(8.dp))
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        MiniTag(item.status)
+        MiniTag(item.sourceType)
+        Text(
+            formatTimestamp(item.updatedAt),
+            fontSize = 12.sp,
+            color = Color(0xFFA3A3A3)
+        )
+    }
+    Spacer(modifier = Modifier.height(4.dp))
+    HorizontalDivider(color = Color(0xFFF3F4F6))
+    Spacer(modifier = Modifier.height(16.dp))
+}
+
+@Composable
 private fun ProcessedWikiSection(
     items: List<KnowledgeItemEntity>,
     onOpenItem: (String) -> Unit
@@ -369,65 +455,124 @@ private fun ProcessedWikiSection(
 }
 
 @Composable
-private fun PdfContentViewer(item: KnowledgeItemEntity) {
+private fun PdfContentViewer(
+    item: KnowledgeItemEntity,
+    modifier: Modifier = Modifier
+) {
+    val context = LocalContext.current
     val localPath = remember(item.sourceTraceJson) { extractJsonString(item.sourceTraceJson, "localPath") }
-    var pages by remember(localPath) { mutableStateOf<List<Bitmap>>(emptyList()) }
-    var error by remember(localPath) { mutableStateOf<String?>(null) }
+    var previewPages by remember(localPath) { mutableStateOf<List<Bitmap>>(emptyList()) }
+    var previewError by remember(localPath) { mutableStateOf<String?>(null) }
+    var showFullText by remember(item.id) { mutableStateOf(false) }
+    val textChunks = remember(item.contentMarkdown, showFullText) {
+        chunkLongMarkdown(
+            markdown = item.contentMarkdown.ifBlank { "暂无解析文本" },
+            maxChars = if (showFullText) 220_000 else 36_000
+        )
+    }
+    val isTruncated = remember(item.contentMarkdown, showFullText) {
+        !showFullText && item.contentMarkdown.length > 36_000
+    }
 
     LaunchedEffect(localPath) {
         if (localPath.isNullOrBlank()) {
-            error = "未找到 PDF 本地文件路径。"
+            previewError = "未找到 PDF 本地文件路径。"
             return@LaunchedEffect
         }
-        val result = renderPdfPages(localPath)
-        pages = result.getOrElse {
-            error = it.localizedMessage ?: "PDF 渲染失败"
+        val result = renderPdfPreviewPages(localPath)
+        previewPages = result.getOrElse {
+            previewError = it.localizedMessage ?: "PDF 预览渲染失败"
             emptyList()
         }
     }
 
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (pages.isEmpty() && error == null) {
-            CircularProgressIndicator(color = Color(0xFF147EC5))
+    LazyColumn(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        contentPadding = PaddingValues(bottom = 72.dp)
+    ) {
+        item {
+            KnowledgeBodyHeader(title = item.title, item = item)
         }
-        error?.let {
-            Surface(color = Color(0xFFFEF2F2), shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                Text(it, color = Color(0xFFDC2626), fontSize = 13.sp, modifier = Modifier.padding(12.dp))
+        item {
+            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("PDF 预览", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    previewError?.let {
+                        Text(it, color = Color(0xFFDC2626), fontSize = 12.sp)
+                    } ?: Text(
+                        "为避免大文件卡顿，仅预览前 ${previewPages.size.coerceAtLeast(1).coerceAtMost(PDF_PREVIEW_PAGE_LIMIT)} 页；完整内容请查看下方解析文本。",
+                        fontSize = 12.sp,
+                        color = Color(0xFF5F87A3)
+                    )
+                    TextButton(onClick = { localPath?.let { openFile(context, "file://$it") } }) {
+                        Text("打开原始 PDF", fontSize = 13.sp)
+                    }
+                }
             }
         }
-        pages.forEachIndexed { index, bitmap ->
+        items(previewPages, key = { it.hashCode() }) { bitmap ->
             Surface(shape = RoundedCornerShape(8.dp), color = Color.White, shadowElevation = 1.dp) {
-                Column {
-                    Text("第 ${index + 1} 页", fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(10.dp))
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "PDF 第 ${index + 1} 页",
-                        modifier = Modifier.fillMaxWidth()
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "PDF 预览页",
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+        item {
+            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text("解析文本", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    Text(
+                        "共 ${item.contentMarkdown.length} 字符，已分块懒加载显示。",
+                        fontSize = 12.sp,
+                        color = Color(0xFF5F87A3),
+                        modifier = Modifier.padding(top = 4.dp)
                     )
                 }
             }
         }
-        if (item.contentMarkdown.isNotBlank()) {
-            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text("解析文本", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                    Spacer(modifier = Modifier.height(8.dp))
-                    MarkDown(modifier = Modifier.fillMaxWidth(), text = item.contentMarkdown, shouldOpenUrlInBrowser = true)
+        items(textChunks, key = { it.index }) { chunk ->
+            Surface(shape = RoundedCornerShape(10.dp), color = Color.White, modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                    Text(
+                        "文本片段 ${chunk.index + 1}",
+                        fontSize = 11.sp,
+                        color = Color(0xFF94A3B8),
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                    )
+                    ComposeMarkdown(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                        markdown = chunk.text,
+                        onLinkClick = { openFile(context, it) }
+                    )
+                }
+            }
+        }
+        if (isTruncated) {
+            item {
+                Button(
+                    onClick = { showFullText = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))
+                ) {
+                    Text("继续加载更多解析文本", color = Color.White)
                 }
             }
         }
     }
 }
 
-private suspend fun renderPdfPages(path: String): Result<List<Bitmap>> = withContext(Dispatchers.IO) {
+private suspend fun renderPdfPreviewPages(path: String): Result<List<Bitmap>> = withContext(Dispatchers.IO) {
     runCatching {
         val file = File(path)
         require(file.exists()) { "PDF 文件不存在：$path" }
         val descriptor = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
         PdfRenderer(descriptor).use { renderer ->
-            (0 until renderer.pageCount.coerceAtMost(100)).map { pageIndex ->
+            (0 until renderer.pageCount.coerceAtMost(PDF_PREVIEW_PAGE_LIMIT)).map { pageIndex ->
                 renderer.openPage(pageIndex).use { page ->
-                    val width = 1080
+                    val width = 720
                     val height = (width.toFloat() / page.width * page.height).toInt().coerceAtLeast(1)
                     Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { bitmap ->
                         bitmap.eraseColor(android.graphics.Color.WHITE)
@@ -439,6 +584,36 @@ private suspend fun renderPdfPages(path: String): Result<List<Bitmap>> = withCon
     }
 }
 
+private data class MarkdownChunk(
+    val index: Int,
+    val text: String
+)
+
+private fun chunkLongMarkdown(
+    markdown: String,
+    maxChars: Int,
+    chunkSize: Int = 6_000
+): List<MarkdownChunk> {
+    val limited = markdown.take(maxChars)
+    val chunks = mutableListOf<MarkdownChunk>()
+    var start = 0
+    while (start < limited.length) {
+        val targetEnd = (start + chunkSize).coerceAtMost(limited.length)
+        val paragraphEnd = limited.lastIndexOf("\n\n", startIndex = targetEnd - 1)
+            .takeIf { it > start + chunkSize / 2 }
+            ?: limited.lastIndexOf('\n', startIndex = targetEnd - 1)
+                .takeIf { it > start + chunkSize / 2 }
+            ?: targetEnd
+        val end = paragraphEnd.coerceIn(start + 1, limited.length)
+        chunks += MarkdownChunk(chunks.size, limited.substring(start, end).trim())
+        start = end
+        while (start < limited.length && limited[start].isWhitespace()) start++
+    }
+    return chunks.ifEmpty { listOf(MarkdownChunk(0, "暂无解析文本")) }
+}
+
+private const val PDF_PREVIEW_PAGE_LIMIT = 3
+
 private fun extractJsonString(raw: String, key: String): String? {
     val match = Regex("\"${Regex.escape(key)}\"\\s*:\\s*\"((?:\\\\.|[^\"])*)\"").find(raw) ?: return null
     return match.groupValues[1]
@@ -449,6 +624,7 @@ private fun extractJsonString(raw: String, key: String): String? {
 
 @Composable
 private fun ImagePlaceholder(contentMarkdown: String) {
+    val context = LocalContext.current
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -480,10 +656,10 @@ private fun ImagePlaceholder(contentMarkdown: String) {
                 shape = RoundedCornerShape(12.dp),
                 color = Color(0xFFF7FBFF)
             ) {
-                MarkDown(
+                ComposeMarkdown(
                     modifier = Modifier.padding(16.dp).fillMaxWidth(),
-                    text = contentMarkdown,
-                    shouldOpenUrlInBrowser = true
+                    markdown = contentMarkdown,
+                    onLinkClick = { openFile(context, it) }
                 )
             }
         }
@@ -511,6 +687,27 @@ private fun fileTypeLabel(sourceType: String): String = when (sourceType.lowerca
 private fun isImageType(sourceType: String): Boolean {
     val lower = sourceType.lowercase()
     return lower in listOf("jpg", "jpeg", "png", "bmp", "gif", "webp")
+}
+
+/**
+ * Whether the user can re-open this knowledge item in the text editor.
+ * We only offer "edit" for items whose content is actually editable text
+ * (markdown, txt, AI answers, hand-typed notes, processed wiki pages
+ * produced by the ingest pipeline). PDFs, images, audio and binary
+ * attachments stay read-only — those go through the source file.
+ */
+private fun canEditItem(item: KnowledgeItemEntity): Boolean {
+    if (item.deletedAt != null) return false
+    val t = item.sourceType.lowercase()
+    if (t in setOf("pdf", "jpg", "jpeg", "png", "bmp", "gif", "webp", "audio", "video")) return false
+    // Wiki pages emitted by the ingest pipeline are markdown too.
+    if (t.startsWith("wiki_")) return true
+    // text-ish types and notes from the inspiration editor
+    if (t in setOf("md", "markdown", "txt", "text", "note", "ai_answer", "manual", "text")) return true
+    // Fallback: if the content itself looks like markdown/text we still allow
+    // editing, because the user may have imported a custom source type.
+    val body = item.contentMarkdown
+    return body.isNotBlank() && body.length < 1_000_000
 }
 
 private fun formatTimestamp(timestamp: Long): String {

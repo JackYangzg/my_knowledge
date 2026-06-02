@@ -43,6 +43,7 @@ fun KnowledgeContextScreen(
     val graphEntities by threadViewModel.graphEntities.collectAsState()
     val graphRelations by threadViewModel.graphRelations.collectAsState()
     val graphCommunities by threadViewModel.graphCommunities.collectAsState()
+    var showAllEvolutionLogs by remember(selectedKbId) { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier
@@ -318,7 +319,8 @@ fun KnowledgeContextScreen(
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Column(modifier = Modifier.padding(16.dp)) {
-                                    logs.take(10).forEach { log ->
+                                    val visibleLogs = if (showAllEvolutionLogs) logs else logs.take(2)
+                                    visibleLogs.forEach { log ->
                                         Row(
                                             modifier = Modifier.padding(vertical = 4.dp),
                                             verticalAlignment = Alignment.Top
@@ -338,6 +340,23 @@ fun KnowledgeContextScreen(
                                                     color = Color(0xFFA3A3A3)
                                                 )
                                             }
+                                        }
+                                    }
+                                    if (logs.size > 2) {
+                                        HorizontalDivider(
+                                            color = Color(0xFFF1F5F9),
+                                            modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
+                                        )
+                                        TextButton(
+                                            onClick = { showAllEvolutionLogs = !showAllEvolutionLogs },
+                                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
+                                        ) {
+                                            Text(
+                                                if (showAllEvolutionLogs) "收起日志" else "展开全部 ${logs.size} 条日志",
+                                                fontSize = 12.sp,
+                                                color = Color(0xFF147EC5),
+                                                fontWeight = FontWeight.SemiBold
+                                            )
                                         }
                                     }
                                 }

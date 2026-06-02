@@ -24,28 +24,28 @@ interface KnowledgeGraphDao {
     @Query("DELETE FROM knowledge_embedding WHERE itemId = :itemId")
     suspend fun deleteEmbeddingsByItem(itemId: String)
 
-    @Query("SELECT * FROM knowledge_entity ORDER BY weight DESC, name ASC")
+    @Query("SELECT * FROM knowledge_entity WHERE deletedAt IS NULL ORDER BY weight DESC, name ASC")
     fun observeAllEntities(): Flow<List<KnowledgeEntityEntity>>
 
-    @Query("SELECT * FROM knowledge_relation ORDER BY confidence DESC")
+    @Query("SELECT * FROM knowledge_relation WHERE deletedAt IS NULL ORDER BY confidence DESC")
     fun observeAllRelations(): Flow<List<KnowledgeRelationEntity>>
 
-    @Query("SELECT * FROM knowledge_community ORDER BY updatedAt DESC")
+    @Query("SELECT * FROM knowledge_community WHERE deletedAt IS NULL ORDER BY updatedAt DESC")
     fun observeAllCommunities(): Flow<List<KnowledgeCommunityEntity>>
 
-    @Query("SELECT * FROM knowledge_entity WHERE knowledgeBaseId = :kbId ORDER BY weight DESC, name ASC")
+    @Query("SELECT * FROM knowledge_entity WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL ORDER BY weight DESC, name ASC")
     fun observeEntities(kbId: String): Flow<List<KnowledgeEntityEntity>>
 
-    @Query("SELECT * FROM knowledge_relation WHERE knowledgeBaseId = :kbId ORDER BY confidence DESC")
+    @Query("SELECT * FROM knowledge_relation WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL ORDER BY confidence DESC")
     fun observeRelations(kbId: String): Flow<List<KnowledgeRelationEntity>>
 
-    @Query("SELECT * FROM knowledge_community WHERE knowledgeBaseId = :kbId ORDER BY updatedAt DESC")
+    @Query("SELECT * FROM knowledge_community WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL ORDER BY updatedAt DESC")
     fun observeCommunities(kbId: String): Flow<List<KnowledgeCommunityEntity>>
 
-    @Query("SELECT COUNT(*) FROM knowledge_entity")
+    @Query("SELECT COUNT(*) FROM knowledge_entity WHERE deletedAt IS NULL")
     fun observeEntityCount(): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM knowledge_entity WHERE type = 'concept'")
+    @Query("SELECT COUNT(*) FROM knowledge_entity WHERE type = 'concept' AND deletedAt IS NULL")
     fun observeConceptCount(): Flow<Int>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -57,12 +57,33 @@ interface KnowledgeGraphDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertCommunities(communities: List<KnowledgeCommunityEntity>)
 
-    @Query("DELETE FROM knowledge_entity WHERE knowledgeBaseId = :kbId")
-    suspend fun clearEntities(kbId: String)
+    @Query("UPDATE knowledge_entity SET deletedAt = :now WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL")
+    suspend fun clearEntities(kbId: String, now: Long = System.currentTimeMillis())
 
-    @Query("DELETE FROM knowledge_relation WHERE knowledgeBaseId = :kbId")
-    suspend fun clearRelations(kbId: String)
+    @Query("UPDATE knowledge_relation SET deletedAt = :now WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL")
+    suspend fun clearRelations(kbId: String, now: Long = System.currentTimeMillis())
 
-    @Query("DELETE FROM knowledge_community WHERE knowledgeBaseId = :kbId")
-    suspend fun clearCommunities(kbId: String)
+    @Query("UPDATE knowledge_community SET deletedAt = :now WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL")
+    suspend fun clearCommunities(kbId: String, now: Long = System.currentTimeMillis())
+
+    @Query("UPDATE knowledge_entity SET deletedAt = :now WHERE id IN (:ids)")
+    suspend fun deleteEntities(ids: List<String>, now: Long = System.currentTimeMillis())
+
+    @Query("UPDATE knowledge_relation SET deletedAt = :now WHERE id IN (:ids)")
+    suspend fun deleteRelations(ids: List<String>, now: Long = System.currentTimeMillis())
+
+    @Query("UPDATE knowledge_community SET deletedAt = :now WHERE id IN (:ids)")
+    suspend fun deleteCommunities(ids: List<String>, now: Long = System.currentTimeMillis())
+
+    @Query("SELECT * FROM knowledge_entity WHERE name = :name AND deletedAt IS NULL LIMIT 1")
+    suspend fun getEntityByName(name: String): KnowledgeEntityEntity?
+
+    @Query("SELECT * FROM knowledge_entity WHERE knowledgeBaseId = :kbId")
+    suspend fun getAllEntitiesByKb(kbId: String): List<KnowledgeEntityEntity>
+
+    @Query("SELECT * FROM knowledge_relation WHERE knowledgeBaseId = :kbId")
+    suspend fun getAllRelationsByKb(kbId: String): List<KnowledgeRelationEntity>
+
+    @Query("SELECT * FROM knowledge_community WHERE knowledgeBaseId = :kbId")
+    suspend fun getAllCommunitiesByKb(kbId: String): List<KnowledgeCommunityEntity>
 }

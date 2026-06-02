@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 data class ImportCenterRow(
     val source: SourceDocumentEntity,
     val latestTask: ProcessingTaskEntity?,
+    val allTasks: List<ProcessingTaskEntity>,
     val activeTaskCount: Int
 )
 
@@ -35,10 +36,11 @@ class ImportCenterViewModel(
     ) { sources, tasks ->
         val tasksBySource = tasks.groupBy { it.sourceId ?: it.targetId.takeIf { _ -> it.targetType == "source_document" } }
         sources.map { source ->
-            val sourceTasks = tasksBySource[source.id].orEmpty()
+            val sourceTasks = tasksBySource[source.id].orEmpty().sortedBy { it.createdAt }
             ImportCenterRow(
                 source = source,
                 latestTask = sourceTasks.maxByOrNull { it.createdAt },
+                allTasks = sourceTasks,
                 activeTaskCount = sourceTasks.count { it.status == "pending" || it.status == "running" || it.status == "failed" }
             )
         }
@@ -48,12 +50,17 @@ class ImportCenterViewModel(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun retrySource(sourceId: String) {
+        // The previous implementation only flipped a `failed / canceled /
+        // pending_config` task back to `pending` and re-ran the queue. That
+        // silently no-op'd once the latest task was `success` — exactly the
+        // case the user hits when they tap "重新发起 分析" on a finished
+        // source. The user expects a full re-ingest: clear stale parse /
+        // analysis / wiki pages, enqueue a fresh parse, and let the
+        // orchestrator walk the pipeline again. `retryProcessingForItem`
+        // does all of that and is the right call for both the success and
+        // the failure case.
         viewModelScope.launch {
-            val tasks = taskDao.getBySource(sourceId)
-            val retryable = tasks.firstOrNull { it.status == "failed" || it.status == "canceled" || it.status == "pending_config" }
-            if (retryable != null) {
-                knowledgeRepository.retryTask(retryable.id)
-            }
+            knowledgeRepository.retryProcessingForSource(sourceId)
             scheduler.scheduleIngestQueue()
         }
     }
@@ -66,7 +73,10 @@ class ImportCenterViewModel(
 
     fun deleteSource(sourceId: String) {
         viewModelScope.launch {
-            deleteSourceUseCase.deleteSource(sourceId)
+            deleteSourceUseCase.deleteSource(sourceId).forEach { kbId ->
+                knowledgeRepository.refreshOverviewForBase(kbId)
+                knowledgeRepository.rebuildGraphForBase(kbId)
+            }
         }
     }
 }

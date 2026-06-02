@@ -8,6 +8,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
+import com.my.knowledge.data.db.entity.ProcessingTaskEntity
+import com.my.knowledge.data.db.entity.SourceDocumentEntity
+import com.my.knowledge.data.file.LocalFileStore
+import com.my.knowledge.data.parser.WeChatArticleParser
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +45,7 @@ object KnowledgeManager {
 
     private var db: AppDatabase? = null
     private var scheduler: ProcessingTaskScheduler? = null
+    private var fileStore: LocalFileStore? = null
     private val scope = CoroutineScope(Dispatchers.IO)
     
     // P0: SharedPreferences for local-first toggle
@@ -66,6 +71,7 @@ object KnowledgeManager {
     fun init(context: Context) {
         db = AppDatabase.getInstance(context)
         scheduler = ProcessingTaskScheduler(context)
+        fileStore = LocalFileStore(context)
         preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val storedVoiceApiKey = preferences.getString(KEY_VOICE_API_KEY, "") ?: ""
         val sanitizedVoiceApiKey = storedVoiceApiKey.takeUnless {
@@ -120,38 +126,129 @@ object KnowledgeManager {
         return hashBytes.joinToString("") { "%02x".format(it) }
     }
 
-    fun importAndAnalyze(name: String, type: String, content: String = "", targetLibrary: String = "unfiled") {
+    fun importAndAnalyze(
+        name: String,
+        type: String,
+        content: String = "",
+        targetLibrary: String = "unfiled",
+        sourceUri: String? = null,
+        localPath: String? = null
+    ) {
         scope.launch {
             val database = db ?: return@launch
             val taskScheduler = scheduler ?: return@launch
             
-            val id = UUID.randomUUID().toString()
+            // Resolve target KB ID (Fixes issue #1: using type string instead of UUID)
+            val kbId = if (targetLibrary == "unfiled" || targetLibrary == "inspiration" || targetLibrary == "system") {
+                database.knowledgeBaseDao().getByType(targetLibrary)?.id ?: targetLibrary
+            } else {
+                targetLibrary
+            }
+
+            val sourceId = UUID.randomUUID().toString()
+            val now = System.currentTimeMillis()
+            val finalLocalPath = localPath ?: fileStore?.saveTextSource(sourceId, content)?.absolutePath
+            val contentHash = sha256(content)
+
+            // 1. Create SourceDocumentEntity (Visibility in Log Center - fixes issue #2)
+            val source = SourceDocumentEntity(
+                id = sourceId,
+                sourceType = type,
+                title = name,
+                originalUri = sourceUri,
+                localPath = finalLocalPath,
+                mimeType = if (type == "wechat_article" || type.contains("markdown")) "text/markdown" else "text/plain",
+                sizeBytes = content.toByteArray(Charsets.UTF_8).size.toLong(),
+                sha256 = contentHash,
+                importFrom = "share_or_manual",
+                folderHint = null,
+                status = SourceDocumentEntity.STATUS_IMPORTED,
+                errorMessage = null,
+                targetKnowledgeBaseId = kbId,
+                createdAt = now,
+                updatedAt = now
+            )
+            database.sourceDocumentDao().insert(source)
+
+            // 2. Create initial KnowledgeItem so it's visible in the knowledge base list immediately
             val item = KnowledgeItemEntity(
-                id = id,
-                knowledgeBaseId = targetLibrary,
+                id = UUID.randomUUID().toString(),
+                sourceId = sourceId,
+                knowledgeBaseId = kbId,
                 title = name,
                 contentMarkdown = content,
-                excerpt = content.take(100),
+                excerpt = "正在排队等待加工...",
                 sourceType = type,
-                status = "processing",
-                contentHash = sha256(content),
+                status = KnowledgeItemEntity.STATUS_PROCESSING,
+                contentHash = contentHash,
+                sourceTraceJson = """{"sourceId":"$sourceId","localPath":"${finalLocalPath.orEmpty().escapeJson()}"}""",
+                confidence = 0f,
                 summary = null,
                 tagsJson = "[]",
                 rawNoteId = null,
                 importance = 1,
-                createdAt = System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis(),
+                createdAt = now,
+                updatedAt = now,
                 processedAt = null,
+                archivedAt = null,
                 deletedAt = null
             )
-            
             database.knowledgeItemDao().insert(item)
             
-            // Trigger background pipeline via WorkManager
-            taskScheduler.scheduleFullPipeline(id)
+            // Note: We don't call updateItemCount here as it will be handled by the pipeline or is handled in Repository.
+            // But for immediate UI update, we can call it if we have access.
+            // database.knowledgeItemDao().updateItemCount(kbId, ...)
+
+            // 3. Create initial parse task for the Ingest Pipeline
+            database.processingTaskDao().insert(
+                ProcessingTaskEntity(
+                    id = UUID.randomUUID().toString(),
+                    targetType = "source_document",
+                    targetId = sourceId,
+                    taskType = "parse",
+                    status = "pending",
+                    priority = 10,
+                    dependsOnTaskIdsJson = null,
+                    retryCount = 0,
+                    maxRetry = 3,
+                    errorMessage = null,
+                    createdAt = now,
+                    updatedAt = now,
+                    finishedAt = null,
+                    sourceId = sourceId,
+                    itemId = null,
+                    progress = 0,
+                    currentStep = "等待解析",
+                    inputJson = """{"sourceId":"$sourceId"}"""
+                )
+            )
             
-            // Compatibility: Add to legacy list for UI reactive updates where VMs aren't used yet
-            originalFiles.add(0, RecentNote(name, type, "刚刚", "分析中..."))
+            // 4. Trigger background pipeline via WorkManager
+            taskScheduler.scheduleIngestQueue()
+            
+            // Compatibility: Add to legacy list for UI reactive updates
+            originalFiles.add(0, RecentNote(name, type, "刚刚", "排队中"))
+        }
+    }
+
+    private fun String.escapeJson(): String =
+        replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
+
+    fun importFromWeChat(url: String) {
+        scope.launch {
+            try {
+                val parser = WeChatArticleParser()
+                val article = parser.parse(url)
+                importAndAnalyze(
+                    name = article.title,
+                    type = "wechat_article",
+                    content = article.contentText,
+                    targetLibrary = "unfiled",
+                    sourceUri = url
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 }

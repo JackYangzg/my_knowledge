@@ -9,6 +9,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,6 +22,7 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.AskCitationEntity
 import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.viewmodel.AskViewModel
+import com.my.knowledge.ui.component.AiMessageContent
 import kotlinx.coroutines.launch
 
 @Composable
@@ -77,12 +79,31 @@ fun AskScreen(
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF0F172A)
             )
-            Text(
-                text = "基于「$itemTitle」的知识内容",
-                fontSize = 13.sp,
-                color = Color(0xFF5F87A3),
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "基于「$itemTitle」的知识内容",
+                    fontSize = 13.sp,
+                    color = Color(0xFF5F87A3),
+                    modifier = Modifier.padding(top = 4.dp).weight(1f)
+                )
+                TextButton(
+                    onClick = { viewModel.clearHistory() },
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "清空对话",
+                        modifier = Modifier.size(16.dp),
+                        tint = Color(0xFFEF4444)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("清空历史", fontSize = 13.sp, color = Color(0xFFEF4444))
+                }
+            }
         }
 
         // Messages
@@ -120,7 +141,12 @@ fun AskScreen(
 
             items(messages) { msg ->
                 val visibleCitations = if (msg.role == "assistant" && msg == messages.lastOrNull { it.role == "assistant" }) citations else emptyList()
-                MessageBubble(msg, visibleCitations, debugPrompts[msg.id])
+                MessageBubble(
+                    msg = msg,
+                    citations = visibleCitations,
+                    debugPrompt = debugPrompts[msg.id],
+                    onSaveAsKnowledge = { viewModel.saveAnswerAsKnowledge(msg.id) }
+                )
             }
 
             if (isLoading) {
@@ -199,7 +225,8 @@ fun AskScreen(
 private fun MessageBubble(
     msg: AiMessageEntity,
     citations: List<AskCitationEntity>,
-    debugPrompt: String? = null
+    debugPrompt: String? = null,
+    onSaveAsKnowledge: () -> Unit
 ) {
     val isUser = msg.role == "user"
 
@@ -216,14 +243,14 @@ private fun MessageBubble(
             ),
             color = if (isUser) Color(0xFF147EC5) else Color.White,
             border = if (!isUser) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEEF6FF)) else null,
-            modifier = Modifier.widthIn(max = 320.dp)
+            modifier = Modifier.widthIn(max = 360.dp)
         ) {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Text(
-                    text = msg.content,
-                    fontSize = 14.sp,
-                    lineHeight = 22.sp,
-                    color = if (isUser) Color.White else Color(0xFF0F172A)
+                AiMessageContent(
+                    content = msg.content,
+                    isUser = isUser,
+                    messageKey = msg.id,
+                    modifier = Modifier.fillMaxWidth()
                 )
                 if (isUser && !debugPrompt.isNullOrBlank()) {
                     Spacer(modifier = Modifier.height(8.dp))
@@ -241,11 +268,32 @@ private fun MessageBubble(
                     }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = if (isUser) "你" else "AI",
-                    fontSize = 11.sp,
-                    color = if (isUser) Color.White.copy(alpha = 0.7f) else Color(0xFFA3A3A3)
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isUser) "你" else "AI",
+                        fontSize = 11.sp,
+                        color = if (isUser) Color.White.copy(alpha = 0.7f) else Color(0xFFA3A3A3)
+                    )
+                    if (!isUser) {
+                        val isSaved = msg.savedAsKnowledgeItemId != null
+                        TextButton(
+                            onClick = onSaveAsKnowledge,
+                            enabled = !isSaved,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Text(
+                                text = if (isSaved) "已保存到知识库" else "保存到知识库",
+                                fontSize = 11.sp,
+                                color = if (isSaved) Color(0xFFA3A3A3) else Color(0xFF147EC5)
+                            )
+                        }
+                    }
+                }
                 if (!isUser && citations.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     citations.take(4).forEach { citation ->

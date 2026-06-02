@@ -161,22 +161,161 @@ class WikiPageCompiler {
         return pages
     }
 
-    fun merge(existingMarkdown: String, incomingMarkdown: String): String {
+    fun merge(existingMarkdown: String, incomingMarkdown: String, pageTitle: String? = null): String {
         if (existingMarkdown.isBlank()) return incomingMarkdown
-        if (incomingMarkdown.contains("title: log.md")) {
-            val incomingBody = incomingMarkdown.substringAfter("---", incomingMarkdown).substringAfter("---", incomingMarkdown).trim()
-            return existingMarkdown.trimEnd() + "\n\n" + incomingBody.substringAfter("# Ingest Log").trim()
+        if (incomingMarkdown.isBlank()) return existingMarkdown
+
+        // Detect log.md either by an explicit title argument, or by the
+        // title field inside the frontmatter (with or without quotes). The
+        // original code only matched `title: log.md` (unquoted), which broke
+        // for any LLM that wrapped the title in quotes — the very case the
+        // prompt asks for.
+        val normalizedTitle = pageTitle?.substringAfterLast('/')?.removeSuffix(".md")
+        val incomingTitle = frontMatterValue(incomingMarkdown, "title")
+        val existingTitle = frontMatterValue(existingMarkdown, "title")
+        val isLog = normalizedTitle == "log" || incomingTitle == "log" || existingTitle == "log"
+
+        if (isLog) {
+            // Both should have frontmatter; if not, just append body-to-body.
+            val incomingBody = stripFrontMatter(incomingMarkdown)
+            val existingBody = stripFrontMatter(existingMarkdown)
+            if (existingBody.isBlank()) return incomingMarkdown
+            val incomingTail = incomingBody.trim().lines().lastOrNull().orEmpty()
+            val existingTail = existingBody.trim().lines().lastOrNull().orEmpty()
+            val joined = if (incomingTail.isNotBlank() && incomingTail == existingTail) {
+                existingMarkdown
+            } else {
+                existingMarkdown.trimEnd() + "\n\n" + incomingBody.trim()
+            }
+            return joined
         }
-        val existingSources = extractFrontMatterList(existingMarkdown, "sources")
-        val incomingSources = extractFrontMatterList(incomingMarkdown, "sources")
-        val mergedSources = (existingSources + incomingSources).distinct()
-        val existingBody = existingMarkdown.substringAfter("---", existingMarkdown).substringAfter("---", existingMarkdown).trim()
-        val incomingBody = incomingMarkdown.substringAfter("---", incomingMarkdown).substringAfter("---", incomingMarkdown).trim()
-        if (existingBody.contains(incomingBody.take(120))) return existingMarkdown
-        return incomingMarkdown.replaceFirst(
-            Regex("sources:\\s*\\[[^\\]]*]"),
-            "sources: ${mergedSources.toYamlArray()}"
-        ).trim() + "\n\n## 合并自旧页面\n\n" + existingBody
+
+        // ---- Step 1 — deterministic array-field union ----------------
+        //
+        // Per llm_wiki's `mergePageContent` (src/lib/page-merge.ts):
+        // `sources`, `tags`, `related` always get a CASE-INSENSITIVE
+        // union of the existing + incoming values, with the first-seen
+        // casing winning. We do the union by hand so we never trust the
+        // LLM output to be conservative.
+        var merged = incomingMarkdown
+        for (key in listOf("sources", "tags", "related")) {
+            val incomingList = extractFrontMatterList(incomingMarkdown, key)
+            val existingList = extractFrontMatterList(existingMarkdown, key)
+            val union = mergeListsCaseInsensitive(existingList, incomingList)
+            // Only rewrite the line if the union differs from what the
+            // LLM already produced, to keep the on-disk page stable when
+            // nothing changed.
+            if (union.toSet() != incomingList.toSet()) {
+                merged = rewriteFrontMatterList(merged, key, union)
+            }
+        }
+
+        // ---- Step 2 — LOCKED_FIELDS overwrite ------------------------
+        //
+        // `type`, `title`, `created` are immutable on merge so wikilink
+        // referrers stay valid. We rewrite these frontmatter lines to
+        // match whatever was already on disk, regardless of what the LLM
+        // emitted.
+        for (key in listOf("type", "title", "created")) {
+            val existingValue = frontMatterValue(existingMarkdown, key)
+            if (!existingValue.isNullOrBlank()) {
+                merged = rewriteFrontMatterValue(merged, key, existingValue)
+            }
+        }
+
+        // ---- Step 3 — today `updated` --------------------------------
+        //
+        // Per llm_wiki the `updated` field is always today, even if the
+        // LLM said otherwise. We compute the date in UTC so the same
+        // file produces the same stamp regardless of device timezone.
+        val today = Instant.ofEpochMilli(System.currentTimeMillis())
+            .atZone(ZoneOffset.UTC).toLocalDate().toString()
+        merged = rewriteFrontMatterValue(merged, "updated", today)
+
+        // ---- Step 4 — body sanity check -----------------------------
+        // The caller (IngestOrchestrator) is expected to have already
+        // sanity-checked the LLM-merged body. If the LLM's body is
+        // empty, fall back to the existing body. If the LLM's body is
+        // already a superset of the existing body (the common case for
+        // LLM merges that simply appended), we don't tack on a duplicate
+        // "合并自旧页面" section.
+        val existingBody = stripFrontMatter(existingMarkdown)
+        val incomingBody = stripFrontMatter(merged)
+        if (incomingBody.isBlank()) return existingMarkdown
+        if (existingBody.isBlank()) return merged.trim()
+        if (existingBody.contains(incomingBody.take(120))) return merged.trim()
+        return merged.trim() + "\n\n## 合并自旧页面\n\n" + existingBody
+    }
+
+    /**
+     * Case-insensitive list union with first-seen casing winning.
+     * Mirrors `mergeLists` in llm_wiki's `src/lib/sources-merge.ts:119-132`.
+     */
+    private fun mergeListsCaseInsensitive(
+        existing: List<String>,
+        incoming: List<String>
+    ): List<String> {
+        // Re-project to the first-seen casing for each case-folded key.
+        val caseByKey = linkedMapOf<String, String>()
+        for (value in existing + incoming) {
+            val key = value.lowercase()
+            if (key !in caseByKey) caseByKey[key] = value
+        }
+        // Preserve the order: existing first, then anything new from incoming.
+        val seen = LinkedHashSet<String>()
+        val result = mutableListOf<String>()
+        for (value in existing + incoming) {
+            val key = value.lowercase()
+            if (seen.add(key)) result += caseByKey[key]!!
+        }
+        return result
+    }
+
+    /**
+     * Rewrite the `key: [...]` line in the YAML frontmatter to the
+     * given array value. Preserves the original line's leading indent
+     * when present, and falls back to inserting a new line if the key
+     * wasn't there to begin with.
+     */
+    private fun rewriteFrontMatterList(markdown: String, key: String, values: List<String>): String {
+        val replacement = if (values.isEmpty()) "$key: []" else "$key: ${values.toYamlArray()}"
+        val lineRegex = Regex("^(\\s*${Regex.escape(key)}\\s*:\\s*).*$", RegexOption.MULTILINE)
+        return if (lineRegex.containsMatchIn(markdown)) {
+            lineRegex.replace(markdown, "$1$replacement")
+        } else {
+            // Insert before the closing `---` of the frontmatter.
+            markdown.replaceFirst(Regex("^---\\s*$", RegexOption.MULTILINE), "---\n$replacement\n---")
+        }
+    }
+
+    private fun rewriteFrontMatterValue(markdown: String, key: String, value: String): String {
+        val quotedValue = if (value.contains(":") || value.contains("\"")) {
+            "\"${value.escapeYaml()}\""
+        } else value.escapeYaml()
+        val lineRegex = Regex("^(\\s*${Regex.escape(key)}\\s*:\\s*).*$", RegexOption.MULTILINE)
+        return if (lineRegex.containsMatchIn(markdown)) {
+            lineRegex.replace(markdown, "$1$quotedValue")
+        } else {
+            markdown.replaceFirst(Regex("^---\\s*$", RegexOption.MULTILINE), "---\n$key: $quotedValue\n---")
+        }
+    }
+
+    /**
+     * Returns the body of a markdown document, stripping the YAML frontmatter
+     * if present. Robust against the frontmatter being missing, malformed, or
+     * having stray `---` markers inside the body.
+     */
+    private fun stripFrontMatter(markdown: String): String {
+        val firstSep = markdown.indexOf("\n---")
+        if (!markdown.startsWith("---") || firstSep < 0) return markdown.trim()
+        // Find the closing `---` line that ends the frontmatter.
+        val lines = markdown.substring(firstSep + 1).split("\n")
+        for (i in lines.indices) {
+            if (lines[i].trim() == "---") {
+                return lines.drop(i + 1).joinToString("\n").trim()
+            }
+        }
+        return markdown.trim()
     }
 
     private fun buildEntityPage(
@@ -290,6 +429,22 @@ class WikiPageCompiler {
     private fun extractFrontMatterList(markdown: String, key: String): List<String> {
         val line = markdown.lines().firstOrNull { it.trimStart().startsWith("$key:") } ?: return emptyList()
         return line.substringAfter("[").substringBefore("]").split(",").map { it.trim().trim('"') }.filter { it.isNotBlank() }
+    }
+
+    private fun frontMatterValue(markdown: String, key: String): String? {
+        if (!markdown.startsWith("---")) return null
+        val lines = markdown.lines()
+        if (lines.isEmpty() || lines.first().trim() != "---") return null
+        for (i in 1 until lines.size) {
+            val line = lines[i]
+            if (line.trim() == "---") break
+            if (line.trimStart().startsWith("$key:")) {
+                val raw = line.substringAfter(":").trim().trim('"')
+                if (raw.isBlank() || raw.startsWith("[")) return null
+                return raw
+            }
+        }
+        return null
     }
 
     private fun sourceTrace(source: SourceDocumentEntity, parsed: ParsedContentEntity, analysis: AnalysisResultEntity, path: String): String =

@@ -24,6 +24,23 @@ interface AiMessageDao {
     """)
     suspend fun getRecentMessages(conversationId: String, limit: Int = 20): List<AiMessageEntity>
 
+    /**
+     * GROUP-BY message count keyed by conversationId, restricted to a
+     * given scope. Powers the "n 条消息" badge in AskHistorySheet without
+     * requiring a per-conversation query.
+     */
+    @Query("""
+        SELECT conversationId, COUNT(*) as count
+        FROM ai_message
+        WHERE role IN ('user', 'assistant')
+          AND conversationId IN (
+            SELECT id FROM ai_conversation
+            WHERE scopeType = :scopeType AND scopeId = :scopeId AND deletedAt IS NULL
+        )
+        GROUP BY conversationId
+    """)
+    fun observeCountsByScope(scopeType: String, scopeId: String): Flow<List<ConversationMessageCount>>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(message: AiMessageEntity)
 
@@ -36,3 +53,8 @@ interface AiMessageDao {
     @Query("DELETE FROM ai_message WHERE conversationId = :conversationId")
     suspend fun deleteByConversation(conversationId: String)
 }
+
+data class ConversationMessageCount(
+    val conversationId: String,
+    val count: Int
+)

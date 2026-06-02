@@ -33,6 +33,7 @@ interface KnowledgeRepository {
     suspend fun createUnfiledItemFromNote(noteId: String?, title: String, content: String, sourceType: String = "note"): KnowledgeItemEntity
     suspend fun getItemById(id: String): KnowledgeItemEntity?
     suspend fun getItemBySourceId(sourceId: String): KnowledgeItemEntity?
+    suspend fun getByRawNoteId(noteId: String): KnowledgeItemEntity?
     fun observeProcessedItemsBySource(sourceId: String): Flow<List<KnowledgeItemEntity>>
     suspend fun updateItem(item: KnowledgeItemEntity)
     suspend fun deleteItem(id: String, softDelete: Boolean = true)
@@ -59,6 +60,7 @@ interface KnowledgeRepository {
     fun observeFragments(itemId: String): Flow<List<KnowledgeFragmentEntity>>
     suspend fun rebuildFragmentsForItem(item: KnowledgeItemEntity, sourceManifestId: String? = null): List<KnowledgeFragmentEntity>
     suspend fun rebuildGraphForBase(kbId: String)
+    suspend fun refreshOverviewForBase(kbId: String)
     fun observeKnowledgeEntities(kbId: String): Flow<List<KnowledgeEntityEntity>>
     fun observeAllKnowledgeEntities(): Flow<List<KnowledgeEntityEntity>>
     fun observeKnowledgeRelations(kbId: String): Flow<List<KnowledgeRelationEntity>>
@@ -74,6 +76,7 @@ interface KnowledgeRepository {
     suspend fun getActiveTasks(): Flow<List<ProcessingTaskEntity>>
     suspend fun retryTask(taskId: String)
     suspend fun retryProcessingForItem(itemId: String)
+    suspend fun retryProcessingForSource(sourceId: String)
     suspend fun cancelTask(taskId: String)
     suspend fun appendProcessingLog(log: ProcessingTaskLogEntity)
     fun observeProcessingLogs(targetType: String, targetId: String): Flow<List<ProcessingTaskLogEntity>>
@@ -97,9 +100,22 @@ interface KnowledgeRepository {
 
     // === AI Conversation operations ===
     fun observeConversations(scopeType: String, scopeId: String): Flow<List<AiConversationEntity>>
+
+    /**
+     * Like [observeConversations] but each row also carries the current
+     * message count for that conversation, computed via a single
+     * GROUP-BY join in the DAO. Used by the AskSheet history drawer to
+     * render the "N 条消息" badge without an N+1 query.
+     */
+    fun observeConversationsWithCount(
+        scopeType: String,
+        scopeId: String
+    ): Flow<List<com.my.knowledge.data.repository.KnowledgeRepositoryImpl.ConversationWithCount>>
     suspend fun createConversation(conversation: AiConversationEntity): AiConversationEntity
     suspend fun getConversation(id: String): AiConversationEntity?
     suspend fun updateConversation(conversation: AiConversationEntity)
+    suspend fun deleteConversation(id: String)
+    suspend fun clearConversationsByScope(scopeType: String, scopeId: String)
 
     // === AI Message operations ===
     fun observeMessages(conversationId: String): Flow<List<AiMessageEntity>>
@@ -113,6 +129,10 @@ interface KnowledgeRepository {
     suspend fun saveThread(thread: com.my.knowledge.data.db.entity.KnowledgeThreadEntity)
     fun observeThreadLogs(threadId: String): Flow<List<com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity>>
     suspend fun appendThreadLog(log: com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity)
+    suspend fun deleteKnowledgeEntities(ids: List<String>)
+    suspend fun deleteKnowledgeRelations(ids: List<String>)
+    suspend fun deleteKnowledgeCommunities(ids: List<String>)
+    suspend fun getEntityByName(name: String): KnowledgeEntityEntity?
 }
 
 data class ProfileStats(

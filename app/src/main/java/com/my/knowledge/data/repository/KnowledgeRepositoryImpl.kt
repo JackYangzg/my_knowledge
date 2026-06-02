@@ -1,5 +1,6 @@
 package com.my.knowledge.data.repository
 
+import com.my.knowledge.data.db.dao.AnalysisResultDao
 import com.my.knowledge.data.db.dao.ArchiveRecommendationDao
 import com.my.knowledge.data.db.dao.KnowledgeBaseDao
 import com.my.knowledge.data.db.dao.KnowledgeItemDao
@@ -11,9 +12,14 @@ import com.my.knowledge.data.db.dao.KnowledgeFragmentDao
 import com.my.knowledge.data.db.dao.KnowledgeGraphDao
 import com.my.knowledge.data.db.dao.KnowledgeThreadDao
 import com.my.knowledge.data.db.dao.KnowledgeThreadLogDao
+import com.my.knowledge.data.db.dao.ParsedContentDao
 import com.my.knowledge.data.db.dao.ProcessingTaskLogDao
 import com.my.knowledge.data.db.dao.ReviewItemDao
+import com.my.knowledge.data.db.dao.SourceDocumentDao
 import com.my.knowledge.data.db.dao.SourceManifestDao
+import com.my.knowledge.data.db.entity.AnalysisResultEntity
+import org.json.JSONArray
+import org.json.JSONObject
 import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
 import com.my.knowledge.data.db.entity.AskCitationEntity
 import com.my.knowledge.data.db.entity.KnowledgeFragmentEntity
@@ -26,11 +32,13 @@ import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
 import com.my.knowledge.data.db.entity.ReviewItemEntity
+import com.my.knowledge.data.db.entity.ParsedContentEntity
+import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.my.knowledge.data.db.entity.SourceManifestEntity
-import com.my.knowledge.data.db.entity.AiConversationEntity
-import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
+import com.my.knowledge.data.db.entity.AiMessageEntity
+import com.my.knowledge.data.db.entity.AiConversationEntity
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.domain.repository.ProfileStats
 import kotlinx.coroutines.flow.combine
@@ -52,7 +60,10 @@ class KnowledgeRepositoryImpl(
     private val taskLogDao: ProcessingTaskLogDao,
     private val askCitationDao: AskCitationDao,
     private val graphDao: KnowledgeGraphDao,
-    private val reviewItemDao: ReviewItemDao
+    private val reviewItemDao: ReviewItemDao,
+    private val analysisResultDao: AnalysisResultDao,
+    private val parsedContentDao: ParsedContentDao,
+    private val sourceDocumentDao: SourceDocumentDao
 ) : KnowledgeRepository {
 
     // === KnowledgeBase operations ===
@@ -85,9 +96,13 @@ class KnowledgeRepositoryImpl(
     }
 
     override suspend fun ensureDefaultBases() {
-        if (kbDao.getByType("unfiled") == null) {
-            createBase("未归类", "默认知识存放处", type = "unfiled", iconText = "未")
+        val unfiled = kbDao.getByType("unfiled")
+        if (unfiled == null) {
+            createBase("未归档知识库", "默认知识存放处", type = "unfiled", iconText = "未")
+        } else if (unfiled.name == "未归类") {
+            kbDao.update(unfiled.copy(name = "未归档知识库"))
         }
+
         if (kbDao.getByType("inspiration") == null) {
             createBase("灵感空间", "灵感记录与碎片收集", type = "inspiration", iconText = "灵")
         }
@@ -118,8 +133,13 @@ class KnowledgeRepositoryImpl(
         } else {
             items.forEach { item ->
                 itemDao.hardDelete(item.id)
+                // Also delete associated AI conversations for each item
+                clearConversationsByScope("knowledge_item", item.id)
             }
         }
+
+        // Delete conversations associated with the base itself
+        clearConversationsByScope("knowledge_base", id)
 
         kbDao.hardDelete(id)
     }
@@ -129,6 +149,7 @@ class KnowledgeRepositoryImpl(
         itemDao.insert(item)
         rebuildFragmentsForItem(item)
         itemDao.updateItemCount(item.knowledgeBaseId)
+        refreshOverviewForBase(item.knowledgeBaseId)
         return item
     }
 
@@ -199,6 +220,9 @@ class KnowledgeRepositoryImpl(
     override suspend fun getItemBySourceId(sourceId: String): KnowledgeItemEntity? =
         itemDao.getBySourceId(sourceId)
 
+    override suspend fun getByRawNoteId(noteId: String): KnowledgeItemEntity? =
+        itemDao.getByRawNoteId(noteId)
+
     override fun observeProcessedItemsBySource(sourceId: String): Flow<List<KnowledgeItemEntity>> =
         itemDao.observeProcessedBySource(sourceId)
 
@@ -216,6 +240,8 @@ class KnowledgeRepositoryImpl(
             permanentDeleteItem(id)
         }
         itemDao.updateItemCount(item.knowledgeBaseId)
+        refreshOverviewForBase(item.knowledgeBaseId)
+        rebuildGraphForBase(item.knowledgeBaseId)
     }
 
     override suspend fun permanentDeleteItem(id: String) {
@@ -223,6 +249,15 @@ class KnowledgeRepositoryImpl(
         recommendationDao.deleteByItemId(id)
         fragmentDao.deleteByItemId(id)
         taskLogDao.deleteByTarget("knowledge_item", id)
+        
+        // Delete associated AI conversations and messages
+        val conversationIds = conversationDao.getIdsByScope("knowledge_item", id)
+        conversationIds.forEach { convId ->
+            messageDao.deleteByConversation(convId)
+            askCitationDao.deleteByConversation(convId)
+        }
+        conversationDao.deleteByScope("knowledge_item", id)
+
         itemDao.hardDelete(id)
     }
 
@@ -230,6 +265,8 @@ class KnowledgeRepositoryImpl(
         val item = itemDao.getByIdIncludeDeleted(id) ?: return
         itemDao.restore(id, System.currentTimeMillis())
         itemDao.updateItemCount(item.knowledgeBaseId)
+        refreshOverviewForBase(item.knowledgeBaseId)
+        rebuildGraphForBase(item.knowledgeBaseId)
     }
 
     override fun observeDeletedItems(): Flow<List<KnowledgeItemEntity>> = itemDao.observeDeletedItems()
@@ -247,6 +284,8 @@ class KnowledgeRepositoryImpl(
         // Update item counts for all affected bases
         kbDao.getAllIds().forEach { kbId ->
             itemDao.updateItemCount(kbId)
+            refreshOverviewForBase(kbId)
+            rebuildGraphForBase(kbId)
         }
     }
 
@@ -274,6 +313,9 @@ class KnowledgeRepositoryImpl(
         }
         itemDao.updateItemCount(oldKbId)
         itemDao.updateItemCount(targetKbId)
+        refreshOverviewForBase(oldKbId)
+        refreshOverviewForBase(targetKbId)
+        rebuildGraphForBase(oldKbId)
         if (targetBase?.type != "unfiled") rebuildGraphForBase(targetKbId)
     }
 
@@ -337,13 +379,21 @@ class KnowledgeRepositoryImpl(
             .map { it.trim() }
             .filter { it.isNotBlank() }
         val sourceBlocks = if (blocks.isEmpty() && item.contentMarkdown.isNotBlank()) listOf(item.contentMarkdown.trim()) else blocks
-        var cursor = 0
         val now = System.currentTimeMillis()
-        val fragments = sourceBlocks.take(32).map { block ->
-            val start = item.contentMarkdown.indexOf(block, startIndex = cursor).coerceAtLeast(cursor)
+        val fragments = mutableListOf<KnowledgeFragmentEntity>()
+        var cursor = 0
+        outer@ for ((index, block) in sourceBlocks.withIndex()) {
+            if (index >= 32) break
+            val start = item.contentMarkdown.indexOf(block, startIndex = cursor)
+            if (start < 0) {
+                // Block text appears earlier than the cursor (e.g. duplicate
+                // paragraph) — fall back to the cursor position so we don't
+                // emit a fragment with a negative or zero-length range.
+                continue
+            }
             val end = (start + block.length).coerceAtMost(item.contentMarkdown.length)
             cursor = end
-            KnowledgeFragmentEntity(
+            fragments += KnowledgeFragmentEntity(
                 id = UUID.randomUUID().toString(),
                 itemId = item.id,
                 knowledgeBaseId = item.knowledgeBaseId,
@@ -380,9 +430,39 @@ class KnowledgeRepositoryImpl(
     override suspend fun rebuildGraphForBase(kbId: String) {
         val items = itemDao.getAllByKb(kbId).filter { it.deletedAt == null }
         val now = System.currentTimeMillis()
-        graphDao.clearEntities(kbId)
-        graphDao.clearRelations(kbId)
-        graphDao.clearCommunities(kbId)
+
+        // Capture manually soft-deleted entity / relation / community names
+        // before clearing. The rebuild path is called every time we ingest
+        // and every time the thread evolution worker runs, so without these
+        // blacklists any item the user deleted in "中间处理数据" would
+        // silently reappear on the next rebuild. (entity had a similar filter
+        // before; the relation and community halves were missing.)
+        //
+        // Relation blacklists are keyed by (fromEntityName, toEntityName)
+        // because every rebuild mints fresh UUIDs for the entity rows; the
+        // names are the only stable handle we have to recognise the pair.
+        val manuallyDeletedEntityKeys = graphDao.getAllEntitiesByKb(kbId)
+            .filter { it.deletedAt != null }
+            .map { it.name.lowercase(Locale.ROOT) to it.type }
+            .toSet()
+        val allEntitiesInKbByName = graphDao.getAllEntitiesByKb(kbId)
+            .associateBy { it.id }
+        val manuallyDeletedRelationKeys: Set<Pair<String, String>> = graphDao.getAllRelationsByKb(kbId)
+            .filter { it.deletedAt != null }
+            .mapNotNull { rel ->
+                val fromName = allEntitiesInKbByName[rel.fromEntityId]?.name?.lowercase(Locale.ROOT)
+                val toName = allEntitiesInKbByName[rel.toEntityId]?.name?.lowercase(Locale.ROOT)
+                if (fromName != null && toName != null) fromName to toName else null
+            }
+            .toSet()
+        val manuallyDeletedCommunityNames = graphDao.getAllCommunitiesByKb(kbId)
+            .filter { it.deletedAt != null }
+            .map { it.name.lowercase(Locale.ROOT) }
+            .toSet()
+
+        graphDao.clearEntities(kbId, now)
+        graphDao.clearRelations(kbId, now)
+        graphDao.clearCommunities(kbId, now)
 
         val wikiPages = items.filter { it.sourceType.startsWith("wiki_") }
             .ifEmpty { items }
@@ -390,100 +470,308 @@ class KnowledgeRepositoryImpl(
             WikiPageMeta(
                 item = item,
                 title = frontMatterValue(item.contentMarkdown, "title") ?: item.title,
-                type = frontMatterValue(item.contentMarkdown, "type") ?: when (item.sourceType) {
-                    "wiki_entity" -> "entity"
-                    "wiki_concept" -> "concept"
-                    "wiki_source" -> "source"
-                    else -> "concept"
-                },
+                type = normalizeWikiGraphType(item),
                 sources = frontMatterList(item.contentMarkdown, "sources"),
                 links = extractWikiLinks(item.contentMarkdown)
             )
-        }
+        }.filterNot { it.type in STRUCTURAL_WIKI_TYPES }
 
-        val entities = pageMeta.map { page ->
-            KnowledgeEntityEntity(
-                id = UUID.randomUUID().toString(),
-                knowledgeBaseId = kbId,
-                name = page.title,
-                type = page.type,
-                aliasesJson = "[]",
-                sourceItemIdsJson = "[\"${page.item.id}\"]",
-                weight = (1 + page.links.size + page.sources.size).toFloat(),
-                createdAt = now,
-                updatedAt = now
-            )
-        }.sortedByDescending { it.weight }.take(200)
+        // --- Build entities ---------------------------------------------------
+        //
+        // We dedup on (name, type) so the same entity represented by two pages
+        // collapses to a single node, merging their sourceItemIds and aliases.
+        // We also fold aliases coming from the analysis JSON (entities[i].aliases)
+        // — those were silently dropped before.
+        val mergedByKey = linkedMapOf<Pair<String, String>, KnowledgeEntityEntity>()
+        for (page in pageMeta) {
+            val key = page.title.lowercase(Locale.ROOT) to page.type
+            if (key in manuallyDeletedEntityKeys) continue
+            val existing = mergedByKey[key]
+            val aliasFromAnalysis = aliasesFromItem(page.item)
+            if (existing == null) {
+                mergedByKey[key] = KnowledgeEntityEntity(
+                    id = UUID.randomUUID().toString(),
+                    knowledgeBaseId = kbId,
+                    name = page.title,
+                    type = page.type,
+                    aliasesJson = aliasFromAnalysis.toJsonArrayOrEmpty(),
+                    sourceItemIdsJson = "[\"${page.item.id}\"]",
+                    weight = 1f + page.links.size + page.sources.size,
+                    confidence = page.item.confidence.coerceIn(0f, 1f),
+                    createdAt = now,
+                    updatedAt = now,
+                    deletedAt = null
+                )
+            } else {
+                val mergedSources = (existing.sourceItemIdsJson.parseAsStringList() + page.item.id).distinct()
+                val mergedAliases = (existing.aliasesJson.parseAsStringList() + aliasFromAnalysis).distinct()
+                mergedByKey[key] = existing.copy(
+                    sourceItemIdsJson = mergedSources.toJsonArrayOrEmpty(),
+                    aliasesJson = mergedAliases.toJsonArrayOrEmpty(),
+                    weight = (existing.weight + 1f + page.links.size + page.sources.size).coerceAtMost(100f),
+                    updatedAt = now
+                )
+            }
+        }
+        val entities = mergedByKey.values
+            .sortedByDescending { it.weight }
+            .take(ENTITY_SAFETY_LIMIT)
+            .toList()
         graphDao.upsertEntities(entities)
 
         val byName = entities.associateBy { it.name.lowercase(Locale.ROOT) }
-        val pageByName = pageMeta.associateBy { it.title.lowercase(Locale.ROOT) }
         val relations = mutableListOf<KnowledgeRelationEntity>()
+        val relationKeys = mutableSetOf<Pair<String, String>>()
 
+        // --- Wikilink edges --------------------------------------------------
         pageMeta.forEach { page ->
             val from = byName[page.title.lowercase(Locale.ROOT)] ?: return@forEach
             page.links.forEach { link ->
                 val to = byName[link.lowercase(Locale.ROOT)] ?: return@forEach
-                if (from.id != to.id) {
-                    relations += KnowledgeRelationEntity(
-                        id = UUID.randomUUID().toString(),
-                        knowledgeBaseId = kbId,
-                        fromEntityId = from.id,
-                        toEntityId = to.id,
-                        relationType = "wikilink",
-                        evidenceItemIdsJson = "[\"${page.item.id}\"]",
-                        confidence = 1.0f,
-                        createdAt = now,
-                        updatedAt = now
-                    )
-                }
-            }
-        }
-
-        val relationKeys = relations.map { it.fromEntityId to it.toEntityId }.toMutableSet()
-        for (i in pageMeta.indices) {
-            for (j in i + 1 until pageMeta.size) {
-                val left = pageMeta[i]
-                val right = pageMeta[j]
-                val overlap = left.sources.intersect(right.sources.toSet())
-                if (overlap.isEmpty()) continue
-                val from = byName[left.title.lowercase(Locale.ROOT)] ?: continue
-                val to = byName[right.title.lowercase(Locale.ROOT)] ?: continue
+                if (from.id == to.id) return@forEach
+                // Skip if the user previously deleted the (from, to) edge in
+                // "中间处理数据"; otherwise the next rebuild would resurrect it.
+                val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                if (nameKey in manuallyDeletedRelationKeys) return@forEach
                 val key = from.id to to.id
-                if (key in relationKeys) continue
+                if (key in relationKeys) return@forEach
+                relationKeys += key
                 relations += KnowledgeRelationEntity(
                     id = UUID.randomUUID().toString(),
                     knowledgeBaseId = kbId,
                     fromEntityId = from.id,
                     toEntityId = to.id,
-                    relationType = "source_overlap",
-                    evidenceItemIdsJson = "[\"${left.item.id}\",\"${right.item.id}\"]",
-                    confidence = 0.8f,
+                    relationType = "wikilink",
+                    evidenceItemIdsJson = "[\"${page.item.id}\"]",
+                    confidence = 1.0f,
                     createdAt = now,
-                    updatedAt = now
+                    updatedAt = now,
+                    deletedAt = null
                 )
-                relationKeys += key
             }
         }
-        graphDao.upsertRelations(relations.take(200))
 
-        val communities = pageMeta.groupBy { page ->
-            page.sources.firstOrNull() ?: page.type
-        }
-            .filter { it.value.size >= 2 }
-            .map { (key, group) ->
-                KnowledgeCommunityEntity(
+        // --- Analysis-JSON relation edges ------------------------------------
+        //
+        // This is the part that was MISSING in the previous implementation:
+        // we stored the analysis relations in `analysis_result.relationsJson`
+        // but never materialized them. Now we look up the latest analysis
+        // for each item and convert its relations into graph edges with the
+        // appropriate relation type (supports / contradicts / extends / etc.).
+        for (page in pageMeta) {
+            val sourceId = page.item.sourceId ?: continue
+            val analysis = analysisResultDao.getLatestBySource(sourceId) ?: continue
+            for (rel in parseRelations(analysis.relationsJson)) {
+                val from = byName[rel.source.lowercase(Locale.ROOT)] ?: continue
+                val to = byName[rel.target.lowercase(Locale.ROOT)] ?: continue
+                if (from.id == to.id) continue
+                val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                if (nameKey in manuallyDeletedRelationKeys) continue
+                val key = from.id to to.id
+                if (key in relationKeys) continue
+                relationKeys += key
+                relations += KnowledgeRelationEntity(
                     id = UUID.randomUUID().toString(),
                     knowledgeBaseId = kbId,
-                    name = "来源群 $key",
-                    entityIdsJson = group.mapNotNull { byName[it.title.lowercase(Locale.ROOT)] }
-                        .joinToString(",", "[", "]") { "\"${it.id}\"" },
-                    summary = group.take(6).joinToString("、") { it.title },
+                    fromEntityId = from.id,
+                    toEntityId = to.id,
+                    relationType = "analysis:${rel.type}",
+                    evidenceItemIdsJson = "[\"${page.item.id}\"]",
+                    confidence = rel.confidence.coerceIn(0f, 1f),
                     createdAt = now,
-                    updatedAt = now
+                    updatedAt = now,
+                    deletedAt = null
                 )
             }
+        }
+
+        // --- Source-overlap edges (O(n) instead of O(n^2)) -------------------
+        //
+        // The old loop compared every pair of pages. For a knowledge base with
+        // a few hundred pages this is fast; once you cross a couple thousand
+        // it becomes the dominant cost of an ingest. We now bucket pages by
+        // their first source and only run the pairwise compare inside buckets.
+        val pagesBySource = pageMeta.groupBy { it.sources.firstOrNull() ?: "" }
+        for ((_, bucket) in pagesBySource) {
+            if (bucket.size < 2) continue
+            for (i in bucket.indices) {
+                for (j in i + 1 until bucket.size) {
+                    val left = bucket[i]
+                    val right = bucket[j]
+                    val leftSet = left.sources.toSet()
+                    if (right.sources.none { it in leftSet }) continue
+                    val from = byName[left.title.lowercase(Locale.ROOT)] ?: continue
+                    val to = byName[right.title.lowercase(Locale.ROOT)] ?: continue
+                    val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                    if (nameKey in manuallyDeletedRelationKeys) continue
+                    val key = from.id to to.id
+                    if (key in relationKeys) continue
+                    relationKeys += key
+                    relations += KnowledgeRelationEntity(
+                        id = UUID.randomUUID().toString(),
+                        knowledgeBaseId = kbId,
+                        fromEntityId = from.id,
+                        toEntityId = to.id,
+                        relationType = "source_overlap",
+                        evidenceItemIdsJson = "[\"${left.item.id}\",\"${right.item.id}\"]",
+                        confidence = 0.8f,
+                        createdAt = now,
+                        updatedAt = now,
+                        deletedAt = null
+                    )
+                }
+            }
+        }
+        graphDao.upsertRelations(relations.take(RELATION_SAFETY_LIMIT))
+
+        // --- Communities ----------------------------------------------------
+        //
+        // Old key was `sources.firstOrNull() ?: page.type` which lumps every
+        // non-wiki page (no source list) into a single community of type
+        // "concept" / "entity". We now group by a stable key: the entity's
+        // own name bucket (single-source pages only form a community if
+        // multiple distinct pages share the same first source).
+        val communities = pageMeta
+            .groupBy { page -> page.sources.firstOrNull()?.takeIf { it.isNotBlank() } }
+            .filter { (key, group) -> key != null && group.size >= 2 }
+            .mapNotNull { (key, group) ->
+                val keyStr = key ?: ""
+                val communityName = "来源群 $keyStr"
+                // Honour the user's prior "delete this community" choice in
+                // 中间处理数据; otherwise the same group would re-form on the
+                // next rebuild (ThreadEvolutionWorker, every ingest, etc.).
+                if (communityName.lowercase(Locale.ROOT) in manuallyDeletedCommunityNames) {
+                    null
+                } else {
+                    KnowledgeCommunityEntity(
+                        id = UUID.randomUUID().toString(),
+                        knowledgeBaseId = kbId,
+                        name = communityName,
+                        entityIdsJson = group.mapNotNull { byName[it.title.lowercase(Locale.ROOT)] }
+                            .joinToString(",", "[", "]") { "\"${it.id}\"" },
+                        summary = group.take(6).joinToString("、") { it.title },
+                        createdAt = now,
+                        updatedAt = now,
+                        deletedAt = null
+                    )
+                }
+            }
         graphDao.upsertCommunities(communities)
+    }
+
+    override suspend fun refreshOverviewForBase(kbId: String) {
+        if (kbId.isBlank()) return
+        val base = kbDao.getById(kbId) ?: return
+        val now = System.currentTimeMillis()
+        val liveItems = itemDao.getAllByKb(kbId)
+            .filter { it.deletedAt == null }
+            .filterNot { it.sourceType == "wiki_overview" && it.title == "overview.md" }
+        val sourceItems = liveItems.filterNot { it.sourceType.startsWith("wiki_") }
+        val wikiItems = liveItems.filter { it.sourceType.startsWith("wiki_") }
+        val entityPages = wikiItems.filter { it.sourceType == "wiki_entity" }
+        val conceptPages = wikiItems.filter { it.sourceType == "wiki_concept" }
+        val sourcePages = wikiItems.filter { it.sourceType == "wiki_source" }
+        val relations = graphDao.getAllRelationsByKb(kbId).filter { it.deletedAt == null }
+        val communities = graphDao.getAllCommunitiesByKb(kbId).filter { it.deletedAt == null }
+        val topPages = (entityPages + conceptPages)
+            .sortedWith(compareByDescending<KnowledgeItemEntity> { it.importance }.thenByDescending { it.updatedAt })
+            .take(12)
+        val recentSources = sourceItems.sortedByDescending { it.updatedAt }.take(10)
+        val today = java.time.Instant.ofEpochMilli(now)
+            .atZone(java.time.ZoneOffset.UTC)
+            .toLocalDate()
+            .toString()
+        val tags = (topPages.flatMap { it.tagsJson.parseAsStringList() } + sourceItems.flatMap { it.tagsJson.parseAsStringList() })
+            .distinct()
+            .take(12)
+        val related = topPages.map { it.title }.distinct().take(16)
+        val markdown = buildString {
+            appendLine("---")
+            appendLine("type: overview")
+            appendLine("title: overview.md")
+            appendLine("created: $today")
+            appendLine("updated: $today")
+            appendLine("tags: ${tags.toYamlInlineList()}")
+            appendLine("related: ${related.map { it.slugForOverview() }.toYamlInlineList()}")
+            appendLine("sources: ${recentSources.map { it.title }.toYamlInlineList()}")
+            appendLine("---")
+            appendLine()
+            appendLine("# ${base.name} Overview")
+            appendLine()
+            appendLine("这个知识库当前包含 ${sourceItems.size} 条原始知识、${sourcePages.size} 份来源摘要、${entityPages.size} 个实体页、${conceptPages.size} 个概念页、${relations.size} 条关系和 ${communities.size} 个主题群。")
+            appendLine()
+            appendLine("## 知识概要")
+            appendLine()
+            if (sourceItems.isEmpty() && wikiItems.isEmpty()) {
+                appendLine("当前知识库还没有可概述的知识。导入文档后,这里会记录知识库覆盖的主题、关键实体、核心概念和文档信息。")
+            } else {
+                appendLine("当前知识库围绕 ${base.name} 中已导入的材料组织内容。实体页记录具体对象,概念页记录方法、机制、理论和问题,来源页保留每次导入材料的摘要。")
+                if (topPages.isNotEmpty()) {
+                    appendLine()
+                    appendLine("关键页面包括 ${topPages.take(6).joinToString("、") { "[[${it.title.escapeWikiLinkForOverview()}]]" }}。这些页面构成当前知识库的主要索引入口。")
+                }
+            }
+            appendLine()
+            appendLine("## 文档信息")
+            appendLine()
+            appendLine("- 原始知识: ${sourceItems.size}")
+            appendLine("- 来源摘要: ${sourcePages.size}")
+            appendLine("- 实体页: ${entityPages.size}")
+            appendLine("- 概念页: ${conceptPages.size}")
+            appendLine("- 关系: ${relations.size}")
+            appendLine("- 主题群: ${communities.size}")
+            appendLine()
+            if (recentSources.isNotEmpty()) {
+                appendLine("## 最近导入")
+                appendLine()
+                recentSources.forEach { item ->
+                    appendLine("- [[${item.title.escapeWikiLinkForOverview()}]] — ${item.summary?.take(80) ?: item.excerpt.take(80)}")
+                }
+                appendLine()
+            }
+            if (topPages.isNotEmpty()) {
+                appendLine("## 关键实体与概念")
+                appendLine()
+                topPages.forEach { item ->
+                    appendLine("- [[${item.title.escapeWikiLinkForOverview()}]] (${item.sourceType.overviewTypeLabel()}) — ${item.summary?.take(80) ?: item.excerpt.take(80)}")
+                }
+            }
+        }.trim()
+        val existing = itemDao.getByKbSourceTypeAndTitle(kbId, "wiki_overview", "overview.md")
+        val overview = KnowledgeItemEntity(
+            id = existing?.id ?: UUID.randomUUID().toString(),
+            sourceId = null,
+            knowledgeBaseId = kbId,
+            title = "overview.md",
+            contentMarkdown = markdown,
+            excerpt = "${base.name} 知识库总览",
+            sourceType = "wiki_overview",
+            status = KnowledgeItemEntity.STATUS_ARCHIVED,
+            contentHash = calculateContentHash(markdown),
+            sourceTraceJson = """{"generatedBy":"refreshOverviewForBase","knowledgeBaseId":"$kbId"}""",
+            confidence = 1.0f,
+            summary = "${base.name} 知识库总览",
+            tagsJson = tags.toJsonArrayOrEmpty(),
+            rawNoteId = null,
+            importance = 2,
+            createdAt = existing?.createdAt ?: now,
+            updatedAt = now,
+            processedAt = now,
+            archivedAt = now,
+            deletedAt = null
+        )
+        itemDao.insert(overview)
+        rebuildFragmentsForItem(overview)
+    }
+
+    private companion object {
+        // llm_wiki does not cap graph size — its 600-line chunker + graph
+        // renderer handle the full population. We keep a soft cap only as
+        // an OOM safety net for very large local libraries; the cap is
+        // intentionally generous so it never clips a normal ingest.
+        const val ENTITY_SAFETY_LIMIT = 5_000
+        const val RELATION_SAFETY_LIMIT = 5_000
+        val STRUCTURAL_WIKI_TYPES = setOf("overview", "index", "log")
     }
 
     override fun observeKnowledgeEntities(kbId: String): Flow<List<KnowledgeEntityEntity>> =
@@ -533,6 +821,71 @@ class KnowledgeRepositoryImpl(
             taskDao.retryBySource(sourceId, now)
             itemDao.updateStatusBySourceId(sourceId, KnowledgeItemEntity.STATUS_PROCESSING, now)
         }
+    }
+
+    override suspend fun retryProcessingForSource(sourceId: String) {
+        // Wipe everything that a previous run produced for this source so a
+        // fresh ingest can rebuild from scratch:
+        //   - the queued task(s) — get a brand-new parse task
+        //   - the parsed content — parser output may have changed
+        //   - the analysis result — its hash and JSON belong to the old parse
+        //   - the wiki pages (knowledge_items with this sourceId)
+        //   - the source's own row status + processing log
+        // We deliberately do NOT delete the source row — the local file
+        // backing it stays where it is, and a brand-new sha256 keeps the
+        // cache-hit short-circuit (`isIngestCacheHit`) from re-using the
+        // old generation as a hit on the new run.
+        val now = System.currentTimeMillis()
+        taskDao.deleteByTarget("source_document", sourceId)
+        parsedContentDao.deleteBySource(sourceId)
+        analysisResultDao.deleteBySource(sourceId)
+        val oldItems = itemDao.getAllBySourceId(sourceId)
+        oldItems.forEach { item ->
+            taskDao.deleteByTarget("knowledge_item", item.id)
+            taskLogDao.deleteByTarget("knowledge_item", item.id)
+            recommendationDao.deleteByItemId(item.id)
+            fragmentDao.deleteByItemId(item.id)
+            graphDao.deleteEmbeddingsByItem(item.id)
+            val conversationIds = conversationDao.getIdsByScope("knowledge_item", item.id)
+            conversationIds.forEach { convId ->
+                messageDao.deleteByConversation(convId)
+                askCitationDao.deleteByConversation(convId)
+            }
+            conversationDao.deleteByScope("knowledge_item", item.id)
+        }
+        // Soft-delete old wiki pages tied to this source. The graph
+        // rebuilder will mint fresh rows for the new run; deleting the
+        // items also keeps item counts in sync.
+        itemDao.softDeleteBySource(sourceId, now)
+        sourceDocumentDao.updateStatus(
+            sourceId,
+            SourceDocumentEntity.STATUS_IMPORTED,
+            null,
+            now
+        )
+        itemDao.updateStatusBySourceId(sourceId, KnowledgeItemEntity.STATUS_PROCESSING, now)
+        taskDao.insert(
+            ProcessingTaskEntity(
+                id = UUID.randomUUID().toString(),
+                targetType = "source_document",
+                targetId = sourceId,
+                taskType = "parse",
+                status = "pending",
+                priority = 10,
+                dependsOnTaskIdsJson = null,
+                retryCount = 0,
+                maxRetry = 3,
+                errorMessage = null,
+                createdAt = now,
+                updatedAt = now,
+                finishedAt = null,
+                sourceId = sourceId,
+                itemId = null,
+                progress = 0,
+                currentStep = "等待解析（重新发起）",
+                inputJson = """{"sourceId":"$sourceId","reprocess":true}"""
+            )
+        )
     }
 
     override suspend fun cancelTask(taskId: String) {
@@ -648,6 +1001,26 @@ class KnowledgeRepositoryImpl(
     override fun observeConversations(scopeType: String, scopeId: String): Flow<List<AiConversationEntity>> =
         conversationDao.observeByScope(scopeType, scopeId)
 
+    /**
+     * Conversation list annotated with per-conversation message count.
+     * Used by the AskHistorySheet to render "N 条消息" without
+     * a per-row count query.
+     */
+    override fun observeConversationsWithCount(
+        scopeType: String,
+        scopeId: String
+    ): Flow<List<ConversationWithCount>> {
+        return combine(
+            conversationDao.observeByScope(scopeType, scopeId),
+            messageDao.observeCountsByScope(scopeType, scopeId)
+        ) { conversations, counts ->
+            val countMap = counts.associate { it.conversationId to it.count }
+            conversations.map { conv ->
+                ConversationWithCount(conv, countMap[conv.id] ?: 0)
+            }.filter { it.messageCount > 0 }
+        }
+    }
+
     override suspend fun createConversation(conversation: AiConversationEntity): AiConversationEntity {
         conversationDao.insert(conversation)
         return conversation
@@ -658,6 +1031,30 @@ class KnowledgeRepositoryImpl(
 
     override suspend fun updateConversation(conversation: AiConversationEntity) {
         conversationDao.update(conversation.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    override suspend fun deleteConversation(id: String) {
+        messageDao.deleteByConversation(id)
+        askCitationDao.deleteByConversation(id)
+        conversationDao.hardDelete(id)
+    }
+
+    /**
+     * Conversation + its current message count, used by the UI to
+     * render history rows without an N+1.
+     */
+    data class ConversationWithCount(
+        val conversation: AiConversationEntity,
+        val messageCount: Int
+    )
+
+    override suspend fun clearConversationsByScope(scopeType: String, scopeId: String) {
+        val conversationIds = conversationDao.getIdsByScope(scopeType, scopeId)
+        conversationIds.forEach { convId ->
+            messageDao.deleteByConversation(convId)
+            askCitationDao.deleteByConversation(convId)
+        }
+        conversationDao.deleteByScope(scopeType, scopeId)
     }
 
     // === AI Message operations ===
@@ -699,6 +1096,21 @@ class KnowledgeRepositoryImpl(
     override suspend fun appendThreadLog(log: KnowledgeThreadLogEntity) {
         threadLogDao.insert(log)
     }
+
+    override suspend fun deleteKnowledgeEntities(ids: List<String>) {
+        graphDao.deleteEntities(ids)
+    }
+
+    override suspend fun deleteKnowledgeRelations(ids: List<String>) {
+        graphDao.deleteRelations(ids)
+    }
+
+    override suspend fun deleteKnowledgeCommunities(ids: List<String>) {
+        graphDao.deleteCommunities(ids)
+    }
+
+    override suspend fun getEntityByName(name: String): KnowledgeEntityEntity? =
+        graphDao.getEntityByName(name)
 
     private fun localEmbeddingJson(content: String): String {
         val vector = FloatArray(16)
@@ -757,6 +1169,24 @@ class KnowledgeRepositoryImpl(
             .filter { it.isNotBlank() }
     }
 
+    private fun normalizeWikiGraphType(item: KnowledgeItemEntity): String {
+        val fmType = frontMatterValue(item.contentMarkdown, "type")?.lowercase(Locale.ROOT)
+        return when (item.sourceType) {
+            "wiki_entity" -> "entity"
+            "wiki_concept" -> "concept"
+            "wiki_source" -> "source"
+            "wiki_overview" -> "overview"
+            "wiki_index" -> "index"
+            "wiki_log" -> "log"
+            else -> when (fmType) {
+                "entity", "person", "organization", "org", "product", "dataset", "tool", "system", "project", "place", "location", "source" -> fmType
+                "concept", "method", "technique", "theory", "principle", "framework", "problem" -> "concept"
+                "overview", "index", "log" -> fmType
+                else -> "concept"
+            }
+        }
+    }
+
     private fun extractWikiLinks(markdown: String): List<String> =
         Regex("\\[\\[([^\\]]+)]]")
             .findAll(markdown)
@@ -764,4 +1194,87 @@ class KnowledgeRepositoryImpl(
             .filter { it.isNotBlank() }
             .distinct()
             .toList()
+
+    private fun List<String>.toYamlInlineList(): String =
+        if (isEmpty()) {
+            "[]"
+        } else {
+            distinct()
+                .take(40)
+                .joinToString(", ", "[", "]") { "\"${it.escapeYamlScalar()}\"" }
+        }
+
+    private fun String.escapeYamlScalar(): String =
+        replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").trim()
+
+    private fun String.escapeWikiLinkForOverview(): String =
+        replace("[[", "").replace("]]", "").trim()
+
+    private fun String.slugForOverview(): String =
+        trim()
+            .lowercase(Locale.ROOT)
+            .replace(Regex("[^\\p{L}\\p{N}]+"), "-")
+            .trim('-')
+            .ifBlank { "untitled" }
+
+    private fun String.overviewTypeLabel(): String = when (this) {
+        "wiki_entity" -> "实体"
+        "wiki_concept" -> "概念"
+        "wiki_source" -> "来源"
+        "wiki_overview" -> "总览"
+        "wiki_index" -> "索引"
+        "wiki_log" -> "日志"
+        else -> this
+    }
+
+    // === Graph-rebuild helpers ============================================
+    //
+    // The following helpers were added when wiring `analysis_result.relations`
+    // into the graph (this was missing from the original implementation).
+
+    private data class AnalysisRelation(
+        val source: String,
+        val target: String,
+        val type: String,
+        val confidence: Float
+    )
+
+    private fun aliasesFromItem(item: KnowledgeItemEntity): List<String> {
+        val raw = runCatching {
+            val entitiesArr = JSONArray(item.tagsJson) // tags is a simple list; not aliases.
+            emptyList<String>()
+        }.getOrDefault(emptyList())
+        // We pull aliases out of sourceTraceJson where the wiki compiler wrote them.
+        val trace = runCatching { JSONObject(item.sourceTraceJson) }.getOrNull() ?: return emptyList()
+        val aliases = trace.optJSONArray("aliases") ?: return emptyList()
+        return (0 until aliases.length()).mapNotNull { aliases.optString(it).takeIf { s -> s.isNotBlank() } }
+    }
+
+    private fun parseRelations(json: String): List<AnalysisRelation> {
+        val arr = runCatching { JSONArray(json) }.getOrNull() ?: return emptyList()
+        val out = mutableListOf<AnalysisRelation>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.optJSONObject(i) ?: continue
+            val source = obj.optString("source").trim()
+            val target = obj.optString("target").trim()
+            if (source.isBlank() || target.isBlank()) continue
+            val type = obj.optString("type", "related_to").ifBlank { "related_to" }
+            val confidence = obj.optDouble("confidence", 0.7).toFloat()
+            out += AnalysisRelation(source, target, type, confidence)
+        }
+        return out
+    }
+
+    private fun String.parseAsStringList(): List<String> {
+        if (isBlank() || this == "[]") return emptyList()
+        return runCatching {
+            val arr = JSONArray(this)
+            (0 until arr.length()).mapNotNull { arr.optString(it).takeIf { s -> s.isNotBlank() } }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun List<String>.toJsonArrayOrEmpty(): String {
+        if (isEmpty()) return "[]"
+        return joinToString(",", "[", "]") { "\"${it.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
+    }
 }

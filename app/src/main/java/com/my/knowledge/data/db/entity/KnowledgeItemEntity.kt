@@ -11,7 +11,8 @@ import androidx.room.PrimaryKey
         Index("status"),
         Index("sourceType"),
         Index("contentHash"),
-        Index("sourceId")
+        Index("sourceId"),
+        Index("rawNoteId")
     ]
 )
 data class KnowledgeItemEntity(

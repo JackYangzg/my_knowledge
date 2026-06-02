@@ -9,6 +9,21 @@ import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 
+/**
+ * Tolerant repair of analysis-JSON returned by LLMs.
+ *
+ * The previous implementation did:
+ *   replace(Regex(",\\s*}"), "}")
+ *   replace(Regex(",\\s*]"), "]")
+ * on the raw text. This is unsafe: a value such as
+ *   "reason": "foo, bar, baz"
+ * contains commas inside a string literal, but the regex fires there too and
+ * silently corrupts the value. We now walk the text in a string-aware way.
+ *
+ * We also avoid the crude `first '{' to last '}'` slice: if the model emits
+ * a stray `}` inside a string (rare but possible), the slice would clip the
+ * body. We instead scan for the first balanced `{` and matching `}`.
+ */
 object IngestJsonValidator {
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -18,20 +33,97 @@ object IngestJsonValidator {
             .removePrefix("```")
             .removeSuffix("```")
             .trim()
-        val objectStart = trimmed.indexOf('{')
-        val objectEnd = trimmed.lastIndexOf('}')
-        val body = if (objectStart >= 0 && objectEnd > objectStart) {
-            trimmed.substring(objectStart, objectEnd + 1)
-        } else {
-            trimmed
-        }
-        return body
+        val balanced = extractBalancedBraces(trimmed) ?: return trimmed
+        return balanced
             .replace('“', '"')
             .replace('”', '"')
             .replace('‘', '\'')
             .replace('’', '\'')
-            .replace(Regex(",\\s*}"), "}")
-            .replace(Regex(",\\s*]"), "]")
+            .let { stripTrailingCommasOutsideStrings(it) }
+    }
+
+    /**
+     * Return the substring from the first balanced `{` to its matching `}`,
+     * or null if no balanced pair is found.
+     */
+    private fun extractBalancedBraces(text: String): String? {
+        val firstOpen = text.indexOf('{')
+        if (firstOpen < 0) return null
+        var depth = 0
+        var inString = false
+        var escape = false
+        var i = firstOpen
+        while (i < text.length) {
+            val c = text[i]
+            if (inString) {
+                if (escape) {
+                    escape = false
+                } else if (c == '\\') {
+                    escape = true
+                } else if (c == '"') {
+                    inString = false
+                }
+            } else {
+                when (c) {
+                    '"' -> inString = true
+                    '{' -> depth++
+                    '}' -> {
+                        depth--
+                        if (depth == 0) {
+                            return text.substring(firstOpen, i + 1)
+                        }
+                    }
+                }
+            }
+            i++
+        }
+        return null
+    }
+
+    /**
+     * Remove `,` immediately followed (only whitespace) by `}` or `]` — but
+     * only when those characters appear outside of a string literal. The
+     * previous implementation operated on the raw text and would happily
+     * delete a comma from inside a string value.
+     */
+    private fun stripTrailingCommasOutsideStrings(text: String): String {
+        val out = StringBuilder(text.length)
+        var inString = false
+        var escape = false
+        var i = 0
+        while (i < text.length) {
+            val c = text[i]
+            if (inString) {
+                out.append(c)
+                if (escape) {
+                    escape = false
+                } else if (c == '\\') {
+                    escape = true
+                } else if (c == '"') {
+                    inString = false
+                }
+                i++
+                continue
+            }
+            if (c == '"') {
+                inString = true
+                out.append(c)
+                i++
+                continue
+            }
+            if (c == ',') {
+                var j = i + 1
+                while (j < text.length && text[j].isWhitespace()) j++
+                if (j < text.length && (text[j] == '}' || text[j] == ']')) {
+                    // skip the comma, keep going from j
+                    i = j
+                    continue
+                }
+            }
+            out.append(c)
+            i++
+        }
+        return out.toString()
     }
 
     fun parseObjectOrNull(raw: String): JsonObject? {

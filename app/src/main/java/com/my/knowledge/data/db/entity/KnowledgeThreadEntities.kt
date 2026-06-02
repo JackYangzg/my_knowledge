@@ -13,6 +13,7 @@ data class KnowledgeThreadEntity(
     val relationsJson: String,
     val gapsJson: String,
     val nextSuggestionsJson: String,
+    val inputHash: String? = null,
     val version: Int,
     val createdAt: Long,
     val updatedAt: Long

@@ -112,7 +112,10 @@ class KnowledgeProcessingWorker(
             db.processingTaskLogDao(),
             db.askCitationDao(),
             db.knowledgeGraphDao(),
-            db.reviewItemDao()
+            db.reviewItemDao(),
+            db.analysisResultDao(),
+            db.parsedContentDao(),
+            db.sourceDocumentDao()
         )
     }
 

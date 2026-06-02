@@ -9,7 +9,7 @@ interface ProcessingTaskDao {
     @Query("SELECT * FROM processing_task WHERE id = :id LIMIT 1")
     suspend fun getById(id: String): ProcessingTaskEntity?
 
-    @Query("SELECT * FROM processing_task WHERE status = 'pending' ORDER BY priority DESC, createdAt ASC LIMIT 1")
+    @Query("SELECT * FROM processing_task WHERE status IN ('pending', 'pending_config') ORDER BY priority DESC, createdAt ASC LIMIT 1")
     suspend fun getNextPendingTask(): ProcessingTaskEntity?
 
     @Query("SELECT * FROM processing_task WHERE sourceId = :sourceId ORDER BY createdAt DESC")
@@ -48,7 +48,7 @@ interface ProcessingTaskDao {
     @Query("UPDATE processing_task SET status = 'canceled', currentStep = '来源已删除', updatedAt = :updatedAt, finishedAt = :updatedAt WHERE sourceId = :sourceId AND status IN ('pending', 'running', 'failed')")
     suspend fun cancelBySource(sourceId: String, updatedAt: Long)
 
-    @Query("UPDATE processing_task SET status = 'pending', retryCount = retryCount + 1, errorMessage = NULL, updatedAt = :updatedAt WHERE id = :id")
+    @Query("UPDATE processing_task SET status = 'pending', retryCount = retryCount + 1, errorMessage = NULL, currentStep = '等待重试', updatedAt = :updatedAt WHERE id = :id")
     suspend fun retryTask(id: String, updatedAt: Long)
 
     @Query("UPDATE processing_task SET status = 'pending', errorMessage = NULL, currentStep = '等待重试', updatedAt = :updatedAt WHERE sourceId = :sourceId AND status IN ('failed', 'pending_config', 'canceled')")

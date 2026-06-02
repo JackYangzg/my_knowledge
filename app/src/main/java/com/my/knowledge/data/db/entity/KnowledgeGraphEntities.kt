@@ -32,8 +32,10 @@ data class KnowledgeEntityEntity(
     val aliasesJson: String,
     val sourceItemIdsJson: String,
     val weight: Float,
+    val confidence: Float = 1.0f,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val deletedAt: Long? = null
 )
 
 @Entity(
@@ -49,7 +51,8 @@ data class KnowledgeRelationEntity(
     val evidenceItemIdsJson: String,
     val confidence: Float,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val deletedAt: Long? = null
 )
 
 @Entity(
@@ -63,5 +66,6 @@ data class KnowledgeCommunityEntity(
     val entityIdsJson: String,
     val summary: String,
     val createdAt: Long,
-    val updatedAt: Long
+    val updatedAt: Long,
+    val deletedAt: Long? = null
 )

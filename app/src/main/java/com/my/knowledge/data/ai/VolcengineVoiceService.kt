@@ -21,7 +21,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -126,10 +125,13 @@ class VolcengineVoiceService(private val context: Context) {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                markStopped("语音识别已停止")
+                if (shouldRecord) {
+                    markStopped("语音识别已停止")
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (!shouldRecord) return
                 Log.e(TAG, "WebSocket failure", t)
                 markStopped("语音识别连接失败：${t.message ?: "未知错误"}", t.message)
             }
@@ -141,9 +143,7 @@ class VolcengineVoiceService(private val context: Context) {
         shouldRecord = false
         _state.update { it.copy(statusMessage = "正在停止语音识别...") }
         recordingJob?.cancel()
-        sendFinishFrame()
         webSocket?.close(1000, "client stopped")
-        webSocket = null
         markStopped("语音识别已停止")
     }
 
@@ -234,10 +234,7 @@ class VolcengineVoiceService(private val context: Context) {
                         )
 
                         if (now - lastVoiceAt >= SILENCE_TIMEOUT_MS) {
-                            shouldRecord = false
-                            withContext(Dispatchers.Main) {
-                                _state.update { it.copy(statusMessage = "30 秒未检测到人声，已自动停止") }
-                            }
+                            markStopped("30 秒未检测到人声，已自动停止")
                             break
                         }
                     }
@@ -245,6 +242,8 @@ class VolcengineVoiceService(private val context: Context) {
                 }
             } catch (e: SecurityException) {
                 markStopped("缺少麦克风权限", e.message)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Normal cancellation, do nothing
             } catch (e: Exception) {
                 Log.e(TAG, "Audio capture failure", e)
                 markStopped("录音失败：${e.message ?: "未知错误"}", e.message)
@@ -255,18 +254,12 @@ class VolcengineVoiceService(private val context: Context) {
                     }
                 }
                 audioRecord.release()
-                sendFinishFrame()
+                // Do not send finish frame on manual stop to avoid extra processing
                 webSocket.close(1000, "audio finished")
             }
         }
     }
 
-    private fun sendFinishFrame() {
-        val socket = webSocket ?: return
-        runCatching {
-            socket.send(buildFrame(AUDIO_ONLY_REQUEST, NEG_SEQUENCE, ByteArray(0), -sequence).toByteString())
-        }
-    }
 
     private fun buildFrame(messageType: Int, flags: Int, rawPayload: ByteArray, seq: Int): ByteArray {
         val payload = gzip(rawPayload)
@@ -398,7 +391,8 @@ class VolcengineVoiceService(private val context: Context) {
                 isConnected = false,
                 statusMessage = message,
                 rms = 0f,
-                errorMessage = error
+                errorMessage = error,
+                partialTranscript = ""
             )
         }
     }

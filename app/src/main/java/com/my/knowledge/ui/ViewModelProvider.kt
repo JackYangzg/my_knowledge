@@ -52,7 +52,10 @@ object DependencyProvider {
         provideDatabase(context).processingTaskLogDao(),
         provideDatabase(context).askCitationDao(),
         provideDatabase(context).knowledgeGraphDao(),
-        provideDatabase(context).reviewItemDao()
+        provideDatabase(context).reviewItemDao(),
+        provideDatabase(context).analysisResultDao(),
+        provideDatabase(context).parsedContentDao(),
+        provideDatabase(context).sourceDocumentDao()
     )
     
     fun provideSearchEngine(context: Context) = FtsSearchEngine(
@@ -118,7 +121,10 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                 ) as T
             }
             modelClass.isAssignableFrom(ThreadViewModel::class.java) -> {
-                ThreadViewModel(knowledgeRepo) as T
+                ThreadViewModel(
+                    knowledgeRepo,
+                    DependencyProvider.provideScheduler(context)
+                ) as T
             }
             modelClass.isAssignableFrom(ProcessingStatusViewModel::class.java) -> {
                 ProcessingStatusViewModel(
@@ -143,6 +149,13 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
             }
             modelClass.isAssignableFrom(IntermediateDataViewModel::class.java) -> {
                 IntermediateDataViewModel(knowledgeRepo) as T
+            }
+            modelClass.isAssignableFrom(KnowledgeEditorViewModel::class.java) -> {
+                KnowledgeEditorViewModel(
+                    knowledgeRepo,
+                    DependencyProvider.provideDatabase(context),
+                    DependencyProvider.provideScheduler(context)
+                ) as T
             }
             else -> throw IllegalArgumentException("Unknown ViewModel class")
         }

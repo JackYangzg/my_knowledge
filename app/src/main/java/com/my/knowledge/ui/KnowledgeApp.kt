@@ -25,9 +25,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.IntermediateDataViewModel
+import com.my.knowledge.viewmodel.KnowledgeEditorViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
 import com.my.knowledge.viewmodel.KnowledgeItemDetailViewModel
@@ -56,7 +56,10 @@ sealed class Route(val path: String) {
     data object Settings : Route("settings")
     data object LogCenter : Route("log_center")
     data object RecycleBin : Route("recycle_bin")
-    data object IntermediateData : Route("intermediate_data")
+    data object IntermediateData : Route("intermediate/{kbId}") {
+        fun create(kbId: String? = null) =
+            if (kbId.isNullOrBlank()) "intermediate/_all" else "intermediate/${Uri.encode(kbId)}"
+    }
     data object KnowledgeBaseDetail : Route("knowledge_base/{kbId}") {
         fun create(kbId: String) = "knowledge_base/${Uri.encode(kbId)}"
     }
@@ -67,6 +70,21 @@ sealed class Route(val path: String) {
         fun create(scopeType: String, scopeId: String, title: String) =
             "ask/${Uri.encode(scopeType)}/${Uri.encode(scopeId)}/${Uri.encode(title)}"
     }
+    data object ItemEditor : Route("item_editor/{itemId}") {
+        fun create(itemId: String) = "item_editor/${Uri.encode(itemId)}"
+    }
+    /**
+     * Markdown editor dedicated to knowledge items. Distinct from the
+     * inspiration note editor (Route.ItemEditor) because the two
+     * flows have different semantics:
+     *   - inspiration:    free-form note → may or may not be saved as KB
+     *   - knowledge item: already in the KB, edit-in-place updates the row
+     * The header of the editor shows "编辑 [title]" so the user always
+     * knows they're editing an existing knowledge entry, not a note.
+     */
+    data object KnowledgeEditor : Route("knowledge_editor/{itemId}") {
+        fun create(itemId: String) = "knowledge_editor/${Uri.encode(itemId)}"
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -75,6 +93,14 @@ fun KnowledgeApp() {
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: Route.Home.path
+    // Single KnowledgeRepository instance shared across the nav graph so
+    // every Ask surface (the AskSheet sheets on Home/Detail/Viewer, plus
+    // the legacy full-screen AskScreen route) reuses the same Room Flow
+    // subscription graph instead of building per-screen DAOs.
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val knowledgeRepository = remember(context) {
+        DependencyProvider.provideKnowledgeRepository(context.applicationContext)
+    }
     val activeTab = when (currentRoute) {
         Route.Inspiration.path -> Tab.INSPIRATION
         Route.Profile.path -> Tab.PROFILE
@@ -93,6 +119,7 @@ fun KnowledgeApp() {
     val detailViewModel: KnowledgeItemDetailViewModel = viewModel(factory = ViewModelFactory)
     val recycleBinViewModel: RecycleBinViewModel = viewModel(factory = ViewModelFactory)
     val intermediateDataViewModel: IntermediateDataViewModel = viewModel(factory = ViewModelFactory)
+    val knowledgeEditorViewModel: KnowledgeEditorViewModel = viewModel(factory = ViewModelFactory)
 
     Scaffold(
         bottomBar = {
@@ -125,6 +152,7 @@ fun KnowledgeApp() {
                     KnowledgeScreen(
                         viewModel = homeViewModel,
                         askViewModel = askViewModel,
+                        knowledgeRepository = knowledgeRepository,
                         onOpenContext = { navController.navigate(Route.Context.path) },
                         onOpenFragments = { navController.navigate(Route.Fragments.path) },
                         onOpenKbDetail = { kbId -> navController.navigate(Route.KnowledgeBaseDetail.create(kbId)) },
@@ -132,7 +160,12 @@ fun KnowledgeApp() {
                     )
                 }
                 composable(Route.Inspiration.path) {
-                    InspirationScreen(viewModel = noteViewModel)
+                    InspirationScreen(
+                        viewModel = noteViewModel,
+                        onOpenItem = { itemId ->
+                            navController.navigate(Route.KnowledgeItemDetail.create("inspiration", itemId))
+                        }
+                    )
                 }
                 composable(Route.Profile.path) {
                     ProfileScreen(
@@ -140,7 +173,9 @@ fun KnowledgeApp() {
                         onOpenSettings = { navController.navigate(Route.Settings.path) },
                         onOpenLogCenter = { navController.navigate(Route.LogCenter.path) },
                         onOpenRecycleBin = { navController.navigate(Route.RecycleBin.path) },
-                        onOpenIntermediateData = { navController.navigate(Route.IntermediateData.path) }
+                        onOpenIntermediateData = { kbId ->
+                            navController.navigate(Route.IntermediateData.create(kbId))
+                        }
                     )
                 }
                 composable(Route.Context.path) {
@@ -177,10 +212,34 @@ fun KnowledgeApp() {
                         onBack = { navController.popBackStack() }
                     )
                 }
-                composable(Route.IntermediateData.path) {
+                composable(
+                    route = Route.IntermediateData.path,
+                    arguments = listOf(
+                        navArgument("kbId") {
+                            type = NavType.StringType
+                            nullable = true
+                            defaultValue = null
+                        }
+                    )
+                ) { entry ->
+                    val rawKbId = entry.arguments?.getString("kbId")
+                    val kbId = rawKbId?.takeIf { it.isNotBlank() && it != "_all" }
+                    LaunchedEffect(kbId) {
+                        // Tell the view-model which knowledge base to scope to.
+                        intermediateDataViewModel.setKbId(kbId)
+                    }
                     IntermediateDataScreen(
                         viewModel = intermediateDataViewModel,
-                        onBack = { navController.popBackStack() }
+                        onBack = { navController.popBackStack() },
+                        onViewDetail = { itemId ->
+                            navController.navigate(Route.KnowledgeItemDetail.create("any", itemId))
+                        },
+                        onSwitchKb = { newKbId ->
+                            navController.navigate(Route.IntermediateData.create(newKbId)) {
+                                popUpTo(Route.IntermediateData.path) { inclusive = true }
+                                launchSingleTop = true
+                            }
+                        }
                     )
                 }
                 composable(
@@ -189,16 +248,16 @@ fun KnowledgeApp() {
                 ) { entry ->
                     val kbId = entry.arguments?.getString("kbId").orEmpty()
                     itemViewModel.setKnowledgeBaseId(kbId)
+                    val kbBases by homeViewModel.knowledgeBases.collectAsState()
                     KnowledgeDetailScreen(
-                        kbName = homeViewModel.knowledgeBases.value.find { it.id == kbId }?.name ?: "知识管理",
+                        kbName = kbBases.find { it.id == kbId }?.name ?: "知识管理",
                         viewModel = itemViewModel,
+                        askViewModel = askViewModel,
+                        knowledgeRepository = knowledgeRepository,
+                        allKnowledgeBases = kbBases,
                         onBack = { navController.popBackStack() },
-                        onAskAI = { itemId, itemTitle ->
-                            askViewModel.setScope(ScopeType.KNOWLEDGE_ITEM, itemId)
-                            askViewModel.startNewConversation(itemTitle)
-                            navController.navigate(Route.Ask.create(ScopeType.KNOWLEDGE_ITEM, itemId, itemTitle))
-                        },
-                        onOpenItem = { itemId -> navController.navigate(Route.KnowledgeItemDetail.create(kbId, itemId)) }
+                        onOpenItem = { itemId -> navController.navigate(Route.KnowledgeItemDetail.create(kbId, itemId)) },
+                        onOpenIntermediate = { baseId -> navController.navigate(Route.IntermediateData.create(baseId)) }
                     )
                 }
                 composable(
@@ -212,11 +271,47 @@ fun KnowledgeApp() {
                     KnowledgeViewerScreen(
                         itemId = itemId,
                         viewModel = detailViewModel,
+                        askViewModel = askViewModel,
+                        knowledgeRepository = knowledgeRepository,
                         onBack = { navController.popBackStack() },
                         onOpenItem = { nextItemId ->
                             val kbId = entry.arguments?.getString("kbId").orEmpty()
                             navController.navigate(Route.KnowledgeItemDetail.create(kbId, nextItemId))
+                        },
+                        onEditItem = { editId ->
+                            navController.navigate(Route.KnowledgeEditor.create(editId))
                         }
+                    )
+                }
+                composable(
+                    route = Route.ItemEditor.path,
+                    arguments = listOf(navArgument("itemId") { type = NavType.StringType })
+                ) { entry ->
+                    val itemId = entry.arguments?.getString("itemId").orEmpty()
+                    LaunchedEffect(itemId) {
+                        // Load the existing knowledge item into the editor so
+                        // the user sees its current title/content and any save
+                        // re-uses the same row (rawNoteId dedup).
+                        noteViewModel.loadFromKnowledgeItem(itemId)
+                    }
+                    InspirationScreen(
+                        viewModel = noteViewModel,
+                        startInEditor = true,
+                        onOpenItem = { nextItemId ->
+                            navController.navigate(Route.KnowledgeItemDetail.create("inspiration", nextItemId))
+                        }
+                    )
+                }
+                composable(
+                    route = Route.KnowledgeEditor.path,
+                    arguments = listOf(navArgument("itemId") { type = NavType.StringType })
+                ) { entry ->
+                    val itemId = entry.arguments?.getString("itemId").orEmpty()
+                    KnowledgeEditorScreen(
+                        itemId = itemId,
+                        viewModel = knowledgeEditorViewModel,
+                        onBack = { navController.popBackStack() },
+                        onSaved = { navController.popBackStack() }
                     )
                 }
                 composable(

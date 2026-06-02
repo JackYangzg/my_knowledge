@@ -35,7 +35,7 @@ import com.my.knowledge.data.db.entity.*
         AnalysisResultEntity::class,
         ReviewItemEntity::class
     ],
-    version = 6,
+    version = 9,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -74,7 +74,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
-                .addMigrations(MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
                 .build()
         }
 
@@ -205,6 +205,58 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $spec")
             }
         }
+
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                addColumnIfMissing(db, "knowledge_entity", "deletedAt", "INTEGER")
+                addColumnIfMissing(db, "knowledge_relation", "deletedAt", "INTEGER")
+                addColumnIfMissing(db, "knowledge_community", "deletedAt", "INTEGER")
+            }
+
+            private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, column: String, spec: String) {
+                db.query("PRAGMA table_info(`$table`)").use { cursor ->
+                    val nameIndex = cursor.getColumnIndex("name")
+                    while (cursor.moveToNext()) {
+                        if (cursor.getString(nameIndex) == column) return
+                    }
+                }
+                db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $spec")
+            }
+        }
+
+        /**
+         * v7 -> v8: add `confidence` to knowledge_entity so we can distinguish
+         * between AI-inferred entities and human-curated ones.
+         */
+        val MIGRATION_7_8 = object : Migration(7, 8) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            addColumnIfMissing(db, "knowledge_entity", "confidence", "REAL NOT NULL DEFAULT 1.0")
+            // The new rawNoteId index on knowledge_item was added when we
+            // wired InspirationScreen → knowledge_item dedup. v7 never had
+            // this index, so without this line Room detects a schema
+            // mismatch and crashes the app on first launch after upgrade.
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_item_rawNoteId` ON `knowledge_item` (`rawNoteId`)")
+        }
+
+        private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, column: String, spec: String) {
+            db.query("PRAGMA table_info(`$table`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndex("name")
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == column) return
+                }
+            }
+            db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $spec")
+        }
+    }
+
+        val MIGRATION_8_9 = object : Migration(8, 9) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            // ThreadEvolutionWorker now persists the input hash that drives
+            // its no-op short-circuit. Older threads simply leave it null
+            // and get re-derived on the next schedule — nothing to backfill.
+            db.execSQL("ALTER TABLE `knowledge_thread` ADD COLUMN `inputHash` TEXT")
+        }
+    }
 
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {

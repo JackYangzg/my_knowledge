@@ -1,6 +1,7 @@
 package com.my.knowledge.data.parser
 
 import android.graphics.BitmapFactory
+import com.my.knowledge.data.ai.AiGateway
 import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
@@ -90,42 +91,67 @@ fun defaultParsers(): List<ContentParser> = listOf(
 )
 
 class ImageOcrParser : ContentParser {
+    private val ai = AiGateway()
+
     override fun supports(mimeType: String?, sourceType: String): Boolean {
         return sourceType == "image" || mimeType?.startsWith("image/") == true
     }
 
     override suspend fun parse(source: SourceDocumentEntity): ParsedContent {
         val file = source.localPath?.let { File(it) }
-        val bitmap = file?.takeIf { it.exists() }?.absolutePath?.let { BitmapFactory.decodeFile(it) }
-        if (bitmap == null) {
-            return ParsedContent(
-                parserType = "image_metadata",
-                markdown = "# ${source.title}\n\n> 图片已保存到本地，但无法解码为可 OCR 的图片。",
-                plainText = source.title,
-                metadataJson = """{"title":"${source.title.escapeJson()}","sourceType":"image","ocrStatus":"decode_failed"}"""
-            )
+            ?: throw IllegalStateException("图片本地路径为空，无法调用图片分析 API")
+        if (!file.exists()) {
+            throw IllegalStateException("图片文件不存在：${file.absolutePath}")
+        }
+        val imageBytes = file.readBytes()
+        if (imageBytes.isEmpty()) {
+            throw IllegalStateException("图片文件为空：${file.absolutePath}")
         }
 
-        val text = recognizeText(bitmap).trim()
+        val bitmap = BitmapFactory.decodeFile(file.absolutePath)
+        val text = bitmap?.let { recognizeText(it).trim() }.orEmpty()
+        val mimeType = source.mimeType?.takeIf { it.startsWith("image/") } ?: guessImageMimeType(file)
+        val imageDescription = ai.analyzeImage(
+            imageBytes = imageBytes,
+            mimeType = mimeType,
+            title = source.title,
+            ocrText = text
+        ).trim()
         val markdown = buildString {
             appendLine("# ${source.title}")
             appendLine()
-            appendLine("- 图片尺寸：${bitmap.width} x ${bitmap.height}")
+            if (bitmap != null) {
+                appendLine("- 图片尺寸：${bitmap.width} x ${bitmap.height}")
+            } else {
+                appendLine("- 图片尺寸：无法本地解码")
+            }
             appendLine("- SHA256：${source.sha256}")
+            appendLine()
+            appendLine("## 图片分析")
+            appendLine()
+            appendLine(imageDescription)
             appendLine()
             if (text.isNotBlank()) {
                 appendLine("## OCR 文本")
                 appendLine()
                 appendLine(text)
-            } else {
-                appendLine("> 未识别到图片文字，已保留图片来源和尺寸信息。")
             }
         }
         return ParsedContent(
-            parserType = if (text.isBlank()) "image_metadata" else "image_ocr",
+            parserType = "image_api_analysis",
             markdown = markdown,
-            plainText = text.ifBlank { markdown.stripMarkdown() },
-            metadataJson = """{"title":"${source.title.escapeJson()}","sourceType":"image","width":${bitmap.width},"height":${bitmap.height},"ocrChars":${text.length}}"""
+            plainText = listOf(imageDescription, text).filter { it.isNotBlank() }.joinToString("\n\n"),
+            metadataJson = buildString {
+                append("{")
+                append("\"title\":\"${source.title.escapeJson()}\"")
+                append(",\"sourceType\":\"image\"")
+                append(",\"mimeType\":\"${mimeType.escapeJson()}\"")
+                append(",\"imageApiStatus\":\"success\"")
+                if (bitmap != null) {
+                    append(",\"width\":${bitmap.width},\"height\":${bitmap.height}")
+                }
+                append(",\"ocrChars\":${text.length},\"analysisChars\":${imageDescription.length}}")
+            }
         )
     }
 
@@ -147,6 +173,17 @@ class ImageOcrParser : ContentParser {
                     if (continuation.isActive) continuation.resume("")
                 }
         }
+
+    private fun guessImageMimeType(file: File): String {
+        return when (file.extension.lowercase()) {
+            "jpg", "jpeg" -> "image/jpeg"
+            "png" -> "image/png"
+            "webp" -> "image/webp"
+            "gif" -> "image/gif"
+            "bmp" -> "image/bmp"
+            else -> "image/png"
+        }
+    }
 }
 
 class PdfTextParser : ContentParser {

@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.ai.AiPromptTemplates
 import com.my.knowledge.data.ai.AiGateway
+import com.my.knowledge.data.ai.AiTextCleaner
+import com.my.knowledge.data.ai.AiTextCleaner.cleanModelOutput
 import com.my.knowledge.data.ai.ContentType
 import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.ui.KnowledgeManager
@@ -43,6 +45,7 @@ class AskViewModel(
 
     private val _activeConversationId = MutableStateFlow<String?>(null)
     val activeConversationId: StateFlow<String?> = _activeConversationId.asStateFlow()
+    private var pendingConversationTitle: String = "新对话"
 
     private val _messages = MutableStateFlow<List<AiMessageEntity>>(emptyList())
     val messages: StateFlow<List<AiMessageEntity>> = _messages.asStateFlow()
@@ -53,6 +56,22 @@ class AskViewModel(
     private val _conversations = MutableStateFlow<List<AiConversationEntity>>(emptyList())
     val conversations: StateFlow<List<AiConversationEntity>> = _conversations.asStateFlow()
 
+    /**
+     * Same scope as [conversations] but each row also carries the live
+     * message count for the conversation. The AskSheet history drawer
+     * renders this list so the user can see "对话名 · 5 条消息 · 2 小时前"
+     * without us doing an N+1 query inside the Compose tree.
+     */
+    val conversationsWithCount: StateFlow<List<com.my.knowledge.data.repository.KnowledgeRepositoryImpl.ConversationWithCount>> =
+        combine(
+            _currentScopeType,
+            _currentScopeId
+        ) { type, id -> type to id }
+            .flatMapLatest { (type, id) ->
+                knowledgeRepository.observeConversationsWithCount(type, id)
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
@@ -61,8 +80,11 @@ class AskViewModel(
 
     fun setScope(scopeType: String, scopeId: String) {
         _currentScopeType.value = when (scopeType) {
-            ScopeType.KNOWLEDGE_ITEM, ScopeType.KNOWLEDGE_BASE, ScopeType.THREAD -> scopeType
-            else -> ScopeType.KNOWLEDGE_BASE
+            ScopeType.KNOWLEDGE_ITEM,
+            ScopeType.KNOWLEDGE_BASE,
+            ScopeType.THREAD,
+            ScopeType.GLOBAL -> scopeType
+            else -> ScopeType.GLOBAL
         }
         _currentScopeId.value = scopeId
         loadConversations()
@@ -81,39 +103,38 @@ class AskViewModel(
     }
 
     fun startNewConversation(title: String = "新对话") {
-        viewModelScope.launch {
-            val conversation = AiConversationEntity(
-                id = UUID.randomUUID().toString(),
-                scopeType = _currentScopeType.value,
-                scopeId = _currentScopeId.value,
-                title = title,
-                isLocalOnly = true,
-                createdAt = System.currentTimeMillis(),
-                updatedAt = System.currentTimeMillis(),
-                deletedAt = null
-            )
-            knowledgeRepository.createConversation(conversation)
-            _activeConversationId.value = conversation.id
-            _messages.value = emptyList()
-
-            val systemMsg = AiMessageEntity(
-                id = UUID.randomUUID().toString(),
-                conversationId = conversation.id,
-                role = "system",
-                content = AiPromptTemplates.BASE_SYSTEM_PROMPT,
-                contentType = ContentType.GENERAL,
-                createdAt = System.currentTimeMillis()
-            )
-            knowledgeRepository.createMessage(systemMsg)
-        }
+        pendingConversationTitle = title.ifBlank { "新对话" }
+        _activeConversationId.value = null
+        _messages.value = emptyList()
+        _lastCitations.value = emptyList()
+        _debugPrompts.value = emptyMap()
     }
 
     fun selectConversation(conversationId: String) {
         viewModelScope.launch {
+            pendingConversationTitle = "新对话"
             _activeConversationId.value = conversationId
             knowledgeRepository.observeMessages(conversationId).collect { list ->
                 _messages.value = list.filter { it.role != "system" }
             }
+        }
+    }
+
+    fun clearHistory() {
+        viewModelScope.launch {
+            val scopeType = _currentScopeType.value
+            val scopeId = _currentScopeId.value
+
+            knowledgeRepository.clearConversationsByScope(scopeType, scopeId)
+
+            _activeConversationId.value = null
+            _messages.value = emptyList()
+            _lastCitations.value = emptyList()
+            _debugPrompts.value = emptyMap()
+            pendingConversationTitle = "新对话"
+
+            // Reload conversations (which should now be empty)
+            loadConversations()
         }
     }
 
@@ -122,6 +143,7 @@ class AskViewModel(
             val conversationId = ensureActiveConversation()
             _isLoading.value = true
             val previousMessages = _messages.value
+            val systemPrompt = AiPromptTemplates.systemPromptFor(_currentScopeType.value)
 
             val userMsg = AiMessageEntity(
                 id = UUID.randomUUID().toString(),
@@ -158,7 +180,7 @@ class AskViewModel(
 
             var answer = ""
             runCatching {
-                AiGateway().completeStream(AiPromptTemplates.BASE_SYSTEM_PROMPT, debugPrompt)
+                AiGateway().completeStream(systemPrompt, debugPrompt)
                     .collect { chunk ->
                         answer += chunk
                         _messages.value = _messages.value.map {
@@ -214,12 +236,13 @@ class AskViewModel(
             id = UUID.randomUUID().toString(),
             scopeType = _currentScopeType.value,
             scopeId = _currentScopeId.value,
-            title = "新对话",
+            title = pendingConversationTitle,
             isLocalOnly = true,
             createdAt = System.currentTimeMillis(),
             updatedAt = System.currentTimeMillis(),
             deletedAt = null
         )
+        pendingConversationTitle = "新对话"
         knowledgeRepository.createConversation(conversation)
         _activeConversationId.value = conversation.id
         _messages.value = emptyList()
@@ -228,7 +251,7 @@ class AskViewModel(
                 id = UUID.randomUUID().toString(),
                 conversationId = conversation.id,
                 role = "system",
-                content = AiPromptTemplates.BASE_SYSTEM_PROMPT,
+                content = AiPromptTemplates.systemPromptFor(_currentScopeType.value),
                 contentType = ContentType.GENERAL,
                 createdAt = System.currentTimeMillis()
             )
@@ -239,21 +262,26 @@ class AskViewModel(
     fun saveAnswerAsKnowledge(messageId: String) {
         viewModelScope.launch {
             val msg = _messages.value.find { it.id == messageId } ?: return@launch
-            val conversation = _activeConversationId.value?.let {
-                knowledgeRepository.getConversation(it)
-            } ?: return@launch
+            if (_activeConversationId.value == null) return@launch
 
+            // Strip the model's hidden <think>...</think> reasoning block (and
+            // any stray markdown fence) before persisting. The chat display
+            // already hides think blocks, but the original code wrote the
+            // raw `msg.content` straight into the knowledge base, so users
+            // got the model's private notes filed as their own knowledge.
+            val cleaned = msg.content.cleanModelOutput()
+                .let { if (it.isBlank()) msg.content.trim() else it }
+
+            val unfiledId = knowledgeRepository.getUnfiledBase()?.id ?: ""
             val newItem = KnowledgeItemEntity(
                 id = UUID.randomUUID().toString(),
-                knowledgeBaseId = conversation.scopeId.ifEmpty {
-                    knowledgeRepository.getUnfiledBase()?.id ?: ""
-                },
-                title = "问答: ${msg.content.take(50)}",
-                contentMarkdown = msg.content,
-                excerpt = msg.content.take(100),
+                knowledgeBaseId = unfiledId,
+                title = "问答: ${cleaned.take(50)}",
+                contentMarkdown = cleaned,
+                excerpt = cleaned.take(100),
                 sourceType = "ai_answer",
                 status = KnowledgeItemEntity.STATUS_UNFILED,
-                contentHash = knowledgeRepository.calculateContentHash(msg.content),
+                contentHash = knowledgeRepository.calculateContentHash(cleaned),
                 summary = null,
                 tagsJson = "[]",
                 rawNoteId = null,
@@ -286,7 +314,7 @@ class AskViewModel(
                         fragmentId = null,
                         knowledgeBaseId = item.knowledgeBaseId,
                         title = item.title,
-                    snippet = item.contentMarkdown,
+                        snippet = item.contentMarkdown,
                         sourceType = item.sourceType,
                         score = 3f,
                         matchType = "item_scope"
@@ -294,7 +322,8 @@ class AskViewModel(
                 )
             }
             ScopeType.KNOWLEDGE_BASE -> {
-                if (scopeId.isBlank()) emptyList() else searchEngine.searchResults(question, scopeId, 8).firstOrNull() ?: emptyList()
+                if (scopeId.isBlank()) emptyList()
+                else searchEngine.searchResults(question, scopeId, 8).firstOrNull() ?: emptyList()
             }
             ScopeType.THREAD -> {
                 val thread = knowledgeRepository.getThreadByKb(scopeId)
@@ -302,10 +331,16 @@ class AskViewModel(
                     searchEngine.searchResults(question, thread.knowledgeBaseId, 8).firstOrNull() ?: emptyList()
                 }
             }
+            ScopeType.GLOBAL -> {
+                // Cross-base retrieval: pass a null kbId so the search
+                // engine drops the per-base filter and ranks across the
+                // whole library.
+                searchEngine.searchResults(question, null, 16).firstOrNull() ?: emptyList()
+            }
             else -> {
                 emptyList()
             }
-        }.take(5)
+        }.take(if (scopeType == ScopeType.GLOBAL) 8 else 5)
     }
 
     private suspend fun hydrateItems(results: List<KnowledgeSearchResult>): List<KnowledgeItemEntity> =
@@ -406,7 +441,7 @@ class AskViewModel(
         }
     }
 
-    private fun buildAskPrompt(
+    private suspend fun buildAskPrompt(
         question: String,
         relevantResults: List<KnowledgeSearchResult>,
         relevantItems: List<KnowledgeItemEntity>,
@@ -431,27 +466,60 @@ class AskViewModel(
         val conversation = messages
             .filter { it.role == "user" || it.role == "assistant" }
             .takeLast(8)
-            .joinToString("\n") { "${if (it.role == "user") "用户" else "AI"}：${it.content.take(500)}" }
+            .joinToString("\n") { "${if (it.role == "user") "user" else "assistant"}: ${it.content.take(2000)}" }
             .ifBlank { "暂无历史上下文。" }
 
-        return """
-            系统提示：
-            ${AiPromptTemplates.BASE_SYSTEM_PROMPT}
+        val scopeName = when (_currentScopeType.value) {
+            ScopeType.KNOWLEDGE_ITEM -> "单条知识点"
+            ScopeType.KNOWLEDGE_BASE -> "整个知识库"
+            ScopeType.GLOBAL -> "全局知识库"
+            ScopeType.THREAD -> "知识脉络"
+            else -> "全局搜索"
+        }
 
-            原始内容：
-            $originals
+        if (_currentScopeType.value == ScopeType.KNOWLEDGE_ITEM) {
+            return AiPromptTemplates.buildKnowledgeItemAskPrompt(
+                question = question,
+                referencedKnowledge = buildKnowledgeItemReference(relevantResults, relevantItems),
+                conversation = conversation
+            )
+        }
 
-            上下文对话：
-            $conversation
+        return AiPromptTemplates.buildAskPrompt(
+            question = question,
+            originals = originals,
+            conversation = conversation,
+            scopeName = scopeName
+        )
+    }
 
-            用户问题：
-            $question
+    private suspend fun buildKnowledgeItemReference(
+        relevantResults: List<KnowledgeSearchResult>,
+        relevantItems: List<KnowledgeItemEntity>
+    ): String {
+        val item = relevantItems.firstOrNull()
+        if (item != null) {
+            val baseName = knowledgeRepository.getBaseById(item.knowledgeBaseId)?.name ?: "未知知识库"
+            return buildString {
+                appendLine("知识库：$baseName")
+                appendLine("知识条目：${item.title}")
+                appendLine()
+                appendLine(item.contentMarkdown.take(8000))
+            }.trim()
+        }
 
-            输出要求：
-            - 回答可以使用 Markdown。
-            - 如需列出【来自原文】，只写原文标题或文件名，不要粘贴原文正文。
-            - 将分析、归纳、建议放在【AI推理】下。
-        """.trimIndent()
+        val result = relevantResults.firstOrNull()
+        if (result != null) {
+            val baseName = knowledgeRepository.getBaseById(result.knowledgeBaseId)?.name ?: "未知知识库"
+            return buildString {
+                appendLine("知识库：$baseName")
+                appendLine("知识条目：${result.title}")
+                appendLine()
+                appendLine(result.snippet.take(8000))
+            }.trim()
+        }
+
+        return "未检索到可用知识。"
     }
 
     private fun buildCitationJson(

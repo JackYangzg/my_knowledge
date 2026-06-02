@@ -17,4 +17,7 @@ interface AskCitationDao {
 
     @Query("DELETE FROM ask_citation WHERE messageId = :messageId")
     suspend fun deleteByMessage(messageId: String)
+
+    @Query("DELETE FROM ask_citation WHERE messageId IN (SELECT id FROM ai_message WHERE conversationId = :conversationId)")
+    suspend fun deleteByConversation(conversationId: String)
 }
