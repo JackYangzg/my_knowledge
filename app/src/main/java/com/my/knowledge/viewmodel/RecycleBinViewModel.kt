@@ -17,28 +17,39 @@ class RecycleBinViewModel(
         const val PAGE_SIZE = 10
     }
 
-    private val _currentPage = MutableStateFlow(0)
-    val currentPage: StateFlow<Int> = _currentPage.asStateFlow()
+    private val _loadedCount = MutableStateFlow(0)
+    private val _isLoadingMore = MutableStateFlow(false)
 
     val deletedItemCount: StateFlow<Int> = knowledgeRepository.observeDeletedItemCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
-    val items: StateFlow<List<KnowledgeItemEntity>> = _currentPage
-        .flatMapLatest { page ->
-            knowledgeRepository.observeDeletedItemsPaged(PAGE_SIZE, page * PAGE_SIZE)
+    val items: StateFlow<List<KnowledgeItemEntity>> = _loadedCount
+        .flatMapLatest { loaded ->
+            knowledgeRepository.observeDeletedItemsPaged(loaded, 0)
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    val hasNextPage: StateFlow<Boolean> = combine(deletedItemCount, _currentPage) { count, page ->
-        (page + 1) * PAGE_SIZE < count
+    val hasMore: StateFlow<Boolean> = combine(deletedItemCount, _loadedCount) { count, loaded ->
+        loaded < count
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
-    val hasPreviousPage: StateFlow<Boolean> = _currentPage.map { it > 0 }
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+    val isLoadingMore: StateFlow<Boolean> = _isLoadingMore.asStateFlow()
 
-    val totalPages: StateFlow<Int> = deletedItemCount.map { count ->
-        if (count == 0) 1 else ((count - 1) / PAGE_SIZE) + 1
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 1)
+    init {
+        if (_loadedCount.value == 0) {
+            _loadedCount.value = PAGE_SIZE.coerceAtMost(deletedItemCount.value)
+        }
+    }
+
+    fun loadMore() {
+        if (_isLoadingMore.value) return
+        val count = deletedItemCount.value
+        val current = _loadedCount.value
+        if (current >= count) return
+        _isLoadingMore.value = true
+        _loadedCount.value = (current + PAGE_SIZE).coerceAtMost(count)
+        _isLoadingMore.value = false
+    }
 
     // Multi-select state
     private val _selectedIds = MutableStateFlow<Set<String>>(emptySet())
@@ -46,9 +57,6 @@ class RecycleBinViewModel(
 
     val selectionCount: StateFlow<Int> = _selectedIds.map { it.size }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
-
-    fun nextPage() { _currentPage.value++ }
-    fun previousPage() { if (_currentPage.value > 0) _currentPage.value-- }
 
     fun toggleSelection(id: String) {
         _selectedIds.update { current ->

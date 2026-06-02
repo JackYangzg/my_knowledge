@@ -4,11 +4,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material3.*
@@ -30,10 +29,8 @@ fun RecycleBinScreen(
     val items by viewModel.items.collectAsState()
     val selectedIds by viewModel.selectedIds.collectAsState()
     val selectionCount by viewModel.selectionCount.collectAsState()
-    val currentPage by viewModel.currentPage.collectAsState()
-    val totalPages by viewModel.totalPages.collectAsState()
-    val hasNext by viewModel.hasNextPage.collectAsState()
-    val hasPrevious by viewModel.hasPreviousPage.collectAsState()
+    val hasMore by viewModel.hasMore.collectAsState()
+    val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val totalCount by viewModel.deletedItemCount.collectAsState()
 
     var showBatchDeleteDialog by remember { mutableStateOf(false) }
@@ -132,7 +129,20 @@ fun RecycleBinScreen(
         }
 
         // Content
+        val listState = rememberLazyListState()
+        val shouldLoadMore by remember(items.size, hasMore, isLoadingMore) {
+            derivedStateOf {
+                hasMore && !isLoadingMore &&
+                    listState.layoutInfo.visibleItemsInfo.isNotEmpty() &&
+                    listState.layoutInfo.visibleItemsInfo.last().index >= items.size - 2
+            }
+        }
+        LaunchedEffect(shouldLoadMore) {
+            if (shouldLoadMore) viewModel.loadMore()
+        }
+
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(bottom = 16.dp)
         ) {
@@ -204,58 +214,8 @@ fun RecycleBinScreen(
                         }
                     }
                 }
-            }
-        }
-
-        // Pagination
-        if (items.isNotEmpty()) {
-            Surface(color = Color.White, shadowElevation = 4.dp) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
-                        .navigationBarsPadding(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    IconButton(
-                        onClick = { viewModel.previousPage() },
-                        enabled = hasPrevious,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(
-                                if (hasPrevious) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
-                                RoundedCornerShape(12.dp)
-                            )
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "上一页",
-                            tint = if (hasPrevious) Color(0xFF147EC5) else Color(0xFFA3A3A3)
-                        )
-                    }
-                    Text(
-                        "${currentPage + 1} / $totalPages",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF0F172A)
-                    )
-                    IconButton(
-                        onClick = { viewModel.nextPage() },
-                        enabled = hasNext,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(
-                                if (hasNext) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
-                                RoundedCornerShape(12.dp)
-                            )
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                            contentDescription = "下一页",
-                            tint = if (hasNext) Color(0xFF147EC5) else Color(0xFFA3A3A3)
-                        )
-                    }
+                item(key = "list-footer") {
+                    RecycleBinListFooter(hasMore = hasMore, isLoadingMore = isLoadingMore)
                 }
             }
         }
@@ -288,4 +248,31 @@ private fun formatTimestamp(timestamp: Long): String {
     if (timestamp == 0L) return ""
     val sdf = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
     return sdf.format(java.util.Date(timestamp))
+}
+
+@Composable
+private fun RecycleBinListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            isLoadingMore -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = Color(0xFF147EC5)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("加载中…", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+            }
+            !hasMore -> Text(
+                "— 已经到底了 —",
+                fontSize = 12.sp,
+                color = Color(0xFFA3A3A3)
+            )
+        }
+    }
 }

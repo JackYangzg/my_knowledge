@@ -1,7 +1,9 @@
 package com.my.knowledge.ui.component
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -194,25 +196,28 @@ fun InsightRow(insight: KnowledgeInsight) {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun KnowledgeItemRow(
     item: KnowledgeItemEntity,
-    onAskAI: () -> Unit,
     onDelete: () -> Unit = {},
     onRetry: () -> Unit = {},
     onStatusClick: () -> Unit = {},
     selectionMode: Boolean = false,
     selected: Boolean = false,
     onSelectionChange: (Boolean) -> Unit = {},
-    onClick: () -> Unit = {}
+    onClick: () -> Unit = {},
+    onLongClick: () -> Unit = {}
 ) {
     Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().combinedClickable(
+            onClick = onClick,
+            onLongClick = onLongClick
+        ),
         color = Color.White,
         border = BorderStroke(0.5.dp, Color(0xFFEEF6FF))
     ) {
-        Column(modifier = Modifier.padding(vertical = 16.dp, horizontal = 20.dp)) {
+        Column(modifier = Modifier.padding(vertical = 10.dp, horizontal = 20.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -222,7 +227,7 @@ fun KnowledgeItemRow(
                     Checkbox(
                         checked = selected,
                         onCheckedChange = onSelectionChange,
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(24.dp)
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                 }
@@ -232,7 +237,9 @@ fun KnowledgeItemRow(
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF0F172A),
                     modifier = Modifier.weight(1f),
-                    lineHeight = 20.sp
+                    lineHeight = 20.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 Row {
                     if (item.status == KnowledgeItemEntity.STATUS_FAILED) {
@@ -247,17 +254,17 @@ fun KnowledgeItemRow(
             }
             Text(
                 text = item.excerpt,
-                fontSize = 13.sp,
-                lineHeight = 21.sp,
+                fontSize = 12.sp,
+                lineHeight = 18.sp,
                 color = Color(0xFF5F87A3),
-                maxLines = 3,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 7.dp)
+                modifier = Modifier.padding(top = 4.dp)
             )
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 10.dp),
+                    .padding(top = 6.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -273,16 +280,6 @@ fun KnowledgeItemRow(
                         isError = item.status == KnowledgeItemEntity.STATUS_FAILED,
                         onClick = onStatusClick
                     )
-                }
-                Surface(
-                    onClick = onAskAI,
-                    shape = RoundedCornerShape(8.dp),
-                    color = Color(0xFF147EC5),
-                    modifier = Modifier.size(32.dp, 22.dp)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Text("AI", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                    }
                 }
             }
         }

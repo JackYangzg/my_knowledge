@@ -4,15 +4,18 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Hub
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -23,21 +26,25 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.ui.component.KnowledgeItemRow
+import com.my.knowledge.ui.component.AskSheet
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
+import com.my.knowledge.viewmodel.AskViewModel
+import com.my.knowledge.data.ai.ScopeType
 
 @Composable
 fun KnowledgeDetailScreen(
     kbName: String,
     viewModel: KnowledgeItemListViewModel,
+    askViewModel: AskViewModel,
+    knowledgeRepository: com.my.knowledge.domain.repository.KnowledgeRepository,
+    allKnowledgeBases: List<com.my.knowledge.data.db.entity.KnowledgeBaseEntity>,
     onBack: () -> Unit,
-    onAskAI: (String, String) -> Unit,
-    onOpenItem: (String) -> Unit = {}
+    onOpenItem: (String) -> Unit = {},
+    onOpenIntermediate: (String) -> Unit = {}
 ) {
     val items by viewModel.items.collectAsState()
-    val currentPage by viewModel.currentPage.collectAsState()
-    val totalPages by viewModel.totalPages.collectAsState()
-    val hasNext by viewModel.hasNextPage.collectAsState()
-    val hasPrevious by viewModel.hasPreviousPage.collectAsState()
+    val hasMore by viewModel.hasMore.collectAsState()
+    val isLoadingMore by viewModel.isLoadingMore.collectAsState()
     val itemCount by viewModel.itemCount.collectAsState()
     val exportStatus by viewModel.exportStatus.collectAsState()
 
@@ -48,12 +55,25 @@ fun KnowledgeDetailScreen(
     var showDeleteDialog by remember { mutableStateOf(false) }
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showAskSheet by remember { mutableStateOf(false) }
+    
+    // Popup Menu State
+    var showPopupMenu by remember { mutableStateOf(false) }
+    var showMoveSelectionDialog by remember { mutableStateOf(false) }
+    var popupTargetItem by remember { mutableStateOf<KnowledgeItemEntity?>(null) }
 
-    Column(
+    // Resolve the current knowledge base id once so the floating "AI 问一问"
+    // button can scope Ask to this whole base (rather than to any single
+    // item the user happens to have hovered).
+    val currentKbId = remember(items) { items.firstOrNull()?.knowledgeBaseId }
+    val showFloatingAskButton = !currentKbId.isNullOrBlank()
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color(0xFFF7FBFF))
     ) {
+        Column(modifier = Modifier.fillMaxSize()) {
         // Header
         Column(
             modifier = Modifier
@@ -82,7 +102,7 @@ fun KnowledgeDetailScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
+                Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = kbName,
                         fontSize = 26.sp,
@@ -95,6 +115,24 @@ fun KnowledgeDetailScreen(
                         color = Color(0xFF5F87A3),
                         modifier = Modifier.padding(top = 4.dp)
                     )
+                }
+                // Per-knowledge-base intermediate data (entities / relations
+                // / communities) — drill-down into the graph of THIS base.
+                val currentKbId = remember(items) { items.firstOrNull()?.knowledgeBaseId }
+                if (!currentKbId.isNullOrBlank()) {
+                    TextButton(
+                        onClick = { onOpenIntermediate(currentKbId) },
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Hub,
+                            contentDescription = null,
+                            tint = Color(0xFF147EC5),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("本库图谱", fontSize = 12.sp, color = Color(0xFF147EC5))
+                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (selectionMode && selectedIds.isNotEmpty()) {
@@ -175,8 +213,23 @@ fun KnowledgeDetailScreen(
             }
         }
 
+        val listState = rememberLazyListState()
+        val shouldLoadMore by remember(items.size, hasMore, isLoadingMore) {
+            derivedStateOf {
+                hasMore && !isLoadingMore &&
+                    listState.layoutInfo.visibleItemsInfo.isNotEmpty() &&
+                    listState.layoutInfo.visibleItemsInfo.last().index >= items.size - 2
+            }
+        }
+        LaunchedEffect(shouldLoadMore) {
+            if (shouldLoadMore) viewModel.loadMore()
+        }
+
         LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f, fill = true),
             contentPadding = PaddingValues(bottom = 16.dp)
         ) {
             if (items.isEmpty()) {
@@ -193,7 +246,6 @@ fun KnowledgeDetailScreen(
                 items(items) { item ->
                     KnowledgeItemRow(
                         item,
-                        onAskAI = { onAskAI(item.id, item.title) },
                         onDelete = {
                             deleteTarget = item
                             showDeleteDialog = true
@@ -205,6 +257,10 @@ fun KnowledgeDetailScreen(
                         onSelectionChange = { checked ->
                             selectedIds = if (checked) selectedIds + item.id else selectedIds - item.id
                         },
+                        onLongClick = {
+                            popupTargetItem = item
+                            showPopupMenu = true
+                        },
                         onClick = {
                             if (selectionMode) {
                                 selectedIds = if (item.id in selectedIds) selectedIds - item.id else selectedIds + item.id
@@ -214,7 +270,89 @@ fun KnowledgeDetailScreen(
                         }
                     )
                 }
+                item(key = "list-footer") {
+                    ListFooter(hasMore = hasMore, isLoadingMore = isLoadingMore)
+                }
             }
+        }
+        
+        // Popup Menu
+        if (showPopupMenu && popupTargetItem != null) {
+            DropdownMenu(
+                expanded = showPopupMenu,
+                onDismissRequest = { showPopupMenu = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("将知识移动到知识库") },
+                    onClick = {
+                        showPopupMenu = false
+                        showMoveSelectionDialog = true
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("删除知识") },
+                    onClick = {
+                        showPopupMenu = false
+                        deleteTarget = popupTargetItem
+                        showDeleteDialog = true
+                    }
+                )
+            }
+        }
+
+        // Move Selection Dialog
+        if (showMoveSelectionDialog && popupTargetItem != null) {
+            val currentBaseId = popupTargetItem!!.knowledgeBaseId
+            AlertDialog(
+                onDismissRequest = {
+                    showMoveSelectionDialog = false
+                    popupTargetItem = null
+                },
+                title = { Text("选择目标知识库", fontWeight = FontWeight.Bold) },
+                text = {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        allKnowledgeBases.filter { it.id != currentBaseId }.forEach { base ->
+                            TextButton(
+                                onClick = {
+                                    viewModel.moveItem(popupTargetItem!!.id, base.id)
+                                    showMoveSelectionDialog = false
+                                    popupTargetItem = null
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                contentPadding = PaddingValues(vertical = 12.dp, horizontal = 8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        color = Color(0xFFEFF7FF),
+                                        shape = RoundedCornerShape(4.dp),
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                base.iconText.ifBlank { base.name.take(1) },
+                                                fontSize = 12.sp,
+                                                color = Color(0xFF147EC5)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.width(12.dp))
+                                    Text(base.name, color = Color(0xFF0F172A), fontSize = 15.sp)
+                                }
+                            }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = {
+                        showMoveSelectionDialog = false
+                        popupTargetItem = null
+                    }) { Text("取消") }
+                }
+            )
         }
 
         exportStatus?.let { status ->
@@ -230,62 +368,38 @@ fun KnowledgeDetailScreen(
                 )
             }
         }
+        } // close inner Column (header + LazyColumn + exportStatus)
 
-        // Pagination controls
-        if (items.isNotEmpty()) {
-            Surface(
-                color = Color.White,
-                shadowElevation = 4.dp
+        // Floating "AI 问一问" button — pinned to the bottom-right of the
+        // knowledge-base detail page, visible only while we know which
+        // base we're inside. Tap to scope the Ask session to this whole
+        // base and pop the AskSheet.
+        if (showFloatingAskButton) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(bottom = 24.dp, end = 20.dp)
             ) {
-                Row(
+                Surface(
+                    onClick = {
+                        askViewModel.setScope(ScopeType.KNOWLEDGE_BASE, currentKbId)
+                        askViewModel.startNewConversation(kbName)
+                        showAskSheet = true
+                    },
+                    shape = CircleShape,
+                    color = Color(0xFF111827),
+                    shadowElevation = 12.dp,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 20.dp, vertical = 12.dp)
-                        .navigationBarsPadding(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                        .size(56.dp)
+                        .shadow(12.dp, CircleShape)
                 ) {
-                    IconButton(
-                        onClick = { viewModel.previousPage() },
-                        enabled = hasPrevious,
-                        modifier = Modifier
-                            .size(40.dp)
-                            .background(
-                                if (hasPrevious) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
-                                RoundedCornerShape(12.dp)
-                            )
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                            contentDescription = "上一页",
-                            tint = if (hasPrevious) Color(0xFF147EC5) else Color(0xFFA3A3A3)
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "AI",
+                            color = Color.White,
+                            fontSize = 17.sp,
+                            fontWeight = FontWeight.Bold
                         )
-                    }
-
-                    Text(
-                        text = "${currentPage + 1} / $totalPages",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF0F172A)
-                    )
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        IconButton(
-                            onClick = { viewModel.nextPage() },
-                            enabled = hasNext,
-                            modifier = Modifier
-                                .size(40.dp)
-                                .background(
-                                    if (hasNext) Color(0xFFF7FBFF) else Color(0xFFF5F5F5),
-                                    RoundedCornerShape(12.dp)
-                                )
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = "下一页",
-                                tint = if (hasNext) Color(0xFF147EC5) else Color(0xFFA3A3A3)
-                            )
-                        }
                     }
                 }
             }
@@ -325,6 +439,10 @@ fun KnowledgeDetailScreen(
         )
     }
 
+    if (showAskSheet) {
+        AskSheet(askViewModel = askViewModel, onClose = { showAskSheet = false })
+    }
+
     statusTarget?.let { item ->
         AlertDialog(
             onDismissRequest = { statusTarget = null },
@@ -353,5 +471,32 @@ fun KnowledgeDetailScreen(
                 TextButton(onClick = { statusTarget = null }) { Text("关闭") }
             }
         )
+    }
+}
+
+@Composable
+private fun ListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 20.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            isLoadingMore -> Row(verticalAlignment = Alignment.CenterVertically) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(14.dp),
+                    strokeWidth = 2.dp,
+                    color = Color(0xFF147EC5)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("加载中…", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+            }
+            !hasMore -> Text(
+                "— 已经到底了 —",
+                fontSize = 12.sp,
+                color = Color(0xFFA3A3A3)
+            )
+        }
     }
 }
