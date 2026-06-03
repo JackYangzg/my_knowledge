@@ -20,6 +20,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
 
+private class IngestNetworkPause(message: String) : Exception(message)
+
 /**
  * Structured result of Stage 1 — the LLM analysis, normalized into the
  * exact column shape [AnalysisResultEntity] expects.
@@ -51,13 +53,10 @@ internal data class ParsedAnalysis(
 ) {
     companion object {
         /**
-         * Local-heuristic fallback used when the LLM is unavailable, the
-         * response is empty, or the JSON fails to parse. The fallback
-         * preserves `summary` and `tags` (so the wiki still gets a usable
-         * source page) but leaves entities/concepts/relations empty —
-         * we DO NOT invent entities from tags. The wiki generation
-         * stage's AI path (`requestAiRawOutput`) can still produce
-         * pages from the raw source in this case.
+         * Fallback used when the LLM is unavailable, the response is empty,
+         * or the JSON fails to parse. It preserves summary/tags only and
+         * leaves entities/concepts/relations empty. We deliberately do not
+         * invent entities or concepts locally.
          */
         fun fromFallback(fallbackTags: List<String>, fallbackConfidence: Float): ParsedAnalysis {
             val empty = "[]"
@@ -79,9 +78,9 @@ internal data class ParsedAnalysis(
 
         /**
          * Extract every column from a parsed analysis-JSON object.
-         * Defensive: missing arrays default to `[]`, missing scalars
-         * fall through to the local heuristic, and entity/concept
-         * entries without a `name` are dropped (the downstream
+         * Defensive: missing arrays default to `[]`, missing scalars use
+         * fallback values, and entity/concept entries without a `name` are
+         * dropped (the downstream
          * `parseNamedObjects` would drop them too, but we filter
          * here so the count metric is honest).
          */
@@ -274,6 +273,27 @@ class IngestOrchestrator(
                 "embedding" -> embeddingTask(task)
                 else -> markSuccess(task, "Unsupported task skipped", "{}")
             }
+        } catch (e: IngestNetworkPause) {
+            val now = System.currentTimeMillis()
+            db.processingTaskDao().update(
+                task.copy(
+                    status = "pending_network",
+                    errorMessage = e.message,
+                    currentStep = "等待网络恢复",
+                    updatedAt = now,
+                    finishedAt = null
+                )
+            )
+            appendLog(
+                task,
+                "网络波动，已暂停 ${taskLabel(task.taskType)}，联网后继续：${e.message ?: "等待网络恢复"}",
+                "pending_network",
+                "等待网络恢复"
+            )
+            task.sourceId?.let {
+                db.sourceDocumentDao().updateStatus(it, SourceDocumentEntity.STATUS_IMPORTED, "等待网络恢复", now)
+            }
+            throw e
         } catch (e: Exception) {
             val retry = task.retryCount + 1
             val now = System.currentTimeMillis()
@@ -421,35 +441,14 @@ class IngestOrchestrator(
             "诊断:解析后 entities=${parsedAnalysis.entityCount}, concepts=${parsedAnalysis.conceptCount}, relations=${parsedAnalysis.relationCount}, confidence=${parsedAnalysis.confidence}",
             "running"
         )
-        // 兜底：AI 完整返回成功但 entities/concepts 都是空,本地启发式按
-        // 原文高频短语再补一拨,让"中间处理数据"页和 wiki_index 不会变成
-        // 单调的"全是源"。原始 AI 输出一旦真的提到了实体/概念,这一段
-        // 不会修改 anything;只在 AI 抽不出东西时叠加一个本地补集。
-        val finalEntitiesJson: String
-        val finalConceptsJson: String
-        if (parsedAnalysis.entityCount == 0 && parsedAnalysis.conceptCount == 0) {
-            val (hEntities, hConcepts) = extractLocalHeuristic(parsed.plainText)
-            if (hEntities != "[]" || hConcepts != "[]") {
-                finalEntitiesJson = hEntities
-                finalConceptsJson = hConcepts
-                appendLog(
-                    task,
-                    "AI 未提取到实体/概念，使用本地启发式补集（基于原文高频短语）",
-                    "running"
-                )
-            } else {
-                finalEntitiesJson = parsedAnalysis.entitiesJson
-                finalConceptsJson = parsedAnalysis.conceptsJson
-            }
-        } else {
-            // 只补缺失的那一边,例如 AI 给出了 entities 但没给 concepts
-            finalEntitiesJson = parsedAnalysis.entitiesJson
-            finalConceptsJson = if (parsedAnalysis.conceptCount == 0) {
-                val (hEntities, hConcepts) = extractLocalHeuristic(parsed.plainText)
-                if (hConcepts != "[]") hConcepts else parsedAnalysis.conceptsJson
-            } else {
-                parsedAnalysis.conceptsJson
-            }
+        val finalEntitiesJson = parsedAnalysis.entitiesJson
+        val finalConceptsJson = parsedAnalysis.conceptsJson
+        if (parsedAnalysis.entityCount == 0 || parsedAnalysis.conceptCount == 0) {
+            appendLog(
+                task,
+                "AI 抽取结果保留原样：entities=${parsedAnalysis.entityCount}, concepts=${parsedAnalysis.conceptCount}；未使用本地启发式补集",
+                "running"
+            )
         }
         val analysis = AnalysisResultEntity(
             id = UUID.randomUUID().toString(),
@@ -521,19 +520,12 @@ class IngestOrchestrator(
             null
         }
 
-        // Always run the template first so entity / concept / source /
-        // index / overview / log pages are guaranteed to exist when the
-        // analysis JSON is non-empty — those are the rows the graph
-        // rebuild materializes, and dropping them is exactly the bug
-        // that left the knowledge graph blank.
-        //
-        // The AI's FILE blocks, when present, are merged in for the
-        // human-readable surfaces only (source summary, overview) where
-        // the LLM tends to write richer prose than the template. The
-        // AI's entity / concept pages are *not* used directly: we want
-        // the canonical title + type from the analysis JSON to drive
-        // the graph node names, not whatever casing the LLM happened
-        // to use in `title:` frontmatter or in the FILE block path.
+        // llm_wiki writes the model's FILE blocks directly (with parser
+        // safety + merge guards) and only relies on deterministic fallback
+        // when the model omits a page. Mirror that here: AI-generated
+        // entity/concept pages are the primary content, so their body depth
+        // matches llm_wiki; the local compiler only fills missing source /
+        // index / overview / log / entity / concept pages.
         val templatePages = wikiCompiler.compile(source, parsed, analysis)
         val aiDrafts: List<WikiPageDraft> = if (aiOutput != null) {
             val parsedBlocks = FileBlockParser.parseDetailed(aiOutput)
@@ -545,15 +537,10 @@ class IngestOrchestrator(
         } else {
             emptyList()
         }
-        val aiSourcePage = aiDrafts.firstOrNull { it.sourceType == "wiki_source" }
-        val aiOverviewPage = aiDrafts.firstOrNull { it.sourceType == "wiki_overview" }
-        val pageDrafts: List<WikiPageDraft> = templatePages.map { page ->
-            when (page.sourceType) {
-                "wiki_source" -> aiSourcePage ?: page
-                "wiki_overview" -> aiOverviewPage ?: page
-                else -> page
-            }
-        }
+        val pageDrafts: List<WikiPageDraft> = preferAiFileBlocks(
+            aiDrafts = aiDrafts,
+            templatePages = templatePages
+        )
 
         val writtenItems = pageDrafts.mapIndexed { index, draft ->
             val existingPage = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
@@ -697,6 +684,25 @@ class IngestOrchestrator(
         }
     }
 
+    private fun preferAiFileBlocks(
+        aiDrafts: List<WikiPageDraft>,
+        templatePages: List<WikiPageDraft>
+    ): List<WikiPageDraft> {
+        if (aiDrafts.isEmpty()) return templatePages
+        val seen = linkedSetOf<String>()
+        val out = mutableListOf<WikiPageDraft>()
+        fun key(page: WikiPageDraft): String = "${page.sourceType}:${page.title.trim().lowercase()}"
+        aiDrafts.forEach { draft ->
+            val k = key(draft)
+            if (seen.add(k)) out += draft
+        }
+        templatePages.forEach { template ->
+            val k = key(template)
+            if (seen.add(k)) out += template
+        }
+        return out
+    }
+
     private suspend fun embeddingTask(task: ProcessingTaskEntity) {
         // Fragment embeddings are already maintained by repository rebuilds; this task keeps the queue explicit.
         markSuccess(task, "Embedding task acknowledged", "{}")
@@ -780,8 +786,9 @@ class IngestOrchestrator(
             systemPrompt = systemPrompt,
             userMessage = userPrompt
         )
-        return with(AiTextCleaner) { response.cleanModelOutput() }
-            .takeIf { it.isNotBlank() }
+        val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
+        throwIfTransientAiFailure(cleaned)
+        return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
     }
 
     /**
@@ -875,6 +882,7 @@ class IngestOrchestrator(
         // — otherwise a model's preamble-think-then-merge pattern would
         // make the response look invalid and force a template fallback.
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
+        throwIfTransientAiFailure(cleaned)
         return if (cleaned.startsWith("---")) cleaned else {
             // Fallback to template merge if AI output is invalid
             wikiCompiler.merge(existingContent, incomingContent, sourceTitle)
@@ -924,7 +932,43 @@ class IngestOrchestrator(
             temperature = 0.1f
         )
         val cleaned = with(AiTextCleaner) { raw.cleanModelOutput() }
+        throwIfTransientAiFailure(cleaned)
         return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
+    }
+
+    private fun throwIfTransientAiFailure(text: String) {
+        if (isTransientAiFailure(text)) {
+            throw IngestNetworkPause(text)
+        }
+    }
+
+    private fun isTransientAiFailure(text: String): Boolean {
+        val value = text.trim()
+        return value.startsWith("[DNS 失败]") ||
+            value.startsWith("[连接失败]") ||
+            value.startsWith("[超时]") ||
+            value.startsWith("[限流]") ||
+            value.startsWith("[服务端错误]") ||
+            (value.startsWith("[AI 调用异常]") && value.containsNetworkKeyword())
+    }
+
+    private fun String.containsNetworkKeyword(): Boolean {
+        val lower = lowercase()
+        return listOf(
+            "network",
+            "timeout",
+            "timed out",
+            "unable to resolve",
+            "failed to connect",
+            "connection reset",
+            "connection abort",
+            "enetunreach",
+            "ehostunreach",
+            "断网",
+            "网络",
+            "超时",
+            "连接"
+        ).any { lower.contains(it) }
     }
 
     /**
@@ -941,9 +985,9 @@ class IngestOrchestrator(
      * produced (or null if the model failed), repairs + parses the JSON,
      * and normalizes the result into a [ParsedAnalysis] the rest of
      * the pipeline can consume. On parse failure we fall back to a
-     * local heuristic so the user still gets a working summary /
-     * archiveRecommendation — but we DO NOT invent fake entities or
-     * relations; the fallback keeps those arrays empty so the
+     * local summary/tag/archiveRecommendation only — but we DO NOT
+     * invent fake entities, concepts, or relations; the fallback keeps
+     * those arrays empty so the
      * generation stage's `FILE block` path can still synthesize pages
      * from the (also AI-driven) `requestAiRawOutput` pass.
      */
@@ -1416,8 +1460,7 @@ under the default bucket.
         //      规定的 `source|entity|concept|...` enum 冲突);
         //   2) KnowledgeRepositoryImpl.normalizeWikiGraphType 强制把 wiki_entity
         //      节点的 type 写成 "entity"——所有实体一个桶,UI 的"中间处理数据"页
-        //      按 type 分组就完全没意义,KnowledgeGraphCanvas.nodeColor 也
-        //      全部退化成默认蓝;
+        //      按 type 分组就完全没意义;
         //   3) 概念的 `category` 字段被 WikiPageCompiler.parseNamedObjects 漏读
         //      (它读 `type` 不读 `category`),分类信息直接丢失。
         //

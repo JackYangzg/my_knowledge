@@ -204,7 +204,7 @@ private fun sourceIcon(source: SourceDocumentEntity): ImageVector = when (source
 
 private fun statusColor(status: String): Color = when (status) {
     "running", "parsing", "analyzing" -> Color(0xFF147EC5)
-    "pending", "imported", "parsed" -> Color(0xFFF59E0B)
+    "pending", "imported", "parsed", "pending_network" -> Color(0xFFF59E0B)
     "failed" -> Color(0xFFDC2626)
     "canceled" -> Color(0xFFEA580C)
     "generated", "success" -> Color(0xFF0B816F)

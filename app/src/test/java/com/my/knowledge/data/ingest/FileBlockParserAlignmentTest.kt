@@ -75,6 +75,7 @@ class FileBlockParserAlignmentTest {
             fileName = "raft.md",
             analysisResult = "Raft analysis",
             sourceContent = "Raft source",
+            schema = "Use default wiki routing.",
             currentIndex = "No existing wiki pages.",
             overview = "",
             language = "中文",
@@ -84,13 +85,28 @@ class FileBlockParserAlignmentTest {
         assertTrue(prompt.contains("---FILE: wiki/path/to/page.md---"))
         assertTrue(prompt.contains("---END FILE---"))
         assertTrue(prompt.contains("REVIEW block template"))
-        assertTrue(prompt.contains("响应的**第一个字符**必须是 `-`"))
-        assertTrue(prompt.contains("sources` 字段中包含这个文件名"))
+        assertTrue(prompt.contains("The FIRST character of your response MUST be `-`"))
+        assertTrue(prompt.contains("All wiki pages generated from this source MUST include this filename"))
+        assertTrue(prompt.contains("Project Schema and Routing"))
         assertTrue(prompt.contains("wiki/sources/raft.md"))
 
         val headIdx = prompt.indexOf("MANDATORY OUTPUT LANGUAGE")
         val tailIdx = prompt.lastIndexOf("MANDATORY OUTPUT LANGUAGE")
         assertTrue(headIdx >= 0)
         assertTrue(tailIdx > headIdx)
+    }
+
+    @Test
+    fun `analysisPrompt does not promise local entity heuristic supplements`() {
+        val prompt = AiPromptTemplates.analysisPrompt(
+            title = "raft.md",
+            content = "Raft source",
+            currentIndex = "No existing wiki pages.",
+            language = "中文",
+        )
+
+        assertTrue(prompt.contains("There is no\nlocal entity/concept supplement"))
+        assertTrue(prompt.contains("will preserve those empty arrays"))
+        assertFalse(prompt.contains("local heuristic extracts high-frequency noun phrases"))
     }
 }

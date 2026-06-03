@@ -41,7 +41,12 @@ class ImportCenterViewModel(
                 source = source,
                 latestTask = sourceTasks.maxByOrNull { it.createdAt },
                 allTasks = sourceTasks,
-                activeTaskCount = sourceTasks.count { it.status == "pending" || it.status == "running" || it.status == "failed" }
+                activeTaskCount = sourceTasks.count {
+                    it.status == "pending" ||
+                        it.status == "running" ||
+                        it.status == "pending_network" ||
+                        it.status == "failed"
+                }
             )
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -61,6 +66,13 @@ class ImportCenterViewModel(
         // the failure case.
         viewModelScope.launch {
             knowledgeRepository.retryProcessingForSource(sourceId)
+            scheduler.scheduleIngestQueue()
+        }
+    }
+
+    fun retrySourceFromLogCenter(sourceId: String) {
+        viewModelScope.launch {
+            knowledgeRepository.retryProcessingForSourceFromLogCenter(sourceId)
             scheduler.scheduleIngestQueue()
         }
     }

@@ -129,7 +129,7 @@ fun ProfileScreen(
             Section(title = "管理") {
                 val items = listOf(
                     // 日志中心描述要跟日志中心自身的 summary 卡片对齐:
-                    //   - 处理中: pending + running 任务
+                    //   - 处理中: pending + running + pending_network 任务
                     //   - 失败:   failed 任务
                     //   - 待确认: pending review items (含 archive rec)
                     // 旧的"X 条未归档"太单薄,且只覆盖了 unfiled 状态,漏掉了

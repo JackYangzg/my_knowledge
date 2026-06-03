@@ -98,7 +98,7 @@ fun KnowledgeLogScreen(
         ) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    LogSummaryCard(rows.count { it.latestTask?.status == "pending" || it.latestTask?.status == "running" }, "处理中", Color(0xFF147EC5), Modifier.weight(1f))
+                    LogSummaryCard(rows.count { it.latestTask?.status == "pending" || it.latestTask?.status == "running" || it.latestTask?.status == "pending_network" }, "处理中", Color(0xFF147EC5), Modifier.weight(1f))
                     LogSummaryCard(rows.count { it.latestTask?.status == "failed" || it.source.status == SourceDocumentEntity.STATUS_FAILED }, "失败", Color(0xFFDC2626), Modifier.weight(1f))
                     LogSummaryCard(reviews.size, "待确认", Color(0xFFEA580C), Modifier.weight(1f))
                 }
@@ -118,7 +118,7 @@ fun KnowledgeLogScreen(
                     latestLog = processingViewModel.observeLogs("source_document", row.source.id)
                         .collectAsState(initial = emptyList()).value.firstOrNull(),
                     onDetail = { detailRow = row },
-                    onRetry = { importViewModel.retrySource(row.source.id) },
+                    onRetry = { importViewModel.retrySourceFromLogCenter(row.source.id) },
                     onCancel = { row.latestTask?.let { importViewModel.cancelTask(it.id) } },
                     onDelete = { deleteSourceId = row.source.id }
                 )
@@ -226,7 +226,7 @@ fun KnowledgeLogScreen(
                                 fontSize = 11.sp,
                                 color = when (log.status) {
                                     "success" -> Color(0xFF16A34A)
-                                    "pending_config", "failed" -> Color(0xFFDC2626)
+                                    "pending_config", "pending_network", "failed" -> Color(0xFFDC2626)
                                     else -> Color(0xFF5F87A3)
                                 }
                             )
@@ -260,11 +260,9 @@ private fun LogSourceCard(
     onDelete: () -> Unit
 ) {
     val task = row.latestTask
-    // "重新发起 分析" used to be hidden until the task was failed / pending_config
-    // because the old retry path only handled those cases. Now that
-    // `retrySource` does a full re-ingest (it clears the source's parse,
-    // analysis and wiki pages, then enqueues a fresh parse), the button
-    // is safe to expose for any state — including `success` and `pending`.
+    // Log-center retry must not remove knowledge-base rows. It only enqueues
+    // a fresh parse task and leaves existing knowledge visible while the new
+    // run appends its own processing logs.
     val canRetry = task != null && task.status !in setOf("running")
     Surface(onClick = onDetail, shape = RoundedCornerShape(12.dp), color = Color.White, shadowElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -387,7 +385,7 @@ private fun getStepColor(status: String): Color = when (status) {
     "success", "generated" -> Color(0xFF0B816F)
     "running", "parsing", "analyzing" -> Color(0xFF147EC5)
     "failed" -> Color(0xFFDC2626)
-    "pending", "imported", "parsed", "pending_config" -> Color(0xFFF59E0B)
+    "pending", "imported", "parsed", "pending_config", "pending_network" -> Color(0xFFF59E0B)
     "canceled" -> Color(0xFFEA580C)
     else -> Color(0xFFD1D5DB) // upcoming / gray
 }
@@ -409,7 +407,7 @@ private fun sourceIcon(source: SourceDocumentEntity): ImageVector = when (source
 
 private fun logStatusColor(status: String): Color = when (status) {
     "running", "parsing", "analyzing" -> Color(0xFF147EC5)
-    "pending", "imported", "parsed", "pending_config" -> Color(0xFFF59E0B)
+    "pending", "imported", "parsed", "pending_config", "pending_network" -> Color(0xFFF59E0B)
     "failed" -> Color(0xFFDC2626)
     "canceled" -> Color(0xFFEA580C)
     "generated", "success" -> Color(0xFF0B816F)
@@ -418,6 +416,7 @@ private fun logStatusColor(status: String): Color = when (status) {
 
 private fun logStatusLabel(status: String): String = when (status) {
     "pending_config" -> "待配置"
+    "pending_network" -> "待联网"
     "pending" -> "待处理"
     "running" -> "处理中"
     "success" -> "成功"

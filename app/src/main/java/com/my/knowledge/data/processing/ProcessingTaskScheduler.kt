@@ -96,7 +96,7 @@ class ProcessingTaskScheduler(context: Context) {
         val request = OneTimeWorkRequestBuilder<IngestWorker>()
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
+                    .setRequiredNetworkType(NetworkType.CONNECTED)
                     .build()
             )
             .build()

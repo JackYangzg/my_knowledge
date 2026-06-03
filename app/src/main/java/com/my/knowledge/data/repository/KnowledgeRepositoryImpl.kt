@@ -998,13 +998,13 @@ class KnowledgeRepositoryImpl(
 
     override suspend fun getActiveTasks(): Flow<List<ProcessingTaskEntity>> = taskDao.observeActiveTasks()
 
-    // In-flight count = pending + running. We fold the list down to a
+    // In-flight count = pending + running + pending_network. We fold the list down to a
     // count via `map` + `distinctUntilChanged` so the ProfileScreen
     // doesn't re-render on every task-status tick that leaves the
     // total unchanged.
     override fun observeActiveTaskCount(): Flow<Int> =
         taskDao.observeActiveTasks()
-            .map { list -> list.count { it.status == "pending" || it.status == "running" } }
+            .map { list -> list.count { it.status == "pending" || it.status == "running" || it.status == "pending_network" } }
             .distinctUntilChanged()
 
     override fun observeFailedTaskCount(): Flow<Int> =
@@ -1086,6 +1086,56 @@ class KnowledgeRepositoryImpl(
                 progress = 0,
                 currentStep = "等待解析（重新发起）",
                 inputJson = """{"sourceId":"$sourceId","reprocess":true}"""
+            )
+        )
+    }
+
+    override suspend fun retryProcessingForSourceFromLogCenter(sourceId: String) {
+        // Log-center actions are presentation-side operations. They may
+        // enqueue processing so the log can continue, but they must never
+        // delete or hide knowledge-base content that the user already sees
+        // in a library. In particular, do not clear parsed/analysis rows
+        // and do not soft-delete knowledge_item rows here.
+        val source = sourceDocumentDao.getById(sourceId) ?: return
+        val now = System.currentTimeMillis()
+        sourceDocumentDao.updateStatus(
+            sourceId,
+            SourceDocumentEntity.STATUS_IMPORTED,
+            null,
+            now
+        )
+        taskDao.insert(
+            ProcessingTaskEntity(
+                id = UUID.randomUUID().toString(),
+                targetType = "source_document",
+                targetId = sourceId,
+                taskType = "parse",
+                status = "pending",
+                priority = 10,
+                dependsOnTaskIdsJson = null,
+                retryCount = 0,
+                maxRetry = 3,
+                errorMessage = null,
+                createdAt = now,
+                updatedAt = now,
+                finishedAt = null,
+                sourceId = sourceId,
+                itemId = null,
+                progress = 0,
+                currentStep = "日志中心重新发起分析",
+                inputJson = """{"sourceId":"$sourceId","reprocess":true,"origin":"log_center","preserveKnowledge":true}"""
+            )
+        )
+        taskLogDao.insert(
+            ProcessingTaskLogEntity(
+                id = UUID.randomUUID().toString(),
+                taskId = null,
+                targetType = "source_document",
+                targetId = source.id,
+                stage = "retry",
+                status = "pending",
+                message = "日志中心重新发起分析：保留知识库已有条目，仅追加新的处理任务",
+                createdAt = now
             )
         )
     }
@@ -1377,7 +1427,7 @@ class KnowledgeRepositoryImpl(
         //   entityType (实体) / conceptCategory (概念)
         // 这两个字段是 LLM 给的语义类型("Person"/"Algorithm"/"Theory"/...)
         // ——之前被混到 `type:` 字段上,跟 generationPrompt 的 enum
-        // 冲突,被 KnowledgeGraphCanvas / IntermediateDataScreen 看到时
+        // 冲突,被中间处理数据页看到时
         // 已经是"entity"/"concept"两个大桶。这里把它们接回正确的字段。
         // 老数据(没有 entityType / conceptCategory 字段)回退到
         // "entity"/"concept";老 frontmatter `type:` 字段(等于"entity" /

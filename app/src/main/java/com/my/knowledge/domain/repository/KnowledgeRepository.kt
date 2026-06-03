@@ -93,6 +93,7 @@ interface KnowledgeRepository {
     suspend fun retryTask(taskId: String)
     suspend fun retryProcessingForItem(itemId: String)
     suspend fun retryProcessingForSource(sourceId: String)
+    suspend fun retryProcessingForSourceFromLogCenter(sourceId: String)
     suspend fun cancelTask(taskId: String)
     suspend fun appendProcessingLog(log: ProcessingTaskLogEntity)
     fun observeProcessingLogs(targetType: String, targetId: String): Flow<List<ProcessingTaskLogEntity>>

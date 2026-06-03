@@ -21,7 +21,6 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DoneAll
-import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -46,7 +45,6 @@ fun IntermediateDataScreen(
     onViewDetail: (String) -> Unit,
     onSwitchKb: (String?) -> Unit = {}
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
     val entities by viewModel.entities.collectAsState()
     val relations by viewModel.relations.collectAsState()
     val communities by viewModel.communities.collectAsState()
@@ -60,7 +58,7 @@ fun IntermediateDataScreen(
     val entityNameMap = remember(entities) { entities.associate { it.id to it.name } }
 
     var selectedTab by remember { mutableStateOf(0) }
-    val tabs = listOf("实体与概念", "关联关系", "主题群", "图谱")
+    val tabs = listOf("实体与概念", "关联关系", "主题群")
 
     val selectedIds = remember { mutableStateListOf<String>() }
     var isSelectionMode by remember { mutableStateOf(false) }
@@ -121,7 +119,6 @@ fun IntermediateDataScreen(
             0 -> viewModel.deleteEntities(listOf(delete.id))
             1 -> viewModel.deleteRelations(listOf(delete.id))
             2 -> viewModel.deleteCommunities(listOf(delete.id))
-            else -> { /* graph tab has no single-row delete */ }
         }
     }
 
@@ -131,7 +128,6 @@ fun IntermediateDataScreen(
             0 -> viewModel.deleteEntities(selectedIds.toList())
             1 -> viewModel.deleteRelations(selectedIds.toList())
             2 -> viewModel.deleteCommunities(selectedIds.toList())
-            else -> { /* graph tab bulk not used */ }
         }
         selectedIds.clear()
         isSelectionMode = false
@@ -249,91 +245,22 @@ fun IntermediateDataScreen(
         // toggles select-all for the current tab. This is what the user
         // is asking for: the "全选" button is reachable without first
         // long-pressing a row to enter selection mode.
-        if (selectedTab != 3) {
-            BulkSelectHeader(
-                totalCount = currentListIds().size,
-                selectedCount = selectedIds.size,
-                tabLabel = when (selectedTab) {
-                    0 -> "实体/概念"
-                    1 -> "关系"
-                    else -> "主题群"
-                },
-                onToggleAll = {
-                    isSelectionMode = true
-                    toggleSelectAll()
-                },
-                onDelete = {
-                    if (selectedIds.isNotEmpty()) pendingBulkDelete = true
-                }
-            )
-        }
-
-        // Tab 3 (graph) gets its own header strip with a recovery
-        // button. Tapping "重新生成" runs the local `WikiPageCompiler`
-        // against every source document's `AnalysisResultEntity` and
-        // inserts the missing `wiki_entity` / `wiki_concept` rows
-        // for the active KB, then rebuilds the graph. This recovers
-        // knowledge bases whose previous (buggy) ingest path never
-        // materialised those pages.
-        var isBackfilling by remember { mutableStateOf(false) }
-        if (selectedTab == 3) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color.White)
-                    .padding(horizontal = 20.dp, vertical = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "知识图谱",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0F172A)
-                    )
-                    Text(
-                        text = "共 ${entities.size} 个节点 / ${relations.size} 条关系",
-                        fontSize = 12.sp,
-                        color = Color(0xFF64748B)
-                    )
-                }
-                TextButton(
-                    onClick = {
-                        if (!isBackfilling) {
-                            isBackfilling = true
-                            viewModel.backfillWikiPages { result ->
-                                isBackfilling = false
-                                if (result.entityPagesInserted > 0 || result.conceptPagesInserted > 0) {
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        "已补齐 ${result.entityPagesInserted} 个实体 / ${result.conceptPagesInserted} 个概念页",
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                } else {
-                                    android.widget.Toast.makeText(
-                                        context,
-                                        "无需补齐,已扫描 ${result.sourcesScanned} 个来源",
-                                        android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            }
-                        }
-                    },
-                    enabled = !isBackfilling && currentKbId != null
-                ) {
-                    if (isBackfilling) {
-                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = Color(0xFF147EC5))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("生成中…", fontSize = 13.sp, color = Color(0xFF147EC5))
-                    } else {
-                        Icon(Icons.Default.Hub, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("重新生成", fontSize = 13.sp, color = Color(0xFF147EC5))
-                    }
-                }
+        BulkSelectHeader(
+            totalCount = currentListIds().size,
+            selectedCount = selectedIds.size,
+            tabLabel = when (selectedTab) {
+                0 -> "实体/概念"
+                1 -> "关系"
+                else -> "主题群"
+            },
+            onToggleAll = {
+                isSelectionMode = true
+                toggleSelectAll()
+            },
+            onDelete = {
+                if (selectedIds.isNotEmpty()) pendingBulkDelete = true
             }
-            HorizontalDivider(color = Color(0xFFF3F4F6))
-        }
+        )
 
         Box(modifier = Modifier.weight(1f)) {
             when (selectedTab) {
@@ -388,18 +315,6 @@ fun IntermediateDataScreen(
                         if (selectedIds.contains(id)) selectedIds.remove(id) else selectedIds.add(id)
                     },
                     onDeleteSingle = { id -> pendingSingleDelete = SingleDeleteRequest(2, id) }
-                )
-                3 -> ForceDirectedGraph(
-                    entities = entities,
-                    relations = relations,
-                    modifier = Modifier.fillMaxSize(),
-                    onNodeClick = { entity ->
-                        scope.launch {
-                            val ids = entity.sourceItemIdsJson.removePrefix("[").removeSuffix("]").split(",")
-                            val firstId = ids.firstOrNull()?.trim()?.trim('"')
-                            if (firstId != null) onViewDetail(firstId)
-                        }
-                    }
                 )
             }
         }
@@ -485,7 +400,7 @@ fun IntermediateDataScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Icon(
-                            if (currentKbId == null) Icons.Default.Check else Icons.Default.Hub,
+                            if (currentKbId == null) Icons.Default.Check else Icons.Default.BubbleChart,
                             contentDescription = null,
                             tint = if (currentKbId == null) Color(0xFF147EC5) else Color(0xFF94A3B8),
                             modifier = Modifier.size(18.dp)
@@ -511,7 +426,7 @@ fun IntermediateDataScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                if (base.id == currentKbId) Icons.Default.Check else Icons.Default.Hub,
+                                if (base.id == currentKbId) Icons.Default.Check else Icons.Default.BubbleChart,
                                 contentDescription = null,
                                 tint = if (base.id == currentKbId) Color(0xFF147EC5) else Color(0xFF94A3B8),
                                 modifier = Modifier.size(18.dp)
@@ -625,13 +540,13 @@ private fun EntityList(
     if (entities.isEmpty()) {
         EmptyState("暂无提取的实体或概念")
     } else {
-        val groups = remember(entities) {
+        val topGroups = remember(entities) {
             entities
-                .groupBy { it.type.normalizedEntityType() }
+                .groupBy { it.type.topLevelEntityKind() }
                 .toList()
                 .sortedWith(
-                    compareBy<Pair<String, List<KnowledgeEntityEntity>>> { it.first.entityTypeSortOrder() }
-                        .thenBy { it.first.entityTypeLabel() }
+                    compareBy<Pair<String, List<KnowledgeEntityEntity>>> { if (it.first == "entity") 0 else 1 }
+                        .thenBy { it.first.entityKindLabel() }
                 )
         }
         LazyColumn(
@@ -639,12 +554,58 @@ private fun EntityList(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            groups.forEach { (type, groupedEntities) ->
-                // LazyListScope 的 forEach lambda 不是 @Composable 上下文,
-                // 因此 `remember` 必须放到 item 块内部或者一个独立 Composable
-                // 里。我们把整段(group 标题 + 卡片列表 + 展开/收起)抽到
-                // EntityGroupSection,让 remember 处在 Composable 作用域中。
-                item(key = "group-section-$type") {
+            topGroups.forEach { (kind, groupedByKind) ->
+                item(key = "kind-section-$kind") {
+                    EntityKindSection(
+                        kind = kind,
+                        entities = groupedByKind,
+                        selectedIds = selectedIds,
+                        isSelectionMode = isSelectionMode,
+                        onToggleSelect = onToggleSelect,
+                        onDeleteSingle = onDeleteSingle,
+                        onViewDetail = onViewDetail
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 顶层实体/概念分组的渲染。先把所有节点按「实体 / 概念」汇聚,
+ * 每个大组内再保留原来的语义类型细分和折叠逻辑。
+ */
+@Composable
+private fun EntityKindSection(
+    kind: String,
+    entities: List<KnowledgeEntityEntity>,
+    selectedIds: List<String>,
+    isSelectionMode: Boolean,
+    onToggleSelect: (String) -> Unit,
+    onDeleteSingle: (String) -> Unit,
+    onViewDetail: (String) -> Unit
+) {
+    var expanded by remember(kind) { mutableStateOf(true) }
+    val subGroups = remember(entities) {
+        entities
+            .groupBy { it.type.normalizedEntityType() }
+            .toList()
+            .sortedWith(
+                compareBy<Pair<String, List<KnowledgeEntityEntity>>> { it.first.entityTypeSortOrder() }
+                    .thenBy { it.first.entityTypeLabel() }
+            )
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        EntityKindHeader(
+            title = kind.entityKindLabel(),
+            count = entities.size,
+            color = kind.entityKindColor(),
+            expanded = expanded,
+            onToggle = { expanded = !expanded }
+        )
+        AnimatedVisibility(visible = expanded) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                subGroups.forEach { (type, groupedEntities) ->
                     EntityGroupSection(
                         type = type,
                         groupedEntities = groupedEntities,
@@ -661,7 +622,7 @@ private fun EntityList(
 }
 
 /**
- * 单个类型分组的渲染（标题 + 卡片 + 展开/收起）。`expanded` 状态用
+ * 单个语义类型分组的渲染（标题 + 卡片 + 展开/收起）。`expanded` 状态用
  * `remember(type) { mutableStateOf(false) }` 持有——每组独立一份,
  * 切到别的 KB 再回来时也会重置。
  */
@@ -782,6 +743,64 @@ private fun EntityGroupSection(
     }
 }
 
+@Composable
+private fun EntityKindHeader(
+    title: String,
+    count: Int,
+    color: Color,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    Surface(
+        color = Color.White,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, color.copy(alpha = 0.18f)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onToggle)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(26.dp)
+                    .background(color.copy(alpha = 0.12f), RoundedCornerShape(8.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    if (title == "概念") Icons.Default.Category else Icons.Default.BubbleChart,
+                    contentDescription = null,
+                    tint = color,
+                    modifier = Modifier.size(15.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(10.dp))
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            Spacer(modifier = Modifier.width(8.dp))
+            Surface(color = color.copy(alpha = 0.12f), shape = CircleShape) {
+                Text(
+                    "$count",
+                    fontSize = 11.sp,
+                    color = color,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                )
+            }
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = Color(0xFF94A3B8),
+                modifier = Modifier
+                    .size(20.dp)
+                    .rotate(if (expanded) 180f else 0f)
+            )
+        }
+    }
+}
+
 private const val MAX_VISIBLE_PER_GROUP = 3
 
 @Composable
@@ -857,9 +876,44 @@ private fun EntityGroupHeader(
 private fun String.normalizedEntityType(): String =
     trim().lowercase().ifBlank { "entity" }
 
+private fun String.topLevelEntityKind(): String {
+    val normalized = normalizedEntityType()
+    return if (normalized in conceptTypeNames) "concept" else "entity"
+}
+
+private val conceptTypeNames = setOf(
+    "concept",
+    "method",
+    "technique",
+    "theory",
+    "principle",
+    "framework",
+    "problem",
+    "pattern",
+    "protocol",
+    "metric",
+    "algorithm",
+    "mechanism",
+    "model",
+    "process",
+    "heuristic",
+    "phenomenon",
+    "category"
+)
+
+private fun String.entityKindLabel(): String = when (this) {
+    "concept" -> "概念"
+    else -> "实体"
+}
+
+private fun String.entityKindColor(): Color = when (this) {
+    "concept" -> Color(0xFF16A34A)
+    else -> Color(0xFF0284C7)
+}
+
 private fun String.entityTypeSortOrder(): Int = when (this) {
     "entity", "person", "organization", "org", "location", "place", "event", "source" -> 0
-    "concept" -> 1
+    in conceptTypeNames -> 1
     else -> 2
 }
 
@@ -871,11 +925,26 @@ private fun String.entityTypeLabel(): String = when (this) {
     "location", "place" -> "地点"
     "event" -> "事件"
     "source" -> "来源"
+    "method" -> "方法"
+    "technique" -> "技术"
+    "theory" -> "理论"
+    "principle" -> "原则"
+    "framework" -> "框架"
+    "problem" -> "问题"
+    "pattern" -> "模式"
+    "protocol" -> "协议"
+    "metric" -> "指标"
+    "algorithm" -> "算法"
+    "mechanism" -> "机制"
+    "model" -> "模型"
+    "process" -> "过程"
+    "heuristic" -> "启发式"
+    "phenomenon" -> "现象"
     else -> replaceFirstChar { char -> char.uppercase() }
 }
 
 private fun String.entityTypeColor(): Color = when (this) {
-    "concept" -> Color(0xFF16A34A)
+    in conceptTypeNames -> Color(0xFF16A34A)
     "person" -> Color(0xFFDB2777)
     "organization", "org" -> Color(0xFF7C3AED)
     "location", "place" -> Color(0xFF0891B2)
@@ -947,7 +1016,7 @@ private fun RelationList(
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Hub, contentDescription = null, tint = Color(0xFF6366F1), modifier = Modifier.size(14.dp))
+                                Icon(Icons.Default.BubbleChart, contentDescription = null, tint = Color(0xFF6366F1), modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(relation.relationType, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6366F1), maxLines = 1)
                                 Spacer(modifier = Modifier.weight(1f))
@@ -1203,7 +1272,7 @@ private fun CommunityList(
 private fun EmptyState(text: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Hub, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color(0xFFDBEEFF))
+            Icon(Icons.Default.BubbleChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color(0xFFDBEEFF))
             Spacer(modifier = Modifier.height(16.dp))
             Text(text, fontSize = 14.sp, color = Color(0xFFA3A3A3))
         }

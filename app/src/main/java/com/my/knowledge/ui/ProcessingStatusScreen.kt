@@ -436,6 +436,7 @@ private fun StageRow(label: String, status: String, message: String?) {
         val (icon, color) = when (status) {
             "success" -> Icons.Default.CheckCircle to Color(0xFF16A34A)
             "running" -> Icons.Default.Sync to Color(0xFF147EC5)
+            "pending_network" -> Icons.Default.Sync to Color(0xFFF59E0B)
             "failed" -> Icons.Default.Error to Color(0xFFDC2626)
             else -> Icons.Default.RadioButtonUnchecked to Color(0xFFD4D4D4)
         }
@@ -454,7 +455,7 @@ private fun StageRow(label: String, status: String, message: String?) {
 private fun StatusDot(status: String) {
     val color = when (status) {
         "running" -> Color(0xFF147EC5)
-        "pending" -> Color(0xFFF59E0B)
+        "pending", "pending_network" -> Color(0xFFF59E0B)
         "failed" -> Color(0xFFDC2626)
         else -> Color(0xFFA3A3A3)
     }

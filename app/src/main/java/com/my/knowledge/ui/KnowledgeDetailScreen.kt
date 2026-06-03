@@ -18,7 +18,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -154,24 +153,6 @@ fun KnowledgeDetailScreen(
                         color = Color(0xFF5F87A3),
                         modifier = Modifier.padding(top = 4.dp)
                     )
-                }
-                // Per-knowledge-base intermediate data (entities / relations
-                // / communities) — drill-down into the graph of THIS base.
-                val currentKbId = remember(items) { items.firstOrNull()?.knowledgeBaseId }
-                if (!currentKbId.isNullOrBlank()) {
-                    TextButton(
-                        onClick = { onOpenIntermediate(currentKbId) },
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Hub,
-                            contentDescription = null,
-                            tint = Color(0xFF147EC5),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("本库图谱", fontSize = 12.sp, color = Color(0xFF147EC5))
-                    }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     // In-place import. Always visible (not gated on

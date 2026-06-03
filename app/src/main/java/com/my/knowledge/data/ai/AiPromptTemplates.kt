@@ -178,10 +178,9 @@ entries "when the source names concrete people/..." — that conditional
 ("when the source names ...") caused small / vague sources to return
 `[]`. The user-facing symptom was a knowledge graph with no nodes at
 all even after a successful import. This version drops the conditional
-and asks for 1-10 entities / 1-8 concepts unconditionally. The
-fallback is: when the AI path returns empty arrays, the orchestrator's
-local heuristic extracts high-frequency noun phrases from the source
-text as a last resort.
+and asks for 1-10 entities / 1-8 concepts unconditionally. There is no
+local entity/concept supplement: if you return empty arrays, the app
+will preserve those empty arrays and surface the gap for review.
 
 ## Hard rules
 1. Output ONLY the JSON object. No preamble, no code fence, no trailing prose.
@@ -219,169 +218,156 @@ ${if (currentIndex.isNotBlank()) "## Current Wiki Index (for de-dup hints)\n$cur
         currentIndex: String = "",
         overview: String = "",
         language: String = "中文"
-    ): String = """
-${languageDirective(language)}
-
-You are a wiki maintainer. Based on the analysis provided, generate wiki files.
-Do not output chain-of-thought, hidden reasoning, or explanatory preamble. Reason internally and output only the requested FILE/REVIEW blocks.
-
-## IMPORTANT: Source File
-原始源文件是:**$fileName**
-所有从此来源生成的 Wiki 页面必须在 frontmatter 的 `sources` 字段中包含这个文件名。
-
-## What to generate
-
-1. 一份来源摘要页,**路径必须为 wiki/sources/${fileName.substringBeforeLast('.', fileName)}.md**(MUST use this exact path)
-2. 实体页位于 wiki/entities/,对应分析中识别的关键命名事物(named things),包括人物、组织、产品、项目、数据集、工具、系统、地点等。不要把抽象方法/理论当实体。
-3. 概念页位于 wiki/concepts/,对应分析中识别的关键概念、方法、技术、理论、问题、原则、框架等。概念必须是稳定知识主题,不要把普通短语、章节标题或一次性描述当概念。
-4. 更新一份 wiki/index.md — 在已有分类中新增条目,保留所有已有条目
-5. 一条 wiki/log.md 日志条目(只需追加新行,格式:`## [YYYY-MM-DD] ingest | Title`)
-6. 更新一份 wiki/overview.md — 整个 Wiki 涵盖内容的高层摘要,需反映刚摄取的新来源。**必须是 2-5 段、覆盖 Wiki 中所有主题的全面概述**,而不仅仅是新来源。overview 页 frontmatter 的 `type` 必须是 `overview`。
-
-## Frontmatter Rules (CRITICAL — parser is strict)
-
-每个页面以 YAML frontmatter 块开头。格式规则按重要性排序:
-
-1. 文件**第一行**必须是 `---` (三个连字符,无其他内容)。**不得**用 ```yaml ... ``` 围栏包裹文件。**不得**以 `frontmatter:` key 或其他任何行作为前缀。
-2. 每行 frontmatter 是 `key: value`,独立成行。
-3. frontmatter 用另一行 `---` 单独结束。
-4. 关闭 `---` 后下一行是 body 起点。
-5. 数组用标准 YAML 内联形式 `[a, b, c]`(不要每项外加方括号)。Wikilink **只在 BODY 里** — 永远不要写 `related: [[a]], [[b]]` (非法 YAML);用 `related: [a, b]` 加裸 slug。
-
-必填字段与类型:
-  • `type`     — 必须是:source | entity | concept | comparison | query | synthesis | overview
-  • `title`    — 字符串(如包含冒号需加引号,例如 `title: "Foo: Bar"`)
-  • `created`  — YYYY-MM-DD 日期格式(不加引号)
-  • `updated`  — 同 created
-  • `tags`     — 裸字符串数组:`tags: [microbiology, ai]`
-  • `related`  — 裸 slug 数组:`related: [foo, bar-baz]`。**不要**包含 `wiki/`、`.md` 或 `[[…]]`,只写 slug
-  • `sources`  — 源文件名字符串数组;**必须**包含 "$fileName"
-
-可选字段(语义类型,跟 `type:` 严格 enum 解耦):
-  • `entityType`      — 仅实体页用,LLM 给的语义类型(例:`Person`、`Algorithm`、`Paper`)。**不要**把这个写到 `type:` 字段。
-  • `conceptCategory` — 仅概念页用,LLM 给的语义分类(例:`Theory`、`Method`、`Framework`)。**不要**把这个写到 `type:` 字段。
-
-完整可解析页面示例(两 `---` 之间是 frontmatter,下方是 body):
-
-    ---
-    type: entity
-    entityType: Algorithm
-    title: Example Entity
-    created: 2026-04-29
-    updated: 2026-04-29
-    tags: [example, demo]
-    related: [related-slug-1, related-slug-2]
-    sources: ["$fileName"]
-    ---
-
-    # Example Entity
-
-    Body content goes here. Use [[wikilink]] syntax in the body for cross-references.
-
-其他规则:
-- 在 BODY 中用 `[[wikilink]]` 语法做交叉引用
-- 文件名用 kebab-case
-- 遵循分析中的"重点"建议
-- 若分析中识别到与已有页面的连接,加上交叉引用
-
-## 类型 → 目录映射(强制)
-
-- source → `wiki/sources/`
-- entity → `wiki/entities/`
-- concept → `wiki/concepts/`
-- comparison → `wiki/comparisons/`
-- query → `wiki/queries/`
-- synthesis → `wiki/synthesis/`
-- overview → `wiki/overview.md`(根目录,只一份)
-
-## Entity / Concept Extraction Rules (CRITICAL)
-
-- 至少为来源中的核心命名实体创建或更新 1 个 `wiki/entities/*.md`,除非来源真的没有任何命名事物。
-- 至少为来源中的核心知识概念创建或更新 1 个 `wiki/concepts/*.md`,除非来源只是纯事实清单且没有概念。
-- 实体是“谁/什么具体对象”: 人、组织、公司、项目、产品、工具、数据集、系统、地点、论文/书籍等。
-- 概念是“什么思想/方法/机制”: 理论、技术、方法、流程、原则、问题、框架、现象等。
-- 不要创建泛泛的概念,例如“介绍”“背景”“优势”“应用”“相关研究”“总结”。
-- 每个实体/概念页 body 中必须包含与其他页面的 `[[wikilink]]`,用于后续图谱重建。
-
-## Review block types
-
-所有 FILE 块输出后,可选地发出 REVIEW 块(用于需要人工判断的事项):
-
-- contradiction:分析发现与现有 Wiki 内容冲突
-- duplicate:实体/概念可能以不同名称已存在
-- missing-page:重要概念被引用但没有专属页面
-- suggestion:进一步研究方向、可寻找的相关来源、值得探索的连接
-
-仅当确实需要人工判断时输出 review,不要为了有 review 而有 review。
-
-## OPTIONS 允许值(仅这些预定义标签)
-
-- contradiction: OPTIONS: Create Page | Skip
-- duplicate: OPTIONS: Create Page | Skip
-- missing-page: OPTIONS: Create Page | Skip
-- suggestion: OPTIONS: Create Page | Skip
-
-系统会自动加上 'Deep Research' 按钮触发联网搜索。**不要**发明自定义 option 标签,只用 'Create Page' 和 'Skip'。
-
-suggestion 和 missing-page review 必须包含 SEARCH 字段,提供 2-3 个 web 搜索 query(关键词丰富、具体、适合搜索引擎 — 不是完整句子也不是标题)。示例:
-   SEARCH: automated technical debt detection AI generated code | software quality metrics LLM code generation | static analysis tools agentic software development
-
-## Wiki 锁定字段约定
-
-下游合并流程会强制保留以下字段的旧值(以避免破坏 wikilink 链接心智模型与跨目录移动):**type**、**title**、**created**。你不需要为了避免覆盖而改这些字段,但要保证新页面的这些字段在首次生成时是有效的。
-
-## Wiki Purpose
-$purpose
-
-## Wiki Schema
+    ): String {
+        val sourceBaseName = fileName.substringBeforeLast('.', fileName)
+        val summaryPath = "wiki/sources/$sourceBaseName.md"
+        val knownTypes = "source | entity | concept | comparison | query | synthesis | overview"
+        val schemaBlock = if (schema.isNotBlank()) {
+            """
+## Project Schema and Routing (AUTHORITATIVE)
 $schema
 
-## Current Wiki Index (保留所有已有条目,新增条目)
-$currentIndex
-
-## Current Overview (更新以反映新来源)
-$overview
-
-## Output Format (MUST FOLLOW EXACTLY — 解析器读取响应的方式)
-
-你的整个响应由 FILE 块组成,后跟可选的 REVIEW 块。没有任何其他内容。
-
-FILE block template:
-```
----FILE: wiki/path/to/page.md---
-(complete file content with YAML frontmatter)
----END FILE---
-```
-
-REVIEW block template (可选,在所有 FILE 块之后):
-```
----REVIEW: type | Title---
-Description of what needs the user's attention.
-OPTIONS: Create Page | Skip
-PAGES: wiki/page1.md, wiki/page2.md
-SEARCH: query 1 | query 2 | query 3
----END REVIEW---
-```
-
-## Output Requirements (STRICT — 违反将导致解析失败)
-
-1. 响应的**第一个字符**必须是 `-`(`---FILE:` 的开头)。
-2. **不要**输出任何 preamble,如 "Here are the files:"、"Based on the analysis..." 或任何介绍性文字。
-3. **不要** echo 或复述 analysis — 那是 stage 1 的工作。你的工作只是 emit FILE 块。
-4. **不要**在 FILE/REVIEW 块之外输出 markdown 表格、bullet 列表或标题。
-5. **不要**在最后一个 `---END FILE---` 或 `---END REVIEW---` 之后输出任何尾部说明。
-6. 块之间只能有空行 — 不要写散文。
-7. **每个 FILE 块的内容**(标题、正文、描述)**必须**使用下面指定的输出语言。**没有例外** — 不管是页面名还是章节标题。
-
-如果以 `---FILE:` 之外的任何字符开头,整个响应会被丢弃。
-
----
-
-## ⚠️ MANDATORY OUTPUT LANGUAGE: $language    ← 尾部重复注入
-你必须使用 **$language** 写出你的整个响应(包括所有 wiki 页面标题、内容、描述、摘要、tags、生成的文本)。源材料或分析可能是另一种语言,但这与你的输出语言无关。忽略任何源内容的语言,只用 $language 生成。
-专有名词必要时用 $language 标准转写。
-不要使用任何其他语言。这条规则压过其他所有指令。
+Use this schema as the primary routing rule for page types and directories.
+If it defines custom folders or distinctions (for example people, technologies, organizations, methods, or cases), write pages into those schema-defined folders instead of forcing them into wiki/entities/ or wiki/concepts/.
+Use wiki/entities/ and wiki/concepts/ only when the schema does not provide a more specific destination.
 """.trimIndent()
+        } else ""
+        return listOf(
+            "You are a wiki maintainer. Based on the analysis provided, generate wiki files.",
+            "Do not output chain-of-thought, hidden reasoning, or explanatory preamble. Reason internally and output only the requested FILE/REVIEW blocks.",
+            "",
+            languageDirective(language),
+            "",
+            "## IMPORTANT: Source File",
+            "The original source file is: **$fileName**",
+            "All wiki pages generated from this source MUST include this filename in their frontmatter `sources` field.",
+            "",
+            schemaBlock,
+            "",
+            "## What to generate",
+            "",
+            "1. A source summary page at **$summaryPath** (MUST use this exact path)",
+            "2. Entity or schema-defined typed pages for key named things identified in the analysis. Prefer schema-defined directories when present; otherwise use wiki/entities/.",
+            "3. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
+            "4. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
+            "5. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
+            "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+            "",
+            "## Frontmatter Rules (CRITICAL — parser is strict)",
+            "",
+            "Every page begins with a YAML frontmatter block. Format rules, in order of importance:",
+            "",
+            "1. The VERY FIRST line of the file MUST be exactly `---` (three hyphens, nothing else).",
+            "   Do NOT wrap the file in a ```yaml ... ``` code fence.",
+            "   Do NOT prefix it with a `frontmatter:` key or any other line.",
+            "2. Each frontmatter line is a `key: value` pair on its own line.",
+            "3. The frontmatter ends with another `---` line on its own.",
+            "4. The next line after the closing `---` is the start of the page body.",
+            "5. Arrays use the standard YAML inline form `[a, b, c]` (no outer brackets around each item).",
+            "   Wikilinks belong in the BODY only — never write `related: [[a]], [[b]]` (invalid YAML);",
+            "   write `related: [a, b]` with bare slugs.",
+            "",
+            "Required fields and types:",
+            "  • type     — one of the known types ($knownTypes), or a custom type explicitly defined by the project schema",
+            "  • title    — string (quote it if it contains a colon, e.g. `title: \"Foo: Bar\"`)",
+            "  • created  — date in YYYY-MM-DD form (no quotes)",
+            "  • updated  — same as created",
+            "  • tags     — array of bare strings: `tags: [microbiology, ai]`",
+            "  • related  — array of bare wiki page slugs: `related: [foo, bar-baz]`. Do NOT include",
+            "               `wiki/`, `.md`, or `[[…]]` here — slugs only.",
+            "  • sources  — array of source filenames; MUST include \"$fileName\".",
+            "",
+            "Concrete example of a complete, parseable page (everything between the two `---` lines",
+            "is the frontmatter; the heading and prose below are the body):",
+            "",
+            "    ---",
+            "    type: entity",
+            "    title: Example Entity",
+            "    created: 2026-04-29",
+            "    updated: 2026-04-29",
+            "    tags: [example, demo]",
+            "    related: [related-slug-1, related-slug-2]",
+            "    sources: [\"$fileName\"]",
+            "    ---",
+            "",
+            "    # Example Entity",
+            "",
+            "    Body content goes here. Use [[wikilink]] syntax in the body for cross-references.",
+            "",
+            "Other rules:",
+            "- Use [[wikilink]] syntax in the BODY for cross-references between pages",
+            "- If you include images, use wiki-root-relative paths such as `media/source-slug/image.png`; never output absolute filesystem paths.",
+            "- Use kebab-case filenames",
+            "- Follow the analysis recommendations on what to emphasize",
+            "- If the analysis found connections to existing pages, add cross-references",
+            "",
+            "## Review block types",
+            "",
+            "After all FILE blocks, optionally emit REVIEW blocks for anything that needs human judgment:",
+            "",
+            "- contradiction: the analysis found conflicts with existing wiki content",
+            "- duplicate: an entity/concept might already exist under a different name in the index",
+            "- missing-page: an important concept is referenced but has no dedicated page",
+            "- suggestion: ideas for further research, related sources to look for, or connections worth exploring",
+            "",
+            "Only create reviews for things that genuinely need human input. Don't create trivial reviews.",
+            "",
+            "## OPTIONS allowed values (only these predefined labels):",
+            "",
+            "- contradiction: OPTIONS: Create Page | Skip",
+            "- duplicate: OPTIONS: Create Page | Skip",
+            "- missing-page: OPTIONS: Create Page | Skip",
+            "- suggestion: OPTIONS: Create Page | Skip",
+            "",
+            "The user also has a 'Deep Research' button (auto-added by the system) that triggers web search.",
+            "Do NOT invent custom option labels. Only use 'Create Page' and 'Skip'.",
+            "",
+            "For suggestion and missing-page reviews, the SEARCH field must contain 2-3 web search queries",
+            "(keyword-rich, specific, suitable for a search engine — NOT titles or sentences). Example:",
+            "  SEARCH: automated technical debt detection AI generated code | software quality metrics LLM code generation | static analysis tools agentic software development",
+            "",
+            if (purpose.isNotBlank()) "## Wiki Purpose\n$purpose" else "",
+            if (currentIndex.isNotBlank()) "## Current Wiki Index (preserve all existing entries, add new ones)\n$currentIndex" else "",
+            if (overview.isNotBlank()) "## Current Overview (update this to reflect the new source)\n$overview" else "",
+            "",
+            "## Output Format (MUST FOLLOW EXACTLY — this is how the parser reads your response)",
+            "",
+            "Your ENTIRE response consists of FILE blocks followed by optional REVIEW blocks. Nothing else.",
+            "",
+            "FILE block template:",
+            "```",
+            "---FILE: wiki/path/to/page.md---",
+            "(complete file content with YAML frontmatter)",
+            "---END FILE---",
+            "```",
+            "",
+            "REVIEW block template (optional, after all FILE blocks):",
+            "```",
+            "---REVIEW: type | Title---",
+            "Description of what needs the user's attention.",
+            "OPTIONS: Create Page | Skip",
+            "PAGES: wiki/page1.md, wiki/page2.md",
+            "SEARCH: query 1 | query 2 | query 3",
+            "---END REVIEW---",
+            "```",
+            "",
+            "## Output Requirements (STRICT — deviations will cause parse failure)",
+            "",
+            "1. The FIRST character of your response MUST be `-` (the opening of `---FILE:`).",
+            "2. DO NOT output any preamble such as \"Here are the files:\", \"Based on the analysis...\", or any introductory prose.",
+            "3. DO NOT echo or restate the analysis — that was stage 1's job. Your job is to emit FILE blocks.",
+            "4. DO NOT output markdown tables, bullet lists, or headings outside of FILE/REVIEW blocks.",
+            "5. DO NOT output any trailing commentary after the last `---END FILE---` or `---END REVIEW---`.",
+            "6. Between blocks, use only blank lines — no prose.",
+            "7. EVERY FILE block's content (titles, body, descriptions) MUST be in the mandatory output language specified below. No exceptions — not even for page names or section headings.",
+            "",
+            "If you start with anything other than `---FILE:`, the entire response will be discarded.",
+            "",
+            "---",
+            "",
+            languageDirective(language),
+        ).filter { it.isNotBlank() }.joinToString("\n")
+    }
 
     /**
      * Stage-2 merge prompt — 1:1 alignment with llm_wiki's
