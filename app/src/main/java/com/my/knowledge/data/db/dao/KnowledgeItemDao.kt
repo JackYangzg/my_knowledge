@@ -139,6 +139,21 @@ interface KnowledgeItemDao {
     @Query("SELECT * FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL")
     suspend fun getAllByKb(kbId: String): List<KnowledgeItemEntity>
 
+    /**
+     * Same as [getAllByKb] but restricted to wiki pages. The previous
+     * `IngestOrchestrator.buildCurrentIndex` and similar code paths
+     * called `getAllByKb` then filtered `sourceType LIKE 'wiki_%'` in
+     * Kotlin — fine for a 20-page library, but every ingest step
+     * (`requestAiRawOutput` / `requestAiAnalysis` / `rebuildGraphForBase`)
+     * paid the cost of loading every raw note too. Once a KB crossed
+     * a few thousand items the `AI 联网分析 → 生成` stage spent most
+     * of its time in this query, masquerading as "generation 卡住".
+     * Pushing the filter down to SQL keeps each ingest step bounded
+     * by the number of wiki pages, not the total knowledge-base size.
+     */
+    @Query("SELECT * FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL AND sourceType LIKE 'wiki_%' ORDER BY updatedAt DESC")
+    suspend fun getAllWikiByKb(kbId: String): List<KnowledgeItemEntity>
+
     @Query("SELECT * FROM knowledge_item WHERE knowledgeBaseId = :kbId AND sourceType = :sourceType AND title = :title AND deletedAt IS NULL LIMIT 1")
     suspend fun getByKbSourceTypeAndTitle(kbId: String, sourceType: String, title: String): KnowledgeItemEntity?
 

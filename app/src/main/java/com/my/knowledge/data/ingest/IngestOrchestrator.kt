@@ -9,12 +9,205 @@ import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
 import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.my.knowledge.data.ai.AiGateway
+import com.my.knowledge.data.ai.AiTextCleaner
+import com.my.knowledge.data.ai.AiTextCleaner.cleanModelOutput
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.parser.defaultParsers
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
+
+/**
+ * Structured result of Stage 1 — the LLM analysis, normalized into the
+ * exact column shape [AnalysisResultEntity] expects.
+ *
+ * The old `analysisTask` skipped this step and wrote the raw AI text
+ * into `summary` with `entitiesJson = "[]"` / `conceptsJson = tags` /
+ * `relationsJson = "[]"`, which broke the wiki generation stage. This
+ * class is the bridge that the new `parseAiAnalysisJson` returns so
+ * the DB write at the end of `analysisTask` fills every column with
+ * real data.
+ *
+ * Marked `internal` so the unit test in
+ * `com.my.knowledge.data.ingest.ParseAiAnalysisJsonTest` can verify
+ * the extraction logic without needing the full Android DB stack.
+ */
+internal data class ParsedAnalysis(
+    val summary: String,
+    val tagsJson: String,
+    val entitiesJson: String,
+    val conceptsJson: String,
+    val relationsJson: String,
+    val claimsJson: String,
+    val gapsJson: String,
+    val archiveRecommendationJson: String,
+    val confidence: Float,
+    val entityCount: Int,
+    val conceptCount: Int,
+    val relationCount: Int,
+) {
+    companion object {
+        /**
+         * Local-heuristic fallback used when the LLM is unavailable, the
+         * response is empty, or the JSON fails to parse. The fallback
+         * preserves `summary` and `tags` (so the wiki still gets a usable
+         * source page) but leaves entities/concepts/relations empty —
+         * we DO NOT invent entities from tags. The wiki generation
+         * stage's AI path (`requestAiRawOutput`) can still produce
+         * pages from the raw source in this case.
+         */
+        fun fromFallback(fallbackTags: List<String>, fallbackConfidence: Float): ParsedAnalysis {
+            val empty = "[]"
+            return ParsedAnalysis(
+                summary = "",
+                tagsJson = encodeTagArray(fallbackTags),
+                entitiesJson = empty,
+                conceptsJson = empty,
+                relationsJson = empty,
+                claimsJson = empty,
+                gapsJson = if (fallbackConfidence < 0.6f) "[\"内容较短，建议人工确认摘要和归档\"]" else empty,
+                archiveRecommendationJson = "{\"targetKnowledgeBaseId\":null,\"targetKnowledgeBaseName\":\"\",\"confidence\":$fallbackConfidence,\"reason\":\"本地规则兜底\",\"suggestCreateNewBase\":false,\"newBaseName\":null}",
+                confidence = fallbackConfidence,
+                entityCount = 0,
+                conceptCount = 0,
+                relationCount = 0,
+            )
+        }
+
+        /**
+         * Extract every column from a parsed analysis-JSON object.
+         * Defensive: missing arrays default to `[]`, missing scalars
+         * fall through to the local heuristic, and entity/concept
+         * entries without a `name` are dropped (the downstream
+         * `parseNamedObjects` would drop them too, but we filter
+         * here so the count metric is honest).
+         */
+        fun fromObj(
+            obj: kotlinx.serialization.json.JsonObject,
+            fallbackTags: List<String>,
+            fallbackConfidence: Float,
+            aiSucceeded: Boolean,
+            parseErrorNote: String? = null,
+        ): ParsedAnalysis {
+            val tags = IngestJsonValidator.arrayAsJson(obj, "tags")
+                .takeIf { it != "[]" }
+                ?: encodeTagArray(fallbackTags)
+            val entitiesRaw = IngestJsonValidator.arrayAsJson(obj, "entities")
+            val conceptsRaw = IngestJsonValidator.arrayAsJson(obj, "concepts")
+            val relationsRaw = IngestJsonValidator.arrayAsJson(obj, "relations")
+            val claimsRaw = IngestJsonValidator.arrayAsJson(obj, "claims")
+            val gapsRaw = IngestJsonValidator.arrayAsJson(obj, "gaps")
+            val archiveRaw = IngestJsonValidator.archiveRecommendationJson(
+                obj,
+                fallback = "{\"targetKnowledgeBaseId\":null,\"targetKnowledgeBaseName\":\"\",\"confidence\":$fallbackConfidence,\"reason\":\"${if (aiSucceeded) "AI 摘要未含归档建议" else "本地规则兜底"}\",\"suggestCreateNewBase\":false,\"newBaseName\":null}"
+            )
+            val summary = IngestJsonValidator.string(obj, "summary", fallback = "").trim()
+            val confidence = IngestJsonValidator.float(obj, "confidence", fallbackConfidence)
+            val reviewReasonsRaw = IngestJsonValidator.arrayAsJson(obj, "reviewReasons")
+            // If the AI said needHumanReview but didn't enumerate reasons,
+            // still surface a gap so the review queue picks it up.
+            val needReview = obj["needHumanReview"]?.let { it.toString().contains("true") } == true
+            val gapsFinal = when {
+                gapsRaw != "[]" && parseErrorNote == null -> gapsRaw
+                gapsRaw != "[]" -> appendGapEntry(gapsRaw, parseErrorNote)
+                reviewReasonsRaw != "[]" && parseErrorNote == null -> reviewReasonsRaw
+                reviewReasonsRaw != "[]" -> appendGapEntry(reviewReasonsRaw, parseErrorNote)
+                needReview && parseErrorNote != null -> "[\"${parseErrorNote.escapeForJson()}\"]"
+                needReview -> "[\"模型标记需要人工复核，但未列出原因\"]"
+                parseErrorNote != null -> "[\"${parseErrorNote.escapeForJson()}\"]"
+                else -> "[]"
+            }
+            return ParsedAnalysis(
+                summary = summary,
+                tagsJson = tags,
+                entitiesJson = sanitizeEntityArray(entitiesRaw),
+                conceptsJson = sanitizeConceptArray(conceptsRaw),
+                relationsJson = sanitizeRelationArray(relationsRaw),
+                claimsJson = claimsRaw,
+                gapsJson = gapsFinal,
+                archiveRecommendationJson = archiveRaw,
+                confidence = confidence,
+                entityCount = countByName(entitiesRaw),
+                conceptCount = countByName(conceptsRaw),
+                relationCount = countByPair(relationsRaw),
+            )
+        }
+
+        // The LLM occasionally returns entities / concepts / relations
+        // that pass `JSONArray` parsing but would break downstream — e.g.
+        // a relation with empty `source` or `target`, or a relation type
+        // outside the allowed enum. We strip those here so the wiki
+        // generation stage never has to deal with garbage rows. The
+        // helpers are private; if you need them outside, hoist them
+        // to a `object AnalysisJsonNormalizer`.
+        private fun sanitizeEntityArray(raw: String): String {
+            if (raw.isBlank() || raw == "[]") return "[]"
+            val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return "[]"
+            val out = JSONArray()
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val name = item.optString("name").trim()
+                if (name.isBlank()) continue
+                out.put(item)
+            }
+            return out.toString()
+        }
+
+        private fun sanitizeConceptArray(raw: String): String {
+            // Same shape, but concepts use `definition` instead of
+            // `description`. Keep the filter symmetric — anything
+            // without a usable `name` is dropped.
+            return sanitizeEntityArray(raw)
+        }
+
+        private fun sanitizeRelationArray(raw: String): String {
+            if (raw.isBlank() || raw == "[]") return "[]"
+            val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return "[]"
+            val allowedTypes = setOf("supports", "contradicts", "extends", "uses", "part_of", "related_to")
+            val out = JSONArray()
+            for (i in 0 until arr.length()) {
+                val item = arr.optJSONObject(i) ?: continue
+                val source = item.optString("source").trim()
+                val target = item.optString("target").trim()
+                if (source.isBlank() || target.isBlank()) continue
+                if (source.equals(target, ignoreCase = true)) continue
+                val type = item.optString("type", "related_to").trim().lowercase()
+                if (type !in allowedTypes) {
+                    item.put("type", "related_to")
+                }
+                out.put(item)
+            }
+            return out.toString()
+        }
+
+        private fun countByName(raw: String): Int {
+            if (raw.isBlank() || raw == "[]") return 0
+            val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return 0
+            var n = 0
+            for (i in 0 until arr.length()) {
+                val name = arr.optJSONObject(i)?.optString("name")?.trim().orEmpty()
+                if (name.isNotBlank()) n++
+            }
+            return n
+        }
+
+        private fun countByPair(raw: String): Int {
+            if (raw.isBlank() || raw == "[]") return 0
+            val arr = runCatching { JSONArray(raw) }.getOrNull() ?: return 0
+            var n = 0
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val source = obj.optString("source").trim()
+                val target = obj.optString("target").trim()
+                if (source.isNotBlank() && target.isNotBlank()) n++
+            }
+            return n
+        }
+    }
+}
 
 class IngestOrchestrator(
     private val db: AppDatabase,
@@ -190,34 +383,94 @@ class IngestOrchestrator(
             return
         }
 
-        val summary = parsed.plainText.trim().take(220)
+        val localSummary = parsed.plainText.trim().take(220)
         val tags = extractTags("${source.title} ${parsed.plainText}")
-        val confidence = if (parsed.plainText.length > 80) 0.78f else 0.42f
-        val reviewReason = if (confidence < 0.6f) "内容较短，建议人工确认摘要和归档" else null
-        updateProgress(task, 45, "调用 AI 生成分析", "模型生成中，最多等待 60 秒")
-        val aiAnalysis = requestAiAnalysis(source, parsed)
+        val baseConfidence = if (parsed.plainText.length > 80) 0.78f else 0.42f
+        updateProgress(task, 45, "调用 AI 生成结构化分析", "模型生成中，等待 JSON 结果")
+        // Stage 1 — call the LLM with the JSON-only analysis prompt, then
+        // PARSE the result into structured entities / concepts / relations.
+        // The previous code dropped the AI output into `summary` and hard-
+        // coded `entitiesJson = "[]"`, `conceptsJson = tags.toJsonArray()`,
+        // `relationsJson = "[]"`, which meant no real entities, tag-named
+        // "concept" pages with empty descriptions, and an empty knowledge
+        // graph. parseAiAnalysisJson is the bridge that fixes that.
+        val rawAiOutput = requestAiAnalysis(source, parsed)
             ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
-        val archiveJson = """{"targetKnowledgeBaseId":${source.targetKnowledgeBaseId?.let { "\"$it\"" } ?: "null"},"targetKnowledgeBaseName":"","confidence":$confidence,"reason":"基于标题、标签和来源提示推荐","suggestCreateNewBase":false,"newBaseName":null}"""
+        // P1 诊断:把 LLM 实际返回写到 ProcessingTaskLog,这样用户能
+        // 直接看到「AI 返回了 N 字符 / 0 个实体」,不用盲猜为什么图谱空。
+        val rawSnippet = rawAiOutput?.take(200)?.replace("\n", " ")
+        if (rawAiOutput.isNullOrBlank()) {
+            appendLog(task, "诊断:AI 阶段未返回任何内容(可能未配置 API Key / 网络异常 / JSON 解析失败)", "running")
+        } else {
+            appendLog(
+                task,
+                "诊断:AI 返回 ${rawAiOutput.length} 字符,前 200 字符: $rawSnippet",
+                "running"
+            )
+        }
+        val parsedAnalysis = parseAiAnalysisJson(
+            raw = rawAiOutput,
+            fallbackTitle = source.title,
+            fallbackSummary = localSummary,
+            fallbackTags = tags,
+            fallbackConfidence = baseConfidence,
+        )
+        updateProgress(task, 70, "分析完成", "识别 ${parsedAnalysis.entityCount} 个实体 / ${parsedAnalysis.conceptCount} 个概念 / ${parsedAnalysis.relationCount} 个关系")
+        appendLog(
+            task,
+            "诊断:解析后 entities=${parsedAnalysis.entityCount}, concepts=${parsedAnalysis.conceptCount}, relations=${parsedAnalysis.relationCount}, confidence=${parsedAnalysis.confidence}",
+            "running"
+        )
+        // 兜底：AI 完整返回成功但 entities/concepts 都是空,本地启发式按
+        // 原文高频短语再补一拨,让"中间处理数据"页和 wiki_index 不会变成
+        // 单调的"全是源"。原始 AI 输出一旦真的提到了实体/概念,这一段
+        // 不会修改 anything;只在 AI 抽不出东西时叠加一个本地补集。
+        val finalEntitiesJson: String
+        val finalConceptsJson: String
+        if (parsedAnalysis.entityCount == 0 && parsedAnalysis.conceptCount == 0) {
+            val (hEntities, hConcepts) = extractLocalHeuristic(parsed.plainText)
+            if (hEntities != "[]" || hConcepts != "[]") {
+                finalEntitiesJson = hEntities
+                finalConceptsJson = hConcepts
+                appendLog(
+                    task,
+                    "AI 未提取到实体/概念，使用本地启发式补集（基于原文高频短语）",
+                    "running"
+                )
+            } else {
+                finalEntitiesJson = parsedAnalysis.entitiesJson
+                finalConceptsJson = parsedAnalysis.conceptsJson
+            }
+        } else {
+            // 只补缺失的那一边,例如 AI 给出了 entities 但没给 concepts
+            finalEntitiesJson = parsedAnalysis.entitiesJson
+            finalConceptsJson = if (parsedAnalysis.conceptCount == 0) {
+                val (hEntities, hConcepts) = extractLocalHeuristic(parsed.plainText)
+                if (hConcepts != "[]") hConcepts else parsedAnalysis.conceptsJson
+            } else {
+                parsedAnalysis.conceptsJson
+            }
+        }
         val analysis = AnalysisResultEntity(
             id = UUID.randomUUID().toString(),
             sourceId = source.id,
             parsedContentId = parsed.id,
-            summary = aiAnalysis?.take(3000) ?: summary,
-            tagsJson = tags.toJsonArray(),
-            entitiesJson = "[]",
-            conceptsJson = tags.toJsonArray(),
-            relationsJson = "[]",
-            claimsJson = listOf(aiAnalysis ?: summary).toJsonArray(),
-            gapsJson = reviewReason?.let { listOf(it).toJsonArray() } ?: "[]",
-            archiveRecommendationJson = archiveJson,
-            confidence = confidence,
-            modelName = if (aiAnalysis != null) "configured-ai" else null,
+            summary = parsedAnalysis.summary.take(3000),
+            tagsJson = parsedAnalysis.tagsJson,
+            entitiesJson = finalEntitiesJson,
+            conceptsJson = finalConceptsJson,
+            relationsJson = parsedAnalysis.relationsJson,
+            claimsJson = parsedAnalysis.claimsJson,
+            gapsJson = parsedAnalysis.gapsJson,
+            archiveRecommendationJson = parsedAnalysis.archiveRecommendationJson,
+            confidence = parsedAnalysis.confidence,
+            modelName = if (rawAiOutput != null) "configured-ai" else null,
             promptVersion = PromptVersions.INGEST_ANALYSIS_V1,
-            analysisHash = fileStore.sha256Text(parsed.parseHash + tags.joinToString()),
+            analysisHash = fileStore.sha256Text(parsed.parseHash + parsedAnalysis.tagsJson + finalEntitiesJson + finalConceptsJson + parsedAnalysis.relationsJson),
             createdAt = System.currentTimeMillis()
         )
         db.analysisResultDao().insert(analysis)
-        updateProgress(task, 80, "分析完成，准备生成知识页面", "识别到 ${tags.size} 个标签，正在排入生成队列")
+        updateProgress(task, 80, "分析完成，准备生成知识页面", "实体 ${JSONArray(finalEntitiesJson).length()} / 概念 ${JSONArray(finalConceptsJson).length()} / 关系 ${parsedAnalysis.relationCount}")
         markSuccess(task, "Analysis completed", """{"analysisResultId":"${analysis.id}"}""")
         enqueue(source.id, "generation", 8, """{"analysisResultId":"${analysis.id}"}""")
     }
@@ -268,25 +521,58 @@ class IngestOrchestrator(
             null
         }
 
-        val pageDrafts: List<WikiPageDraft> = if (aiOutput != null) {
-            // The parser now reports any path-safety rejections so we can warn the user
-            // instead of silently dropping pages.
+        // Always run the template first so entity / concept / source /
+        // index / overview / log pages are guaranteed to exist when the
+        // analysis JSON is non-empty — those are the rows the graph
+        // rebuild materializes, and dropping them is exactly the bug
+        // that left the knowledge graph blank.
+        //
+        // The AI's FILE blocks, when present, are merged in for the
+        // human-readable surfaces only (source summary, overview) where
+        // the LLM tends to write richer prose than the template. The
+        // AI's entity / concept pages are *not* used directly: we want
+        // the canonical title + type from the analysis JSON to drive
+        // the graph node names, not whatever casing the LLM happened
+        // to use in `title:` frontmatter or in the FILE block path.
+        val templatePages = wikiCompiler.compile(source, parsed, analysis)
+        val aiDrafts: List<WikiPageDraft> = if (aiOutput != null) {
             val parsedBlocks = FileBlockParser.parseDetailed(aiOutput)
             if (parsedBlocks.unsafePaths.isNotEmpty() || parsedBlocks.truncated) {
-                // Don't fail the whole task: skip unsafe blocks, keep safe ones,
-                // and surface the issue via a review item.
+                // Don't fail the whole task: skip unsafe blocks, keep
+                // safe ones, and surface the issue via a review item.
             }
             parsedBlocks.blocks.map { block -> block.toWikiPageDraft(source, parsed, analysis) }
-                .ifEmpty { wikiCompiler.compile(source, parsed, analysis) }
         } else {
-            wikiCompiler.compile(source, parsed, analysis)
+            emptyList()
+        }
+        val aiSourcePage = aiDrafts.firstOrNull { it.sourceType == "wiki_source" }
+        val aiOverviewPage = aiDrafts.firstOrNull { it.sourceType == "wiki_overview" }
+        val pageDrafts: List<WikiPageDraft> = templatePages.map { page ->
+            when (page.sourceType) {
+                "wiki_source" -> aiSourcePage ?: page
+                "wiki_overview" -> aiOverviewPage ?: page
+                else -> page
+            }
         }
 
         val writtenItems = pageDrafts.mapIndexed { index, draft ->
             val existingPage = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
             val isListingPage = draft.sourceType == "wiki_index" || draft.sourceType == "wiki_overview"
             val mergedMarkdown = if (isListingPage) {
-                draft.markdown
+                // 关键修复: 之前 `draft.markdown` 是无脑覆盖——新文档导入后
+                // wiki_index / wiki_overview 的 body 只剩新来源的条目,
+                // 历史来源的实体/概念/源全被擦掉(用户体感是"历史的实体、
+                // 概念、源全部不可见了")。现在用 section-aware merge:
+                // 1) frontmatter 数组(related/sources/tags)走 `wikiCompiler.merge`
+                //    拿到 case-insensitive union;
+                // 2) body 按 `## 标题` 段拆,每个段独立做"老 bullet + 新 bullet"
+                //    合并 + 按 wikilink 去重;
+                // 3) 排序保持稳定——历史条目在前,新增条目追加在末尾。
+                mergeListingPage(
+                    existing = existingPage?.contentMarkdown.orEmpty(),
+                    incoming = draft.markdown,
+                    pageTitle = draft.title,
+                )
             } else if (existingPage != null && ai.isAvailable()) {
                 val aiMerged = requestAiMerge(existingPage.contentMarkdown, draft.markdown, source.title)
                 // Body-shrink sanity check (matches llm_wiki's BODY_SHRINK_THRESHOLD).
@@ -460,11 +746,20 @@ class IngestOrchestrator(
         val currentIndex = buildCurrentIndex(kbId)
         val overview = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId.orEmpty(), "wiki_overview", "overview.md")?.contentMarkdown ?: ""
         val analysisText = analysis.summary
+        // In addition to the prose summary, surface the structured
+        // entities / concepts / relations extracted by Stage 1 so the
+        // Stage 2 model can write FILE blocks that line up with the
+        // real nodes (and so the LLM doesn't re-derive its own
+        // entities from the raw text and end up with a different set
+        // than what KnowledgeRepositoryImpl.rebuildGraphForBase will
+        // materialize). This is the bridge that turns the analysis
+        // stage from a text blob into a real source of truth.
+        val structuredContext = buildStructuredAnalysisContext(analysis)
 
         val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector.detect(parsed.markdown)
         val systemPrompt = com.my.knowledge.data.ai.AiPromptTemplates.generationPrompt(
             fileName = source.title,
-            analysisResult = analysisText,
+            analysisResult = analysisText + structuredContext,
             sourceContent = parsed.markdown,
             schema = WIKI_SCHEMA,
             purpose = WIKI_PURPOSE,
@@ -472,15 +767,94 @@ class IngestOrchestrator(
             overview = overview,
             language = detectedLanguage
         )
-        val userPrompt = buildGenerationUserMessage(source.title, analysisText, parsed.markdown)
+        val userPrompt = buildGenerationUserMessage(source.title, analysisText, parsed.markdown, structuredContext)
 
         // System prompt mirrors llm_wiki's "You are a wiki maintainer."
         // The full language directive is injected BOTH at the head of the
         // user prompt and at the tail (handled inside generationPrompt).
-        return ai.complete(
+        // The output is the raw FILE-block text we feed into
+        // FileBlockParser; cleaning the think block here keeps reasoning
+        // out of the persisted wiki content even if a future
+        // AiGateway.change forgets to do it at the boundary.
+        val response = ai.complete(
             systemPrompt = systemPrompt,
             userMessage = userPrompt
         )
+        return with(AiTextCleaner) { response.cleanModelOutput() }
+            .takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * Render the structured columns of [AnalysisResultEntity] as a
+     * compact markdown block. Used by [requestAiRawOutput] to feed
+     * Stage 2 the same entity / concept / relation list the DB now
+     * holds, so the FILE blocks the LLM emits line up with what the
+     * downstream compiler and graph rebuild will materialize. Without
+     * this bridge, Stage 2 only sees `analysis.summary` (a 2-4
+     * sentence prose), which is too thin to drive a multi-page wiki.
+     */
+    private fun buildStructuredAnalysisContext(analysis: AnalysisResultEntity): String {
+        if (analysis.entitiesJson == "[]" && analysis.conceptsJson == "[]" && analysis.relationsJson == "[]") {
+            return ""
+        }
+        val entities = runCatching { JSONArray(analysis.entitiesJson) }.getOrNull()
+        val concepts = runCatching { JSONArray(analysis.conceptsJson) }.getOrNull()
+        val relations = runCatching { JSONArray(analysis.relationsJson) }.getOrNull()
+        if ((entities == null || entities.length() == 0) &&
+            (concepts == null || concepts.length() == 0) &&
+            (relations == null || relations.length() == 0)
+        ) {
+            return ""
+        }
+        return buildString {
+            appendLine()
+            appendLine("## Stage 1 Structured Extraction (use these as the source of truth)")
+            appendLine()
+            if (entities != null && entities.length() > 0) {
+                appendLine("### Entities (${entities.length()})")
+                for (i in 0 until entities.length()) {
+                    val e = entities.optJSONObject(i) ?: continue
+                    val name = e.optString("name").trim()
+                    if (name.isBlank()) continue
+                    // P1: 优先读 LLM 的 entityType(自由语义类型),
+                    // 回退到老的 `type` 字段(enum Person/Organization/...),
+                    // 最后回退到 "entity"——这样 Stage 2 看到的类型始终是
+                    // 真正"是什么",而不是被强制成"entity"。
+                    val type = e.optString("entityType").ifBlank { e.optString("type") }.ifBlank { "entity" }
+                    val desc = e.optString("description").ifBlank { e.optString("definition") }
+                    val role = e.optString("role_in_source").ifBlank { e.optString("why_it_matters") }
+                    appendLine("- **$name** ($type) — ${desc.take(200)}")
+                    if (role.isNotBlank()) appendLine("  - role: ${role.take(120)}")
+                }
+                appendLine()
+            }
+            if (concepts != null && concepts.length() > 0) {
+                appendLine("### Concepts (${concepts.length()})")
+                for (i in 0 until concepts.length()) {
+                    val c = concepts.optJSONObject(i) ?: continue
+                    val name = c.optString("name").trim()
+                    if (name.isBlank()) continue
+                    // P1: 同上,优先 conceptCategory,回退 category。
+                    val category = c.optString("conceptCategory").ifBlank { c.optString("category") }.ifBlank { "concept" }
+                    val definition = c.optString("definition").ifBlank { c.optString("description") }
+                    appendLine("- **$name** ($category) — ${definition.take(200)}")
+                }
+                appendLine()
+            }
+            if (relations != null && relations.length() > 0) {
+                appendLine("### Relations (${relations.length()})")
+                for (i in 0 until relations.length()) {
+                    val r = relations.optJSONObject(i) ?: continue
+                    val source = r.optString("source").trim()
+                    val target = r.optString("target").trim()
+                    if (source.isBlank() || target.isBlank()) continue
+                    val type = r.optString("type").ifBlank { "related_to" }
+                    appendLine("- $source —[$type]→ $target")
+                }
+                appendLine()
+            }
+            appendLine("Use these names and types as the authoritative list of nodes. When you emit `---FILE:` blocks, the `type:` frontmatter enum is FIXED (entity|concept|...) by the directory the page lives in — DO NOT write entityType/conceptCategory values into `type:`. Put the semantic type in `entityType` (entity pages) or `conceptCategory` (concept pages) instead.")
+        }
     }
 
     private suspend fun requestAiMerge(
@@ -497,7 +871,11 @@ class IngestOrchestrator(
             systemPrompt = "You are a wiki merging assistant. Output only the merged markdown content starting with '---'.",
             userMessage = prompt
         )
-        return if (response.startsWith("---")) response else {
+        // Strip think + fence before validating the leading "---" sentinel
+        // — otherwise a model's preamble-think-then-merge pattern would
+        // make the response look invalid and force a template fallback.
+        val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
+        return if (cleaned.startsWith("---")) cleaned else {
             // Fallback to template merge if AI output is invalid
             wikiCompiler.merge(existingContent, incomingContent, sourceTitle)
         }
@@ -521,19 +899,112 @@ class IngestOrchestrator(
             currentIndex = currentIndex,
             purpose = purpose,
             fragments = emptyList(),
+            // The schema hint is what makes the LLM actually emit the
+            // entities / concepts / relations structure that the
+            // downstream WikiPageCompiler + KnowledgeRepositoryImpl
+            // expect. Without it the model defaults to the markdown
+            // `## Key Entities` format and parseAiAnalysisJson ends up
+            // with empty arrays — which is exactly the bug we are
+            // fixing here.
+            schemaHint = ANALYSIS_SCHEMA,
             language = detectedLanguage
         )
         val userPrompt = buildAnalysisUserMessage(source, parsed.markdown.take(50_000))
 
-        return ai.complete(systemPrompt, userPrompt)
-            .takeIf { it.isNotBlank() && !it.startsWith("[") }
+        // `chatJson` appends "只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n..."
+        // to the system prompt and pins temperature to 0.2. That dual
+        // signal (system + suffix + schema hint) is what keeps small /
+        // mid-size models honest about emitting pure JSON. We still
+        // call AiTextCleaner.cleanModelOutput afterwards to strip
+        // <think>...</think> blocks the gateway may have left in.
+        val raw = ai.chatJson(
+            systemPrompt = systemPrompt,
+            userPrompt = userPrompt,
+            schemaHint = ANALYSIS_SCHEMA,
+            temperature = 0.1f
+        )
+        val cleaned = with(AiTextCleaner) { raw.cleanModelOutput() }
+        return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
+    }
+
+    /**
+     * Bridge between the LLM's raw JSON output and the structured columns
+     * on [AnalysisResultEntity]. The previous version of `analysisTask`
+     * skipped this step entirely and just stuffed the AI's text into
+     * `summary`, leaving `entitiesJson` / `conceptsJson` / `relationsJson`
+     * hard-coded to `[]` / `tags` / `[]`. That meant the wiki never
+     * received any real entities, every "concept" page was named after
+     * a tag with an empty description, and the knowledge graph had zero
+     * non-wikilink edges.
+     *
+     * This function is the missing piece: it takes whatever the model
+     * produced (or null if the model failed), repairs + parses the JSON,
+     * and normalizes the result into a [ParsedAnalysis] the rest of
+     * the pipeline can consume. On parse failure we fall back to a
+     * local heuristic so the user still gets a working summary /
+     * archiveRecommendation — but we DO NOT invent fake entities or
+     * relations; the fallback keeps those arrays empty so the
+     * generation stage's `FILE block` path can still synthesize pages
+     * from the (also AI-driven) `requestAiRawOutput` pass.
+     */
+    /**
+     * The reason [parseAiAnalysisJson] is `internal` rather than
+     * `private` is the same as [ParsedAnalysis] above — we want the
+     * unit test in the same package to be able to drive this function
+     * with sample LLM outputs (valid JSON, invalid JSON, missing
+     * fields, etc.) without standing up a real DB.
+     */
+    internal fun parseAiAnalysisJson(
+        raw: String?,
+        fallbackTitle: String,
+        fallbackSummary: String,
+        fallbackTags: List<String>,
+        fallbackConfidence: Float,
+    ): ParsedAnalysis {
+        val fallback = IngestJsonValidator.fallbackAnalysisJson(
+            title = fallbackTitle,
+            summary = fallbackSummary,
+            tagsJson = fallbackTags.toJsonArray(),
+            confidence = fallbackConfidence,
+            reviewReason = if (fallbackConfidence < 0.6f) "内容较短，建议人工确认摘要和归档" else null
+        )
+        if (raw.isNullOrBlank()) {
+            val obj = IngestJsonValidator.parseObjectOrNull(fallback) ?: return ParsedAnalysis.fromFallback(fallbackTags, fallbackConfidence)
+            return ParsedAnalysis.fromObj(obj, fallbackTags, fallbackConfidence, aiSucceeded = false)
+        }
+        // First pass — try to parse the raw AI output as JSON.
+        val obj = IngestJsonValidator.parseObjectOrNull(raw)
+        if (obj == null) {
+            // The AI returned something, but it wasn't JSON. Surface
+            // the failure to the user via the analysis summary and a
+            // gap entry instead of silently dropping it on the floor.
+            return ParsedAnalysis.fromObj(
+                obj = IngestJsonValidator.parseObjectOrNull(fallback) ?: return ParsedAnalysis.fromFallback(fallbackTags, fallbackConfidence),
+                fallbackTags = fallbackTags,
+                fallbackConfidence = fallbackConfidence,
+                aiSucceeded = false,
+                parseErrorNote = "AI 未能返回有效 JSON,已使用本地摘要兜底。原始输出前 200 字符: ${raw.take(200)}"
+            )
+        }
+        if (!IngestJsonValidator.validateAnalysisJson(raw)) {
+            // Got JSON, but it's missing required fields. Fall back to
+            // merging the raw into the fallback to preserve whatever
+            // we did get (e.g. summary + tags survive even if entities
+            // are absent).
+            val normalized = IngestJsonValidator.normalizeAnalysisJson(raw, fallback)
+            val merged = IngestJsonValidator.parseObjectOrNull(normalized)
+                ?: return ParsedAnalysis.fromFallback(fallbackTags, fallbackConfidence)
+            return ParsedAnalysis.fromObj(merged, fallbackTags, fallbackConfidence, aiSucceeded = true)
+        }
+        return ParsedAnalysis.fromObj(obj, fallbackTags, fallbackConfidence, aiSucceeded = true)
     }
 
     private suspend fun buildCurrentIndex(kbId: String?): String {
         if (kbId.isNullOrBlank()) return "No existing index."
-        val pages = db.knowledgeItemDao().getAllByKb(kbId)
-            .filter { it.sourceType.startsWith("wiki_") }
-            .sortedByDescending { it.updatedAt }
+        // 用专门的 wiki-only 查询 (KnowledgeItemDao.getAllWikiByKb),避免把
+        // 全部笔记都加载到内存后再 filter。KB 越大,这一步节省的延迟越明显,
+        // 之前在大 KB 下这里就是"generation 阶段卡住"的隐形凶手。
+        val pages = db.knowledgeItemDao().getAllWikiByKb(kbId)
             .take(150)
         if (pages.isEmpty()) return "No existing wiki pages."
         return pages.joinToString("\n") {
@@ -560,7 +1031,8 @@ class IngestOrchestrator(
     private fun buildGenerationUserMessage(
         fileName: String,
         analysis: String,
-        sourceContent: String
+        sourceContent: String,
+        structuredContext: String = ""
     ): String = buildString {
         appendLine("Source document to process: **$fileName**")
         appendLine()
@@ -571,6 +1043,9 @@ class IngestOrchestrator(
         appendLine("## Stage 1 Analysis (context only — do not repeat)")
         appendLine()
         appendLine(analysis)
+        if (structuredContext.isNotBlank()) {
+            appendLine(structuredContext)
+        }
         appendLine()
         appendLine("## Original Source Content")
         appendLine()
@@ -618,6 +1093,126 @@ class IngestOrchestrator(
             }
         }
         return content.replaceRange(match.groups[1]!!.range, repaired)
+    }
+
+    /**
+     * Section-aware merge for `wiki_index` and `wiki_overview` pages.
+     *
+     * The simple "use draft.markdown" path that was here before lost
+     * every historical entry on a re-ingest — the user could see
+     * "wiki/index.md" shrink back to only the newest source's
+     * entities / sources. This splits the page into frontmatter +
+     * body, walks the body by `## Title` sections, and per-section
+     * unions the bullet list (case-insensitive, dedup by normalised
+     * wikilink target so `[[ Apple ]]` and `[[apple]]` collapse).
+     *
+     * Sections that only exist in the incoming draft (e.g. a freshly
+     * emitted "## 关键实体与概念" subsection) are appended at the end
+     * of the merged body so the new source's highlights still show up
+     * — we don't drop new content, we add to it.
+     *
+     * Frontmatter is unified via [wikiCompiler.merge] (which already
+     * does case-insensitive array union for `related` / `sources` /
+     * `tags`).
+     */
+    private fun mergeListingPage(existing: String, incoming: String, pageTitle: String): String {
+        if (existing.isBlank()) return incoming
+        if (incoming.isBlank()) return existing
+        // Frontmatter: union arrays (sources/tags/related), keep type/title/created,
+        // bump `updated` to today.
+        var merged = wikiCompiler.merge(existing, incoming, pageTitle)
+        // Re-extract the merged frontmatter + body, then rebuild the
+        // body using the section-union logic below. wikiCompiler.merge
+        // already moved all frontmatter into the merged string, so we
+        // operate on the post-merge markdown.
+        val (exFm, exBody) = splitFrontMatter(existing)
+        val (_, inBody) = splitFrontMatter(incoming)
+        val (mFm, _) = splitFrontMatter(merged)
+        val exSections = parseSections(exBody)
+        val inSections = parseSections(inBody)
+        val sectionOrder = LinkedHashMap<String, Unit>()
+        exSections.keys.forEach { sectionOrder[it] = Unit }
+        inSections.keys.forEach { sectionOrder[it] = Unit }
+        val rebuiltBody = StringBuilder()
+        for (title in sectionOrder.keys) {
+            val exBullets = exSections[title].orEmpty()
+            val inBullets = inSections[title].orEmpty()
+            val combined = LinkedHashMap<String, String>()
+            // 历史在前,新增在尾,按 wikilink label (规范化后) 去重
+            for (bullet in exBullets) combined[normalizeBulletKey(bullet)] = bullet
+            for (bullet in inBullets) combined.putIfAbsent(normalizeBulletKey(bullet), bullet)
+            val bullets = combined.values.filter { it.isNotBlank() }
+            if (bullets.isNotEmpty()) {
+                rebuiltBody.append("## ").append(title).append('\n')
+                bullets.forEach { bullet -> rebuiltBody.append(bullet).append('\n') }
+                rebuiltBody.append('\n')
+            }
+        }
+        // Reassemble: frontmatter (from merged) + body (from section merge)
+        val fm = mFm ?: exFm
+        return if (fm != null) {
+            fm.trimEnd('\n') + "\n\n" + rebuiltBody.toString().trimEnd('\n') + "\n"
+        } else {
+            rebuiltBody.toString().trimEnd('\n') + "\n"
+        }
+    }
+
+    private data class FrontMatterBody(val frontMatter: String?, val body: String)
+
+    private fun splitFrontMatter(markdown: String): FrontMatterBody {
+        val trimmed = markdown.trimStart()
+        if (!trimmed.startsWith("---")) return FrontMatterBody(null, markdown)
+        val firstNewline = trimmed.indexOf('\n')
+        if (firstNewline < 0) return FrontMatterBody(null, markdown)
+        val afterFirst = trimmed.substring(firstNewline + 1)
+        val closeIdx = afterFirst.indexOf("\n---")
+        if (closeIdx < 0) return FrontMatterBody(null, markdown)
+        val fm = trimmed.substring(0, firstNewline + 1 + closeIdx + 4) // include trailing \n---
+        val body = afterFirst.substring(closeIdx + 4).trimStart('\n')
+        return FrontMatterBody(fm, body)
+    }
+
+    /**
+     * Split body by `## Title` headers. Returns ordered map from
+     * section title to list of bullet lines (without the header
+     * itself). Lines outside any section (paragraphs between H1
+     * and the first H2) are not preserved — listing pages have
+     * only an H1 title, then sections.
+     */
+    private fun parseSections(body: String): LinkedHashMap<String, MutableList<String>> {
+        val out = LinkedHashMap<String, MutableList<String>>()
+        var current: String? = null
+        for (rawLine in body.lines()) {
+            val line = rawLine.trimEnd()
+            val header = Regex("^##\\s+(.+?)\\s*$").find(line)
+            if (header != null) {
+                current = header.groupValues[1].trim()
+                out.getOrPut(current) { mutableListOf() }
+            } else if (current != null) {
+                if (line.isNotBlank()) {
+                    // 跳过跟 frontmatter 重新切开可能产生的"前缀行"
+                    out.getOrPut(current) { mutableListOf() }.add(line)
+                }
+            }
+        }
+        return out
+    }
+
+    /**
+     * Normalise a bullet line for de-dup purposes: trim, lowercase
+     * ASCII, strip the outer `[[ ]]` if any, and collapse internal
+     * whitespace. Two bullets that resolve to the same key are
+     * treated as the same entry — `[[Apple]]` and `[[ apple ]]`
+     * collide intentionally.
+     */
+    private fun normalizeBulletKey(bullet: String): String {
+        val label = bullet.trim()
+            .removePrefix("- ")
+            .removePrefix("* ")
+            .trim()
+        val inside = Regex("\\[\\[\\s*(.+?)\\s*]]").find(label)?.groupValues?.get(1) ?: label
+        val firstBar = inside.substringBefore("|").trim()
+        return firstBar.lowercase().replace(Regex("\\s+"), " ")
     }
 
     private fun frontMatterValue(markdown: String, key: String): String? {
@@ -761,6 +1356,10 @@ class IngestOrchestrator(
             .map { it.first }
             .take(8)
 
+    // (Local heuristic extractor lives in LocalEntityHeuristic.kt so
+    //  the unit test can drive it without standing up a full DB. The
+    //  single production call site is in `analysisTask` above.)
+
     private fun List<String>.toJsonArray(): String =
         joinToString(",", "[", "]") { "\"${it.escapeJson()}\"" }
 
@@ -790,14 +1389,82 @@ Naming:
 - Entity pages use official names when possible.
 - Concept pages use stable descriptive noun phrases.
 - Every entity/concept page should be linked from wiki/index.md and should include body wikilinks to related pages.
+
+# Frontmatter `type` vs `entityType` / `conceptCategory`
+
+The `type:` field in frontmatter is a STRICT enum and is FIXED by the
+directory the page lives in (entity → `entity`, concept → `concept`,
+etc.). DO NOT take it from the analysis stage's `entities[].type` /
+`concepts[].category` — those are free-form semantic types ("Person",
+"Algorithm", "Theory"...) that may live outside the enum and would
+break the viewer's type filter.
+
+For entity pages, the semantic kind goes into a SEPARATE frontmatter
+field `entityType` (a free-form string). For concept pages it goes
+into `conceptCategory`. Both are optional; if missing, the graph
+rebuild falls back to "entity" / "concept" and the UI groups them
+under the default bucket.
 """
+        // P1: 实体 / 概念 的"语义类型"字段 (`type` / `category`) 不再强制 enum。
+        //
+        // 历史: 旧版 schema hint 写的是
+        //   entities.type:    "Person|Organization|Product|Dataset|Tool|System|Project|Place"
+        //   concepts.category:"Theory|Method|Technique|Phenomenon|Principle|Framework|Problem"
+        // 强 enum 让 LLM 频繁给出 enum 外的合理值(例:"Algorithm"、"Paper"、"Software"、
+        // "API"、"Framework")——这些值下游会被 sanitize 抹平,导致:
+        //   1) Wiki page frontmatter 出现 `type: Algorithm`(跟 generationPrompt 中
+        //      规定的 `source|entity|concept|...` enum 冲突);
+        //   2) KnowledgeRepositoryImpl.normalizeWikiGraphType 强制把 wiki_entity
+        //      节点的 type 写成 "entity"——所有实体一个桶,UI 的"中间处理数据"页
+        //      按 type 分组就完全没意义,KnowledgeGraphCanvas.nodeColor 也
+        //      全部退化成默认蓝;
+        //   3) 概念的 `category` 字段被 WikiPageCompiler.parseNamedObjects 漏读
+        //      (它读 `type` 不读 `category`),分类信息直接丢失。
+        //
+        // 1:1 对齐 llm_wiki: schema 描述"是什么",Wiki page frontmatter `type` 只
+        // 描述"页面在 wiki 里的角色",两者解耦。LLM 用语义类型自由描述实体/概念,
+        // 由 KnowledgeRepositoryImpl 的归一化逻辑 + UI 的 nodeColor / 标签
+        // 映射表把它们渲染到正确的视觉桶里。
+        //
+        // 双字段兼容: `entityType` 优先,`type` 作为 fallback;`conceptCategory` 优先,
+        // `category` 作为 fallback——这样老 LLM 输出(只给 `type`/`category`)和老
+        // wiki page(frontmatter 只有 `type: entity`)都不会断。
         private const val ANALYSIS_SCHEMA = """
 {
   "title": "string",
   "summary": "string",
   "tags": ["string"],
-  "entities": [{"name":"string","type":"Person|Organization|Product|Dataset|Tool|System|Project|Place","aliases":["string"],"description":"string","role_in_source":"central|supporting|peripheral","evidence":"string","source_refs":["fragmentId"],"related_concepts":["string"],"related_entities":["string"],"confidence":0.9}],
-  "concepts": [{"name":"string","category":"Theory|Method|Technique|Phenomenon|Principle|Framework|Problem","definition":"string","why_it_matters":"string","source_context":"string","related_entities":["string"],"related_concepts":["string"],"examples":["string"],"limitations":["string"],"source_refs":["fragmentId"],"confidence":0.9}],
+  "entities": [
+    {
+      "name":"string",
+      "entityType":"string (free-form: e.g. Person, Organization, Algorithm, Paper, Software, Tool, Dataset, API, Framework, Place, Event...)",
+      "type":"DEPRECATED: prefer entityType. Kept as alias for backward compat.",
+      "aliases":["string"],
+      "description":"string",
+      "role_in_source":"central|supporting|peripheral",
+      "evidence":"string",
+      "source_refs":["fragmentId"],
+      "related_concepts":["string"],
+      "related_entities":["string"],
+      "confidence":0.9
+    }
+  ],
+  "concepts": [
+    {
+      "name":"string",
+      "conceptCategory":"string (free-form: e.g. Theory, Method, Technique, Phenomenon, Principle, Framework, Problem, Pattern, Protocol, Metric...)",
+      "category":"DEPRECATED: prefer conceptCategory. Kept as alias for backward compat.",
+      "definition":"string",
+      "why_it_matters":"string",
+      "source_context":"string",
+      "related_entities":["string"],
+      "related_concepts":["string"],
+      "examples":["string"],
+      "limitations":["string"],
+      "source_refs":["fragmentId"],
+      "confidence":0.9
+    }
+  ],
   "relations": [{"source":"string","target":"string","type":"supports|contradicts|extends|uses|part_of|related_to","reason":"string","evidenceFragmentIds":["string"],"confidence":0.8}],
   "claims": [{"claim":"string","evidence":"string","evidenceFragmentIds":["string"],"confidence":0.8}],
   "gaps": [{"gap":"string","whyItMatters":"string","suggestedAction":"ask_user|web_research|connect_nodes|validate_claim"}],
@@ -809,4 +1476,35 @@ Naming:
 }
 """
     }
+}
+
+/**
+ * Top-level helpers used by [ParsedAnalysis] (which lives outside the
+ * [IngestOrchestrator] class, so it can't reach the class-private
+ * extensions). Each one is the minimum-viable version of what the
+ * orchestrator's own `List<String>.toJsonArray()` /
+ * `String.escapeJson()` would produce — they only need to handle the
+ * small inputs the analysis stage feeds them.
+ */
+private fun encodeTagArray(tags: List<String>): String =
+    if (tags.isEmpty()) "[]"
+    else tags.joinToString(",", "[", "]") { "\"${it.escapeForJson()}\"" }
+
+private fun String.escapeForJson(): String =
+    replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+
+/**
+ * Append a free-form note as a JSON gap object inside an existing
+ * gaps array. Used when we want to surface "AI didn't return valid JSON"
+ * alongside any AI-emitted gaps without overwriting them.
+ */
+private fun appendGapEntry(existingGapsJson: String, note: String?): String {
+    if (note.isNullOrBlank()) return existingGapsJson
+    val arr = runCatching { JSONArray(existingGapsJson) }.getOrNull() ?: JSONArray()
+    val noteObj = JSONObject()
+        .put("gap", note)
+        .put("whyItMatters", "修复后才能完整重建实体/概念/关系")
+        .put("suggestedAction", "ask_user")
+    arr.put(noteObj)
+    return arr.toString()
 }

@@ -9,10 +9,12 @@ class DeleteSourceUseCase(
     private val fileStore: LocalFileStore
 ) {
     suspend fun deleteSource(sourceId: String): Set<String> {
-        val source = db.sourceDocumentDao().getById(sourceId) ?: return emptySet()
+        db.sourceDocumentDao().getById(sourceId) ?: return emptySet()
         val now = System.currentTimeMillis()
         val affectedKbIds = mutableSetOf<String>()
         db.processingTaskDao().cancelBySource(sourceId, now)
+        db.processingTaskDao().deleteBySource(sourceId)
+        db.processingTaskLogDao().deleteByTarget("source_document", sourceId)
         db.reviewItemDao().skipBySource(sourceId, now)
         db.knowledgeFragmentDao().deleteBySource(sourceId)
         db.parsedContentDao().deleteBySource(sourceId)
@@ -33,19 +35,6 @@ class DeleteSourceUseCase(
             db.knowledgeItemDao().softDelete(item.id, now)
             db.knowledgeItemDao().updateItemCount(item.knowledgeBaseId)
             affectedKbIds += item.knowledgeBaseId
-        }
-
-        if (generatedItems.isEmpty()) {
-            db.knowledgeItemDao().getBySourceHash(source.sha256).forEach { item ->
-                db.archiveRecommendationDao().deleteByItemId(item.id)
-                db.processingTaskDao().deleteByTarget("knowledge_item", item.id)
-                db.processingTaskLogDao().deleteByTarget("knowledge_item", item.id)
-                db.knowledgeFragmentDao().deleteByItemId(item.id)
-                db.knowledgeGraphDao().deleteEmbeddingsByItem(item.id)
-                db.knowledgeItemDao().softDelete(item.id, now)
-                db.knowledgeItemDao().updateItemCount(item.knowledgeBaseId)
-                affectedKbIds += item.knowledgeBaseId
-            }
         }
 
         db.sourceDocumentDao().markDeleted(sourceId, now)

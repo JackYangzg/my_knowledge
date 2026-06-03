@@ -74,6 +74,22 @@ interface KnowledgeRepository {
     suspend fun getProcessingTask(taskId: String): ProcessingTaskEntity?
     suspend fun getPendingTask(targetType: String, targetId: String): ProcessingTaskEntity?
     suspend fun getActiveTasks(): Flow<List<ProcessingTaskEntity>>
+
+    /**
+     * In-flight processing task count across all sources — status
+     * `pending` or `running`. The ProfileScreen "日志中心" entry
+     * description splits the same way the log center does (处理中 /
+     * 失败 / 待确认), so this feed keeps both sides in sync.
+     */
+    fun observeActiveTaskCount(): Flow<Int>
+
+    /**
+     * Failed processing task count across all sources. Companion to
+     * [observeActiveTaskCount] — these two together replace the old
+     * single-axis "X 条未归档" string with a richer summary.
+     */
+    fun observeFailedTaskCount(): Flow<Int>
+
     suspend fun retryTask(taskId: String)
     suspend fun retryProcessingForItem(itemId: String)
     suspend fun retryProcessingForSource(sourceId: String)
@@ -133,7 +149,50 @@ interface KnowledgeRepository {
     suspend fun deleteKnowledgeRelations(ids: List<String>)
     suspend fun deleteKnowledgeCommunities(ids: List<String>)
     suspend fun getEntityByName(name: String): KnowledgeEntityEntity?
+
+    /**
+     * 灵感脉络的输入上下文:[LlmInspirationThreadWorker] 在调大模型前
+     * 一次性拉齐:
+     *   - 本次新增灵感(完整内容)
+     *   - 历史灵感(只带摘要 / 标签)
+     *   - 关联到的 wiki 实体 / 概念(从 tags / [[wikilink]] / 显式 link 反查)
+     *   - 现有脉络(增量起点)
+     * 数据由 Impl 在一次 DB 读路径里拼好,worker 只管拼 prompt。
+     */
+    suspend fun getInspirationContext(
+        kbId: String,
+        newItemId: String,
+    ): com.my.knowledge.data.repository.InspirationThreadContext
+
+    /**
+     * Backfill `wiki_entity` / `wiki_concept` pages for every source
+     * document in the given knowledge base that doesn't already have
+     * them, using each source's latest `AnalysisResultEntity` (no LLM
+     * call — runs the local `WikiPageCompiler` template against the
+     * already-extracted entities / concepts / relations). Then
+     * rebuilds the knowledge graph so the nodes / edges become
+     * visible immediately.
+     *
+     * Intended for the "知识图谱当前为空,重新生成" recovery button on
+     * the 中间处理数据 graph tab. The previous hard-coded bug
+     * (`conceptsJson = tags.toJsonArray()`, `entitiesJson = "[]"`)
+     * left the old rows un-actionable; this backfill converts the
+     * analysis JSON we *did* capture into the wiki pages the graph
+     * rebuild needs.
+     */
+    suspend fun backfillWikiPagesForBase(kbId: String): BackfillResult
 }
+
+/**
+ * Aggregate stats returned by [KnowledgeRepository.backfillWikiPagesForBase]
+ * so the UI can show "X 个新实体 / Y 个新概念" after a backfill run.
+ */
+data class BackfillResult(
+    val sourcesScanned: Int,
+    val entityPagesInserted: Int,
+    val conceptPagesInserted: Int,
+    val sourcesSkipped: Int,
+)
 
 data class ProfileStats(
     val knowledgeBaseCount: Int,

@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
@@ -70,6 +71,13 @@ fun InspirationScreen(
     var showMoreMenu by remember { mutableStateOf(false) }
     var selectedLibrary by remember { mutableStateOf("灵感空间") }
     var showNewConfirmDialog by remember { mutableStateOf(false) }
+    // Shown when the user taps the editor's back arrow while there are
+    // unsaved changes. Three choices: 保存 (save and exit), 不保存
+    // (exit without saving), 取消 (stay in editor). The old code just
+    // set `showEditor = false` on back, which silently dropped any
+    // in-flight edits — a notorious source of "I typed all that for
+    // nothing" complaints.
+    var showExitConfirmDialog by remember { mutableStateOf(false) }
     var aiActionStatus by remember { mutableStateOf<String?>(null) }
     var completionMessage by remember { mutableStateOf<String?>(null) }
     var showEditor by remember(startInEditor) { mutableStateOf(startInEditor) }
@@ -210,6 +218,30 @@ fun InspirationScreen(
         onDispose { voiceService.release() }
     }
 
+    // System back (hardware button / left-edge gesture) when in editor
+    // mode. Mirrors the back-arrow onClick below so the user gets
+    // the same unsaved-changes guard no matter how they try to
+    // leave. When NOT in editor mode, the default back behavior
+    // applies (close the inspiration tab, pop to the previous
+    // route, etc.) — exactly what the user expects for normal
+    // navigation.
+    //
+    // The `enabled = showEditor` clause is what scopes the
+    // interception: when showEditor flips back to false (after a
+    // confirmed exit), the handler unregisters itself on the next
+    // recomposition and the system back is free to navigate again.
+    BackHandler(enabled = showEditor) {
+        if (voiceState.isRecording) {
+            commitVoiceTranscript(voiceState.partialTranscript)
+            voiceService.stopRecording()
+        }
+        if (viewModel.isDirty) {
+            showExitConfirmDialog = true
+        } else {
+            showEditor = false
+        }
+    }
+
     fun startSpeechInput() {
         keyboardController?.hide()
         if (mode != "edit") {
@@ -281,7 +313,18 @@ fun InspirationScreen(
                                 commitVoiceTranscript(voiceState.partialTranscript)
                                 voiceService.stopRecording()
                             }
-                            showEditor = false
+                            // Unsaved-changes guard. Read `isDirty`
+                            // inside the lambda (not at composition
+                            // time) so we always see the freshest
+                            // value, even if the user just typed a
+                            // new character. The previous code went
+                            // straight to `showEditor = false` and
+                            // silently dropped in-flight edits.
+                            if (viewModel.isDirty) {
+                                showExitConfirmDialog = true
+                            } else {
+                                showEditor = false
+                            }
                         },
                         modifier = Modifier.size(40.dp)
                     ) {
@@ -580,6 +623,66 @@ fun InspirationScreen(
             dismissButton = { TextButton(onClick = { showNewConfirmDialog = false }) { Text("取消") } }
         )
     }
+
+    if (showExitConfirmDialog) {
+        // Shown when the editor's back button is tapped while
+        // `viewModel.isDirty` is true. Three outcomes:
+        //   保存   — run `saveToKnowledgeBase`, then exit
+        //   不保存 — exit immediately, draft stays in note table
+        //            (so the user can recover it via "新建灵感" if
+        //            they re-open the editor before the draft is
+        //            auto-cleaned up)
+        //   取消   — close the dialog, stay in the editor
+        // We await the save inside our own coroutine so the
+        // `forceSaveDraft` call inside `saveToKnowledgeBase` is
+        // guaranteed to complete before the editor is hidden —
+        // otherwise the user could "save and exit" and then
+        // crash/relaunch and find the title/content never made it
+        // to disk.
+        AlertDialog(
+            onDismissRequest = { showExitConfirmDialog = false },
+            icon = {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = null,
+                    tint = Color(0xFF147EC5),
+                    modifier = Modifier.size(24.dp)
+                )
+            },
+            title = { Text("返回上一级", fontWeight = FontWeight.Bold) },
+            text = { Text("当前灵感尚未保存到知识库，是否保存后返回？") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExitConfirmDialog = false
+                        scope.launch {
+                            val savedTo = viewModel.saveToKnowledgeBase(selectedLibrary)
+                            Toast.makeText(
+                                context,
+                                "已保存到「$savedTo」知识库",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                            showEditor = false
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
+                ) { Text("保存", color = Color.White) }
+            },
+            dismissButton = {
+                // Two buttons live in the dismiss slot because the
+                // user spec calls for three options (保存 / 不保存
+                // / 取消). 不保存 is the destructive action so it
+                // gets a red label, 取消 stays neutral.
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = {
+                        showExitConfirmDialog = false
+                        showEditor = false
+                    }) { Text("不保存", color = Color(0xFFEF4444)) }
+                    TextButton(onClick = { showExitConfirmDialog = false }) { Text("取消") }
+                }
+            }
+        )
+    }
 }
 
 @Composable
@@ -696,7 +799,19 @@ private fun InspirationThreadCard(thread: InspirationThreadUi, itemCount: Int) {
                 }
             }
             Text(thread.summary, fontSize = 14.sp, lineHeight = 22.sp, color = Color(0xFF334155))
-            InspirationThreadSection(title = "主线", values = thread.mainlines)
+            // 主线条带 diff 角标(本次新增/演变/废弃)
+            InspirationThreadSection(
+                title = "主线",
+                values = thread.mainlines,
+                hints = thread.diff.mainlineSegmentHints,
+            )
+            // 增量 diff 摘要,仅在确实有变化时显示
+            if (thread.diff.newMainlineSegments.isNotEmpty() ||
+                thread.diff.evolvedSegments.isNotEmpty() ||
+                thread.diff.obsoleteSegments.isNotEmpty()
+            ) {
+                ThreadDiffSummary(diff = thread.diff)
+            }
             InspirationThreadSection(title = "问题", values = thread.questions)
             InspirationThreadSection(title = "下一步", values = thread.nextActions)
         }
@@ -704,11 +819,16 @@ private fun InspirationThreadCard(thread: InspirationThreadUi, itemCount: Int) {
 }
 
 @Composable
-private fun InspirationThreadSection(title: String, values: List<String>) {
+private fun InspirationThreadSection(
+    title: String,
+    values: List<String>,
+    hints: List<com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint> = emptyList(),
+) {
     if (values.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1))
-        values.take(4).forEach { value ->
+        values.take(4).forEachIndexed { i, value ->
+            val hint = hints.getOrNull(i) ?: com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint.UNCHANGED
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Top
@@ -720,8 +840,65 @@ private fun InspirationThreadSection(title: String, values: List<String>) {
                         .background(Color(0xFF38BDF8), CircleShape)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(value, fontSize = 13.sp, lineHeight = 20.sp, color = Color(0xFF334155), modifier = Modifier.weight(1f))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            value,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
+                            color = Color(0xFF334155),
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (hint != com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint.UNCHANGED) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            DiffBadge(hint)
+                        }
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun DiffBadge(hint: com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint) {
+    val (text, bg, fg) = when (hint) {
+        com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint.NEW ->
+            Triple("🆕 本次新增", Color(0xFFECFDF5), Color(0xFF047857))
+        com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint.EVOLVED ->
+            Triple("↻ 已演变", Color(0xFFFFFBEB), Color(0xFFB45309))
+        com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint.OBSOLETE ->
+            Triple("✕ 已废弃", Color(0xFFFEF2F2), Color(0xFFB91C1C))
+        com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint.UNCHANGED ->
+            return
+    }
+    Box(
+        modifier = Modifier
+            .background(bg, RoundedCornerShape(4.dp))
+            .padding(horizontal = 6.dp, vertical = 2.dp)
+    ) {
+        Text(text, fontSize = 10.sp, color = fg, fontWeight = FontWeight.SemiBold)
+    }
+}
+
+@Composable
+private fun ThreadDiffSummary(diff: com.my.knowledge.viewmodel.InspirationThreadUi.ThreadDiffUi) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFF8FAFC), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text("本次脉络变化", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF475569))
+        if (diff.newMainlineSegments.isNotEmpty()) {
+            Text("+ 新增 ${diff.newMainlineSegments.size} 段主线", fontSize = 11.sp, color = Color(0xFF047857))
+        }
+        if (diff.evolvedSegments.isNotEmpty()) {
+            Text("↻ 演变 ${diff.evolvedSegments.size} 段", fontSize = 11.sp, color = Color(0xFFB45309))
+        }
+        if (diff.obsoleteSegments.isNotEmpty()) {
+            Text("✕ 废弃 ${diff.obsoleteSegments.size} 段", fontSize = 11.sp, color = Color(0xFFB91C1C))
         }
     }
 }

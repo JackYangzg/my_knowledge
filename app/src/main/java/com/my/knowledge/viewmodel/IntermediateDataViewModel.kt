@@ -93,5 +93,25 @@ class IntermediateDataViewModel(
         }
     }
 
+    /**
+     * Re-runs the local `WikiPageCompiler` template against every
+     * source document's latest `AnalysisResultEntity` and inserts the
+     * missing `wiki_entity` / `wiki_concept` rows, then rebuilds the
+     * knowledge graph. Used by the "重新生成图谱" button on the
+     * graph tab to recover knowledge bases whose previous
+     * (buggy) ingest path never materialised those pages.
+     */
+    fun backfillWikiPages(onDone: (com.my.knowledge.domain.repository.BackfillResult) -> Unit = {}) {
+        val targetKb = _kbId.value
+        viewModelScope.launch {
+            if (targetKb.isNullOrBlank()) {
+                onDone(com.my.knowledge.domain.repository.BackfillResult(0, 0, 0, 0))
+                return@launch
+            }
+            val result = knowledgeRepository.backfillWikiPagesForBase(targetKb)
+            onDone(result)
+        }
+    }
+
     suspend fun getEntityByName(name: String) = knowledgeRepository.getEntityByName(name)
 }

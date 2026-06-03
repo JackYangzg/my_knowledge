@@ -27,8 +27,11 @@ fun ProfileScreen(
     onOpenRecycleBin: () -> Unit = {},
     onOpenIntermediateData: (String?) -> Unit = {}
 ) {
-    val originalFiles = KnowledgeManager.originalFiles
+    // "原始文件导入" section 已被移除——同名信息在「日志中心」页面（LogSourceCard）
+    // 已经能完整展示,这里只保留「知识加工数据」「管理」等更高层的摘要。
     val unfiledWorkCount by viewModel.unfiledWorkCount.collectAsState()
+    val processingTaskCount by viewModel.processingTaskCount.collectAsState()
+    val failedTaskCount by viewModel.failedTaskCount.collectAsState()
     val pendingRecommendationCount by viewModel.pendingRecommendationCount.collectAsState()
     val profileStats by viewModel.profileStats.collectAsState()
     val processingSummaries by viewModel.processingSummaries.collectAsState()
@@ -123,34 +126,20 @@ fun ProfileScreen(
         }
 
         item {
-            Section(title = "原始文件导入", more = "查看文件夹") {
-                originalFiles.forEachIndexed { index, file ->
-                    if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
-                    QuietCell(
-                        icon = when (file.source) {
-                            "语音" -> Icons.Default.Mic
-                            "网页" -> Icons.Default.Link
-                            "PDF" -> Icons.Default.PictureAsPdf
-                            else -> Icons.Default.Description
-                        },
-                        title = file.title,
-                        desc = "${file.source} · ${file.time} · ${file.size}",
-                        right = {
-                            Text(
-                                file.status,
-                                fontSize = 12.sp,
-                                color = if (file.status == "分析中...") Color(0xFF147EC5) else Color(0xFF6AA8D0)
-                            )
-                        }
-                    )
-                }
-            }
-        }
-
-        item {
             Section(title = "管理") {
                 val items = listOf(
-                    Triple(Icons.Default.ListAlt, "日志中心", "${unfiledWorkCount} 条未归档，${pendingRecommendationCount} 条待确认"),
+                    // 日志中心描述要跟日志中心自身的 summary 卡片对齐:
+                    //   - 处理中: pending + running 任务
+                    //   - 失败:   failed 任务
+                    //   - 待确认: pending review items (含 archive rec)
+                    // 旧的"X 条未归档"太单薄,且只覆盖了 unfiled 状态,漏掉了
+                    // 失败和待确认——用户切到日志中心能看到三张卡,回到这里却
+                    // 只能看到一个数字,体感割裂。
+                    Triple(
+                        Icons.Default.ListAlt,
+                        "日志中心",
+                        "${processingTaskCount} 条处理中，${failedTaskCount} 条失败，${pendingRecommendationCount} 条待确认"
+                    ),
                     Triple(Icons.Default.Delete, "回收站", "已删除的知识条目，可恢复"),
                     Triple(Icons.Default.Settings, "设置", "同步、模型、默认知识库")
                 )

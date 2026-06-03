@@ -13,6 +13,7 @@ import com.my.knowledge.data.ai.AiTextCleaner.removeThinkBlock
 import com.my.knowledge.data.db.entity.NoteEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
+import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.domain.usecase.AutoSaveNoteUseCase
 import com.my.knowledge.domain.usecase.CreateNoteUseCase
@@ -31,7 +32,8 @@ class NoteEditorViewModel(
     private val autoSaveNoteUseCase: AutoSaveNoteUseCase,
     private val noteRepository: NoteRepository,
     private val knowledgeRepository: KnowledgeRepository,
-    private val importSourceUseCase: ImportSourceUseCase
+    private val importSourceUseCase: ImportSourceUseCase,
+    private val scheduler: ProcessingTaskScheduler? = null,
 ) : ViewModel() {
 
     var currentNote by mutableStateOf<NoteEntity?>(null)
@@ -127,7 +129,15 @@ class NoteEditorViewModel(
         .flatMapLatest { (base, items) ->
             flow {
                 val thread = base?.let { knowledgeRepository.getThreadByKb(it.id) }
-                emit(InspirationThreadUi.from(items, thread))
+                val latestDiff = if (thread != null) {
+                    // threadLogDao.observeByThread 是 Flow,但这里只需要"最新一条"
+                    // 拿它的 diff 解析;如果 worker 还没跑过,latestDiff == null,
+                    // UI 不画角标(UNCHANGED),跟老 thread 体感一致。
+                    runCatching {
+                        knowledgeRepository.observeThreadLogs(thread.id).first().firstOrNull()
+                    }.getOrNull()?.summary?.let { LlmThreadDiff.parseFromLogSummary(it) }
+                } else null
+                emit(InspirationThreadUi.from(items, thread, latestDiff))
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), InspirationThreadUi.empty())
@@ -236,6 +246,7 @@ class NoteEditorViewModel(
             savedKnowledgeItemId = existingForNote.id
             lastPushedTitle = title
             lastPushedContent = content
+            scheduleLlmThreadUpdateIfInspiration(targetBase, existingForNote.id, triggerType = "inspiration_edited")
             return targetName
         }
 
@@ -253,12 +264,13 @@ class NoteEditorViewModel(
             ))
             lastPushedTitle = title
             lastPushedContent = content
+            scheduleLlmThreadUpdateIfInspiration(targetBase, inMemoryExisting.id, triggerType = "inspiration_edited")
             return targetName
         }
 
         // First-time save: create a fresh source + item, but link the item
         // back to the note so subsequent saves deduplicate.
-        importSourceUseCase.importText(
+        val newSourceId = importSourceUseCase.importText(
             title = savedTitle,
             text = savedContent,
             targetKbId = targetBase?.id,
@@ -268,7 +280,31 @@ class NoteEditorViewModel(
         )
         lastPushedTitle = title
         lastPushedContent = content
+        // 拿新创建的 knowledge_item id(importText 返回的是 sourceId),用于
+        // 触发灵感脉络的 LLM 增量更新。
+        val newItem = knowledgeRepository.getItemBySourceId(newSourceId)
+        newItem?.let { scheduleLlmThreadUpdateIfInspiration(targetBase, it.id, triggerType = "inspiration_added") }
         return targetName
+    }
+
+    /**
+     * 仅当保存到「灵感空间」时调度 LLM 脉络更新;其他知识库走原来的
+     * 启发式脉络(避免给"分布式系统"这种大型 KB 跑 LLM,会贵且慢)。
+     * 注:灵感空间是用户的"思考沙盒",需要真正的语义脉络,而不是 tag 聚类。
+     */
+    private fun scheduleLlmThreadUpdateIfInspiration(
+        targetBase: com.my.knowledge.data.db.entity.KnowledgeBaseEntity?,
+        itemId: String,
+        triggerType: String,
+    ) {
+        val base = targetBase ?: return
+        if (base.type != "inspiration") return
+        val sched = scheduler ?: return
+        sched.scheduleLlmThreadUpdate(
+            kbId = base.id,
+            newItemId = itemId,
+            triggerType = triggerType,
+        )
     }
 
     suspend fun generateTitle(): Result<String> {
@@ -332,8 +368,36 @@ data class InspirationThreadUi(
     val summary: String,
     val mainlines: List<String>,
     val questions: List<String>,
-    val nextActions: List<String>
+    val nextActions: List<String>,
+    // P1: LLM 增量脉络的 diff —— 主线条中哪些是"本次新增",哪些是"被改写",
+    // 哪些是"被废弃"。前端 InspirationScreen 拿它来在主线条上画"🆕"角标,
+    // 让用户直观看到"这次保存带来了什么变化"。
+    //
+    // 旧 thread(没有 LLM 增量脉络)→ diff 为空,UI 退回到无角标。
+    val diff: ThreadDiffUi = ThreadDiffUi(),
 ) {
+    /**
+     * 增量 diff 的 UI 镜像。`mainlineSegmentHints` 给出 mainlines 列表中
+     * 每个元素的"身份 hint"和"本次变化标记",UI 渲染时按 hint 决定是否
+     * 画 "🆕" / "↻" / "✕" 角标。
+     */
+    data class ThreadDiffUi(
+        val newMainlineSegments: List<String> = emptyList(),
+        val evolvedSegments: List<EvolvedSegment> = emptyList(),
+        val obsoleteSegments: List<String> = emptyList(),
+        // 跟 mainlines 数组 1:1 对应:每个 mainline 元素的 hint 标记。
+        // `null` 表示无变化(老 thread 或非 LLM 脉络)。
+        val mainlineSegmentHints: List<SegmentHint> = emptyList(),
+    )
+
+    data class EvolvedSegment(
+        val label: String,
+        val before: String,
+        val after: String,
+    )
+
+    enum class SegmentHint { NEW, EVOLVED, OBSOLETE, UNCHANGED }
+
     companion object {
         fun empty(): InspirationThreadUi = InspirationThreadUi(
             summary = "还没有足够的灵感内容。新建几条灵感后，这里会自动整理出主线、问题和下一步。",
@@ -342,7 +406,11 @@ data class InspirationThreadUi(
             nextActions = emptyList()
         )
 
-        fun from(items: List<KnowledgeItemEntity>, thread: KnowledgeThreadEntity? = null): InspirationThreadUi {
+        fun from(
+            items: List<KnowledgeItemEntity>,
+            thread: KnowledgeThreadEntity? = null,
+            latestDiff: LlmThreadDiff? = null,
+        ): InspirationThreadUi {
             if (items.isEmpty()) return empty()
             if (thread != null) {
                 val mainlines = parseStringList(thread.mainlineJson)
@@ -355,14 +423,41 @@ data class InspirationThreadUi(
                         if (thread.coreQuestion.isNotBlank()) add(thread.coreQuestion)
                         addAll(gaps)
                     }.ifEmpty { localQuestions(items) },
-                    nextActions = suggestions.ifEmpty { localNextActions(items) }
+                    nextActions = suggestions.ifEmpty { localNextActions(items) },
+                    diff = buildDiffUi(mainlines, latestDiff),
                 )
             }
             return InspirationThreadUi(
                 summary = localSummary(items),
                 mainlines = localMainlines(items),
                 questions = localQuestions(items),
-                nextActions = localNextActions(items)
+                nextActions = localNextActions(items),
+            )
+        }
+
+        private fun buildDiffUi(
+            mainlines: List<String>,
+            diff: LlmThreadDiff?,
+        ): ThreadDiffUi {
+            if (diff == null || mainlines.isEmpty()) {
+                return ThreadDiffUi(mainlineSegmentHints = mainlines.map { SegmentHint.UNCHANGED })
+            }
+            val newSet = diff.newMainlineSegments.toSet()
+            val obsoleteSet = diff.obsoleteSegments.toSet()
+            val evolvedLabels = diff.evolvedSegments.map { it.label }.toSet()
+            val hints = mainlines.map { line ->
+                when {
+                    line in newSet -> SegmentHint.NEW
+                    line in obsoleteSet -> SegmentHint.OBSOLETE
+                    evolvedLabels.any { line.contains(it) } -> SegmentHint.EVOLVED
+                    else -> SegmentHint.UNCHANGED
+                }
+            }
+            return ThreadDiffUi(
+                newMainlineSegments = diff.newMainlineSegments,
+                evolvedSegments = diff.evolvedSegments,
+                obsoleteSegments = diff.obsoleteSegments,
+                mainlineSegmentHints = hints,
             )
         }
 
@@ -426,5 +521,55 @@ data class InspirationThreadUi(
                     .filter { it.isNotBlank() }
             }.getOrDefault(emptyList())
         }
+    }
+}
+
+/**
+ * 灵感脉络的 LLM 增量 diff —— 跟 [com.my.knowledge.worker.LlmInspirationThreadWorker]
+ * 写入 threadLog summary 末尾的 `<!--DIFF-V1: ... -->` 哨兵块配套。
+ *
+ * 这一份独立 data class(放 ViewModel 而不是 Worker)是为了 UI 层拿数据
+ * 时不用反射 Worker 的 private 内部类型;Worker 写,这里读,边界清晰。
+ */
+data class LlmThreadDiff(
+    val newMainlineSegments: List<String> = emptyList(),
+    val evolvedSegments: List<InspirationThreadUi.EvolvedSegment> = emptyList(),
+    val obsoleteSegments: List<String> = emptyList(),
+) {
+    companion object {
+        /** 从 threadLog.summary 末尾哨兵块解析 diff;没有哨兵 → null。 */
+        fun parseFromLogSummary(summary: String?): LlmThreadDiff? {
+            if (summary.isNullOrBlank()) return null
+            val sentinel = "<!--DIFF-V1:"
+            val start = summary.indexOf(sentinel)
+            if (start < 0) return null
+            val end = summary.indexOf("-->", start + sentinel.length)
+            if (end < 0) return null
+            val json = summary.substring(start + sentinel.length, end)
+            return parseFromJson(json)
+        }
+
+        internal fun parseFromJson(json: String): LlmThreadDiff? = runCatching {
+            val obj = org.json.JSONObject(json)
+            val newSegs = obj.optJSONArray("newMainlineSegments")
+                ?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } } }
+                ?: emptyList()
+            val obsoleteSegs = obj.optJSONArray("obsoleteSegments")
+                ?.let { arr -> (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } } }
+                ?: emptyList()
+            val evolved = obj.optJSONArray("evolvedSegments")
+                ?.let { arr ->
+                    (0 until arr.length()).mapNotNull { idx ->
+                        val o = arr.optJSONObject(idx) ?: return@mapNotNull null
+                        val label = o.optString("label").trim()
+                        val before = o.optString("before").trim()
+                        val after = o.optString("after").trim()
+                        if (label.isBlank() && before.isBlank() && after.isBlank()) null
+                        else InspirationThreadUi.EvolvedSegment(label, before, after)
+                    }
+                }
+                ?: emptyList()
+            LlmThreadDiff(newSegs, evolved, obsoleteSegs)
+        }.getOrNull()
     }
 }

@@ -90,7 +90,8 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                     AutoSaveNoteUseCase(noteRepo),
                     noteRepo,
                     knowledgeRepo,
-                    DependencyProvider.provideImportSourceUseCase(context)
+                    DependencyProvider.provideImportSourceUseCase(context),
+                    DependencyProvider.provideScheduler(context),
                 ) as T
             }
             modelClass.isAssignableFrom(KnowledgeHomeViewModel::class.java) -> {
@@ -105,7 +106,8 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
             modelClass.isAssignableFrom(KnowledgeItemListViewModel::class.java) -> {
                 KnowledgeItemListViewModel(
                     knowledgeRepo,
-                    DependencyProvider.provideFileStore(context)
+                    DependencyProvider.provideFileStore(context),
+                    DependencyProvider.provideImportSourceUseCase(context)
                 ) as T
             }
             modelClass.isAssignableFrom(ProfileViewModel::class.java) -> {

@@ -1,12 +1,12 @@
 package com.my.knowledge.ui.component
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AutoAwesome
@@ -15,10 +15,17 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -196,7 +203,7 @@ fun InsightRow(insight: KnowledgeInsight) {
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun KnowledgeItemRow(
     item: KnowledgeItemEntity,
@@ -207,15 +214,30 @@ fun KnowledgeItemRow(
     selected: Boolean = false,
     onSelectionChange: (Boolean) -> Unit = {},
     onClick: () -> Unit = {},
-    onLongClick: () -> Unit = {}
+    onLongClick: (Offset) -> Unit = {}
 ) {
+    var rowWindowOrigin by remember { mutableStateOf(Offset.Zero) }
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     Surface(
-        modifier = Modifier.fillMaxWidth().combinedClickable(
-            onClick = onClick,
-            onLongClick = onLongClick
-        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .onGloballyPositioned { coords ->
+                val bounds = coords.boundsInWindow()
+                rowWindowOrigin = Offset(bounds.left, bounds.top)
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { onClick() },
+                    onLongPress = { offset ->
+                        haptics.performHapticFeedback(
+                            androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress
+                        )
+                        onLongClick(rowWindowOrigin + offset)
+                    }
+                )
+            },
         color = Color.White,
-        border = BorderStroke(0.5.dp, Color(0xFFEEF6FF))
+        border = BorderStroke(0.5.dp, Color(0xFFE5E7EB))
     ) {
         Column(modifier = Modifier.padding(vertical = 10.dp, horizontal = 20.dp)) {
             Row(

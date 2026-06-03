@@ -27,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -45,6 +46,7 @@ fun IntermediateDataScreen(
     onViewDetail: (String) -> Unit,
     onSwitchKb: (String?) -> Unit = {}
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val entities by viewModel.entities.collectAsState()
     val relations by viewModel.relations.collectAsState()
     val communities by viewModel.communities.collectAsState()
@@ -264,6 +266,73 @@ fun IntermediateDataScreen(
                     if (selectedIds.isNotEmpty()) pendingBulkDelete = true
                 }
             )
+        }
+
+        // Tab 3 (graph) gets its own header strip with a recovery
+        // button. Tapping "重新生成" runs the local `WikiPageCompiler`
+        // against every source document's `AnalysisResultEntity` and
+        // inserts the missing `wiki_entity` / `wiki_concept` rows
+        // for the active KB, then rebuilds the graph. This recovers
+        // knowledge bases whose previous (buggy) ingest path never
+        // materialised those pages.
+        var isBackfilling by remember { mutableStateOf(false) }
+        if (selectedTab == 3) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color.White)
+                    .padding(horizontal = 20.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "知识图谱",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0F172A)
+                    )
+                    Text(
+                        text = "共 ${entities.size} 个节点 / ${relations.size} 条关系",
+                        fontSize = 12.sp,
+                        color = Color(0xFF64748B)
+                    )
+                }
+                TextButton(
+                    onClick = {
+                        if (!isBackfilling) {
+                            isBackfilling = true
+                            viewModel.backfillWikiPages { result ->
+                                isBackfilling = false
+                                if (result.entityPagesInserted > 0 || result.conceptPagesInserted > 0) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "已补齐 ${result.entityPagesInserted} 个实体 / ${result.conceptPagesInserted} 个概念页",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                } else {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "无需补齐,已扫描 ${result.sourcesScanned} 个来源",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isBackfilling && currentKbId != null
+                ) {
+                    if (isBackfilling) {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp, color = Color(0xFF147EC5))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("生成中…", fontSize = 13.sp, color = Color(0xFF147EC5))
+                    } else {
+                        Icon(Icons.Default.Hub, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("重新生成", fontSize = 13.sp, color = Color(0xFF147EC5))
+                    }
+                }
+            }
+            HorizontalDivider(color = Color(0xFFF3F4F6))
         }
 
         Box(modifier = Modifier.weight(1f)) {
@@ -568,88 +637,170 @@ private fun EntityList(
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             groups.forEach { (type, groupedEntities) ->
-                item(key = "header-$type") {
-                    EntityGroupHeader(
-                        title = type.entityTypeLabel(),
-                        count = groupedEntities.size,
-                        color = type.entityTypeColor()
+                // LazyListScope 的 forEach lambda 不是 @Composable 上下文,
+                // 因此 `remember` 必须放到 item 块内部或者一个独立 Composable
+                // 里。我们把整段(group 标题 + 卡片列表 + 展开/收起)抽到
+                // EntityGroupSection,让 remember 处在 Composable 作用域中。
+                item(key = "group-section-$type") {
+                    EntityGroupSection(
+                        type = type,
+                        groupedEntities = groupedEntities,
+                        selectedIds = selectedIds,
+                        isSelectionMode = isSelectionMode,
+                        onToggleSelect = onToggleSelect,
+                        onDeleteSingle = onDeleteSingle,
+                        onViewDetail = onViewDetail
                     )
-                }
-                items(groupedEntities, key = { it.id }) { entity ->
-                    val isSelected = selectedIds.contains(entity.id)
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) Color(0xFFE0F2FE) else Color.White,
-                        shadowElevation = 0.5.dp,
-                        modifier = Modifier.clickable {
-                            if (isSelectionMode) onToggleSelect(entity.id) else onViewDetail(entity.name)
-                        }
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(16.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            if (isSelectionMode) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clip(CircleShape)
-                                        .background(if (isSelected) Color(0xFF147EC5) else Color(0xFFF1F5F9))
-                                        .clickable { onToggleSelect(entity.id) },
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (isSelected) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-                                }
-                                Spacer(modifier = Modifier.width(12.dp))
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .size(40.dp)
-                                    .background(type.entityTypeColor().copy(alpha = 0.12f), RoundedCornerShape(10.dp)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    if (type == "concept") Icons.Default.Category else Icons.Default.BubbleChart,
-                                    contentDescription = null,
-                                    tint = type.entityTypeColor(),
-                                    modifier = Modifier.size(20.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(entity.name, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                                Text(
-                                    "${type.entityTypeLabel()} · 权重: ${entity.weight.toInt()}",
-                                    fontSize = 12.sp,
-                                    color = Color(0xFF5F87A3)
-                                )
-                            }
-                            if (!isSelectionMode) {
-                                IconButton(onClick = { onDeleteSingle(entity.id) }) {
-                                    Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFD1D5DB), modifier = Modifier.size(18.dp))
-                                }
-                            }
-                        }
-                    }
                 }
             }
         }
     }
 }
 
+/**
+ * 单个类型分组的渲染（标题 + 卡片 + 展开/收起）。`expanded` 状态用
+ * `remember(type) { mutableStateOf(false) }` 持有——每组独立一份,
+ * 切到别的 KB 再回来时也会重置。
+ */
+@Composable
+private fun EntityGroupSection(
+    type: String,
+    groupedEntities: List<KnowledgeEntityEntity>,
+    selectedIds: List<String>,
+    isSelectionMode: Boolean,
+    onToggleSelect: (String) -> Unit,
+    onDeleteSingle: (String) -> Unit,
+    onViewDetail: (String) -> Unit
+) {
+    var expanded by remember(type) { mutableStateOf(false) }
+    val visible = if (expanded) groupedEntities else groupedEntities.take(MAX_VISIBLE_PER_GROUP)
+    val expandable = groupedEntities.size > MAX_VISIBLE_PER_GROUP
+
+    // 整个 group section 内部用 Column 而不是再开 LazyColumn——这里
+    // 元素个数受 MAX_VISIBLE_PER_GROUP 上限(默认 3)控制,普通 Column
+    // 性能完全够用,同时让 remember 上下文和 item 块分离得干净。
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        EntityGroupHeader(
+            title = type.entityTypeLabel(),
+            count = groupedEntities.size,
+            shownCount = visible.size,
+            color = type.entityTypeColor(),
+            expanded = expanded,
+            expandable = expandable,
+            onToggle = { expanded = !expanded }
+        )
+        // 卡片列表
+        for (entity in visible) {
+            val isSelected = selectedIds.contains(entity.id)
+            // 卡片高度 = 原来 padding(16.dp) + 40dp 图标 ≈ 72dp。
+            // 现在改成 10dp padding + 28dp 图标 ≈ 48dp,视觉密度约 60%。
+            Surface(
+                shape = RoundedCornerShape(10.dp),
+                color = if (isSelected) Color(0xFFE0F2FE) else Color.White,
+                shadowElevation = 0.5.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (isSelectionMode) onToggleSelect(entity.id) else onViewDetail(entity.name)
+                    }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (isSelectionMode) {
+                        Box(
+                            modifier = Modifier
+                                .size(20.dp)
+                                .clip(CircleShape)
+                                .background(if (isSelected) Color(0xFF147EC5) else Color(0xFFF1F5F9))
+                                .clickable { onToggleSelect(entity.id) },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            if (isSelected) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        }
+                        Spacer(modifier = Modifier.width(10.dp))
+                    }
+                    Box(
+                        modifier = Modifier
+                            .size(28.dp)
+                            .background(type.entityTypeColor().copy(alpha = 0.12f), RoundedCornerShape(8.dp)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            if (type == "concept") Icons.Default.Category else Icons.Default.BubbleChart,
+                            contentDescription = null,
+                            tint = type.entityTypeColor(),
+                            modifier = Modifier.size(14.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            entity.name,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF0F172A),
+                            maxLines = 1
+                        )
+                        Text(
+                            "${type.entityTypeLabel()} · 权重 ${entity.weight.toInt()}",
+                            fontSize = 11.sp,
+                            color = Color(0xFF5F87A3),
+                            maxLines = 1
+                        )
+                    }
+                    if (!isSelectionMode) {
+                        IconButton(
+                            onClick = { onDeleteSingle(entity.id) },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = null,
+                                tint = Color(0xFFD1D5DB),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        // 折叠时如果被隐藏的条目超过 0,显示"展开更多 (N)"的次级入口;
+        // 展开时显示"收起"。复用下面 RelationList / CommunityList 用的
+        // ExpandToggleRow——三处行为完全一致,不分叉代码。
+        if (expandable) {
+            ExpandToggleRow(
+                expanded = expanded,
+                remaining = groupedEntities.size - MAX_VISIBLE_PER_GROUP,
+                onToggle = { expanded = !expanded }
+            )
+        }
+    }
+}
+
+private const val MAX_VISIBLE_PER_GROUP = 3
+
 @Composable
 private fun EntityGroupHeader(
     title: String,
     count: Int,
-    color: Color
+    shownCount: Int,
+    color: Color,
+    expanded: Boolean,
+    expandable: Boolean,
+    onToggle: () -> Unit
 ) {
+    // 整个头部是点击区:点击切换展开/折叠。仅在有 > MAX_VISIBLE_PER_GROUP
+    // 条时才有视觉效果(箭头旋转、显示"已折叠 N 条"),否则就是个普通小标题。
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 4.dp, bottom = 2.dp),
+            .clickable(enabled = expandable, onClick = onToggle)
+            .padding(top = 6.dp, bottom = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Box(
@@ -677,11 +828,29 @@ private fun EntityGroupHeader(
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
             )
         }
-        Spacer(modifier = Modifier.weight(1f))
-        HorizontalDivider(
-            modifier = Modifier.width(96.dp),
-            color = Color(0xFFE2E8F0)
-        )
+        if (expandable) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (expanded) "已展开全部" else "已折叠 ${count - shownCount} 条",
+                fontSize = 10.sp,
+                color = Color(0xFF94A3B8)
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = Color(0xFF94A3B8),
+                modifier = Modifier
+                    .size(18.dp)
+                    .rotate(if (expanded) 180f else 0f)
+            )
+        } else {
+            Spacer(modifier = Modifier.weight(1f))
+            HorizontalDivider(
+                modifier = Modifier.width(96.dp),
+                color = Color(0xFFE2E8F0)
+            )
+        }
     }
 }
 
@@ -728,49 +897,66 @@ private fun RelationList(
     if (relations.isEmpty()) {
         EmptyState("暂无识别的关联关系")
     } else {
+        // 关联关系只有"全部关系"一个分组,仍然应用"最多 3 条 + 折叠"规则,
+        // 与实体/概念分组保持一致的体感。
+        var expanded by remember { mutableStateOf(false) }
+        val visible = if (expanded) relations else relations.take(MAX_VISIBLE_PER_GROUP)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(relations, key = { it.id }) { relation ->
+            item(key = "relation-header") {
+                CollapsibleSectionHeader(
+                    title = "关联关系",
+                    total = relations.size,
+                    shown = visible.size,
+                    expanded = expanded,
+                    expandable = relations.size > MAX_VISIBLE_PER_GROUP,
+                    onToggle = { expanded = !expanded }
+                )
+            }
+            items(visible, key = { it.id }) { relation ->
                 val isSelected = selectedIds.contains(relation.id)
                 val fromName = entityNameMap[relation.fromEntityId] ?: "未知实体"
                 val toName = entityNameMap[relation.toEntityId] ?: "未知实体"
 
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = if (isSelected) Color(0xFFE0F2FE) else Color.White,
                     shadowElevation = 0.5.dp,
                     modifier = Modifier.clickable {
                         if (isSelectionMode) onToggleSelect(relation.id)
                     }
                 ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         if (isSelectionMode) {
                             Box(
                                 modifier = Modifier
-                                    .size(24.dp)
+                                    .size(20.dp)
                                     .clip(CircleShape)
                                     .background(if (isSelected) Color(0xFF147EC5) else Color(0xFFF1F5F9)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (isSelected) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                if (isSelected) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                         }
                         Column(modifier = Modifier.weight(1f)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Hub, contentDescription = null, tint = Color(0xFF6366F1), modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(relation.relationType, fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6366F1))
+                                Icon(Icons.Default.Hub, contentDescription = null, tint = Color(0xFF6366F1), modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(relation.relationType, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6366F1), maxLines = 1)
                                 Spacer(modifier = Modifier.weight(1f))
-                                Text("置信度: ${(relation.confidence * 100).toInt()}%", fontSize = 11.sp, color = Color(0xFFA3A3A3))
+                                Text("置信度 ${(relation.confidence * 100).toInt()}%", fontSize = 10.sp, color = Color(0xFFA3A3A3), maxLines = 1)
                             }
-                            Spacer(modifier = Modifier.height(10.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Surface(
@@ -780,16 +966,17 @@ private fun RelationList(
                                 ) {
                                     Text(
                                         fromName,
-                                        fontSize = 14.sp,
+                                        fontSize = 12.sp,
                                         color = Color(0xFF0F172A),
-                                        modifier = Modifier.padding(8.dp),
-                                        fontWeight = FontWeight.Medium
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1
                                     )
                                 }
                                 Icon(
                                     Icons.AutoMirrored.Filled.ArrowForward,
                                     contentDescription = null,
-                                    modifier = Modifier.padding(horizontal = 8.dp).size(16.dp),
+                                    modifier = Modifier.size(14.dp),
                                     tint = Color(0xFF94A3B8)
                                 )
                                 Surface(
@@ -799,22 +986,130 @@ private fun RelationList(
                                 ) {
                                     Text(
                                         toName,
-                                        fontSize = 14.sp,
+                                        fontSize = 12.sp,
                                         color = Color(0xFF0F172A),
-                                        modifier = Modifier.padding(8.dp),
-                                        fontWeight = FontWeight.Medium
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1
                                     )
                                 }
                             }
                         }
                         if (!isSelectionMode) {
-                            IconButton(onClick = { onDeleteSingle(relation.id) }) {
-                                Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFD1D5DB), modifier = Modifier.size(18.dp))
+                            IconButton(
+                                onClick = { onDeleteSingle(relation.id) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFD1D5DB), modifier = Modifier.size(16.dp))
                             }
                         }
                     }
                 }
             }
+            // 折叠时显示"展开更多",展开时显示"收起"——和 EntityList 行为一致。
+            if (relations.size > MAX_VISIBLE_PER_GROUP) {
+                item(key = "relation-toggle") {
+                    ExpandToggleRow(
+                        expanded = expanded,
+                        remaining = relations.size - MAX_VISIBLE_PER_GROUP,
+                        onToggle = { expanded = !expanded }
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 通用折叠小标题(供 RelationList / CommunityList 共用,逻辑和
+ * EntityGroupHeader 一致,但没有"按类型"的概念,所以更轻量)。
+ */
+@Composable
+private fun CollapsibleSectionHeader(
+    title: String,
+    total: Int,
+    shown: Int,
+    expanded: Boolean,
+    expandable: Boolean,
+    onToggle: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = expandable, onClick = onToggle)
+            .padding(top = 6.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = title,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            color = Color(0xFF0F172A)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Surface(
+            color = Color(0xFFE0F2FE),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Text(
+                text = "$total",
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFF147EC5),
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+            )
+        }
+        if (expandable) {
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = if (expanded) "已展开全部" else "已折叠 ${total - shown} 条",
+                fontSize = 10.sp,
+                color = Color(0xFF94A3B8)
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = if (expanded) "收起" else "展开",
+                tint = Color(0xFF94A3B8),
+                modifier = Modifier
+                    .size(18.dp)
+                    .rotate(if (expanded) 180f else 0f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun ExpandToggleRow(expanded: Boolean, remaining: Int, onToggle: () -> Unit) {
+    TextButton(
+        onClick = onToggle,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(vertical = 4.dp)
+    ) {
+        if (expanded) {
+            Text("收起", fontSize = 12.sp, color = Color(0xFF64748B))
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                tint = Color(0xFF64748B),
+                modifier = Modifier
+                    .size(16.dp)
+                    .rotate(180f)
+            )
+        } else {
+            Text(
+                "展开更多（还有 $remaining 条）",
+                fontSize = 12.sp,
+                color = Color(0xFF147EC5)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Icon(
+                Icons.Default.ArrowDropDown,
+                contentDescription = null,
+                tint = Color(0xFF147EC5),
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
@@ -831,45 +1126,73 @@ private fun CommunityList(
     if (communities.isEmpty()) {
         EmptyState("暂无形成的主题群")
     } else {
+        // 主题群只有"全部主题群"一个分组——但仍然用 60% 高度 + 折叠 3 条规则。
+        var expanded by remember { mutableStateOf(false) }
+        val visible = if (expanded) communities else communities.take(MAX_VISIBLE_PER_GROUP)
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
             contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(communities, key = { it.id }) { community ->
+            item(key = "community-header") {
+                CollapsibleSectionHeader(
+                    title = "主题群",
+                    total = communities.size,
+                    shown = visible.size,
+                    expanded = expanded,
+                    expandable = communities.size > MAX_VISIBLE_PER_GROUP,
+                    onToggle = { expanded = !expanded }
+                )
+            }
+            items(visible, key = { it.id }) { community ->
                 val isSelected = selectedIds.contains(community.id)
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
                     color = if (isSelected) Color(0xFFE0F2FE) else Color.White,
                     shadowElevation = 0.5.dp,
                     modifier = Modifier.clickable {
                         if (isSelectionMode) onToggleSelect(community.id)
                     }
                 ) {
-                    Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         if (isSelectionMode) {
                             Box(
                                 modifier = Modifier
-                                    .size(24.dp)
+                                    .size(20.dp)
                                     .clip(CircleShape)
                                     .background(if (isSelected) Color(0xFF147EC5) else Color(0xFFF1F5F9)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                if (isSelected) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+                                if (isSelected) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                             }
-                            Spacer(modifier = Modifier.width(12.dp))
+                            Spacer(modifier = Modifier.width(10.dp))
                         }
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(community.name, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(community.summary, fontSize = 13.sp, color = Color(0xFF5F87A3), lineHeight = 20.sp)
+                            Text(community.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(community.summary, fontSize = 12.sp, color = Color(0xFF5F87A3), lineHeight = 18.sp, maxLines = 2)
                         }
                         if (!isSelectionMode) {
-                            IconButton(onClick = { onDeleteSingle(community.id) }) {
-                                Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFD1D5DB), modifier = Modifier.size(18.dp))
+                            IconButton(
+                                onClick = { onDeleteSingle(community.id) },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFD1D5DB), modifier = Modifier.size(16.dp))
                             }
                         }
                     }
+                }
+            }
+            if (communities.size > MAX_VISIBLE_PER_GROUP) {
+                item(key = "community-toggle") {
+                    ExpandToggleRow(
+                        expanded = expanded,
+                        remaining = communities.size - MAX_VISIBLE_PER_GROUP,
+                        onToggle = { expanded = !expanded }
+                    )
                 }
             }
         }

@@ -188,12 +188,26 @@ fun KnowledgeScreen(
 
         if (showImportSheet && selectedFileUri != null) {
             ImportSheet(
-                viewModel = viewModel,
                 uri = selectedFileUri,
+                knowledgeBases = knowledgeBases,
                 onClose = {
                     val remaining = selectedFileUris.drop(1)
                     selectedFileUris = remaining
                     showImportSheet = remaining.isNotEmpty()
+                },
+                onConfirm = { req ->
+                    // Sheet returns the resolved KB id; map it back to a
+                    // name for KnowledgeHomeViewModel.importUri, which
+                    // historically takes a name (the legacy API).
+                    val targetName = knowledgeBases.firstOrNull { it.id == req.targetKbId }?.name
+                        ?: "未归类"
+                    viewModel.importUri(
+                        uri = selectedFileUri,
+                        displayName = req.displayName,
+                        mimeType = req.mimeType,
+                        sourceType = "file_import",
+                        targetLibrary = targetName
+                    )
                 }
             )
         }

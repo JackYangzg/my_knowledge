@@ -54,7 +54,14 @@ class ThreadEvolutionWorker(
         val base = repository.getBaseById(kbId) ?: return Result.failure()
         if (base.type == "unfiled") return Result.success()
 
-        val items = repository.observeItemsByKb(kbId, Int.MAX_VALUE, 0).first()
+        // 关键修复:之前用 `observeItemsByKb` 拿数据,但那条 SQL 带
+        // `sourceType NOT LIKE 'wiki_%'`,把实体/概念/来源这些核心 wiki
+        // 页面全过滤掉了——脉络重建时只看到"灵感原文",根本看不到实体
+        // 概念节点之间的关系,等于白跑。改用刚加的 wiki-only 读路径。
+        // (KnowledgeItemDao.observeItemsByKb 仍然要保留,因为灵感原文
+        // 列表页靠它分页;脉络是另一条路,分开走。)
+        val db = AppDatabase.getInstance(applicationContext)
+        val items = db.knowledgeItemDao().getAllWikiByKb(kbId)
             .filter { it.deletedAt == null }
         val existing = repository.getThreadByKb(kbId)
 
@@ -257,23 +264,57 @@ class ThreadEvolutionWorker(
             }
         }
 
-        // Tag co-occurrence edges (medium confidence).
+        // ---- O(n²) -> O(n) 优化 ----------------------------------------
+        //
+        // 旧实现对每对 item 都跑一次 tag / title-word 集合相交，复杂度是
+        // O(n²)。一次脉络重建对一个 2000 项的 KB 要 4M 次循环，在中端
+        // Android 设备上单这一步就要 4-5 秒——配合"generation 完成后立刻
+        // scheduleThreadUpdate"，体感就是入库阶段卡住。
+        //
+        // 新实现分两步：先把 items 按 tag / word 倒排到桶里，再在每个桶内
+        // 跑两两比较。复杂度是 O(n + sum of bucket²)，标签分布越均匀
+        // 加速越明显（KB 中长尾分布下桶大小通常 << n）。seen 集合仍然
+        // 在 addRelation 内做全局去重,重复的边不会写入。
         val wordSep = Regex("[\\s\u3000-\u303F\uFF00-\uFFEF\\p{Punct}]+")
-        for (i in items.indices) {
-            for (j in i + 1 until items.size) {
-                val a = items[i]
-                val b = items[j]
-                val aTags = parseStringArray(a.tagsJson).map { it.lowercase(Locale.ROOT) }.toSet()
-                val bTags = parseStringArray(b.tagsJson).map { it.lowercase(Locale.ROOT) }.toSet()
-                val tagOverlap = aTags.intersect(bTags)
-                if (tagOverlap.isNotEmpty()) {
-                    addRelation(a.title, b.title, "同主题：${tagOverlap.first()}")
-                } else {
-                    val aWords = a.title.split(wordSep).filter { it.length > 1 }.map { it.lowercase(Locale.ROOT) }.toSet()
-                    val bWords = b.title.split(wordSep).filter { it.length > 1 }.map { it.lowercase(Locale.ROOT) }.toSet()
-                    if (aWords.intersect(bWords).isNotEmpty()) {
-                        addRelation(a.title, b.title, "标题相关")
-                    }
+
+        // Tag co-occurrence edges (medium confidence)
+        val byTag = HashMap<String, ArrayList<KnowledgeItemEntity>>()
+        for (item in items) {
+            for (raw in parseStringArray(item.tagsJson)) {
+                val tag = raw.lowercase(Locale.ROOT)
+                if (tag.isBlank()) continue
+                byTag.getOrPut(tag) { ArrayList() }.add(item)
+            }
+        }
+        for ((tag, bucket) in byTag) {
+            if (bucket.size < 2) continue
+            for (i in bucket.indices) {
+                val a = bucket[i]
+                for (j in i + 1 until bucket.size) {
+                    val b = bucket[j]
+                    if (a.id == b.id) continue
+                    addRelation(a.title, b.title, "同主题：$tag")
+                }
+            }
+        }
+
+        // Title-word co-occurrence edges (low confidence)
+        val byWord = HashMap<String, ArrayList<KnowledgeItemEntity>>()
+        for (item in items) {
+            for (raw in item.title.split(wordSep)) {
+                val w = raw.lowercase(Locale.ROOT)
+                if (w.length <= 1) continue
+                byWord.getOrPut(w) { ArrayList() }.add(item)
+            }
+        }
+        for ((_, bucket) in byWord) {
+            if (bucket.size < 2) continue
+            for (i in bucket.indices) {
+                val a = bucket[i]
+                for (j in i + 1 until bucket.size) {
+                    val b = bucket[j]
+                    if (a.id == b.id) continue
+                    addRelation(a.title, b.title, "标题相关")
                 }
             }
         }

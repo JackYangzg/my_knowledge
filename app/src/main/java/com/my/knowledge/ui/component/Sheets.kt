@@ -31,22 +31,58 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.AiMessageEntity
+import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.viewmodel.AskViewModel
-import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.ui.ComposeMarkdown
+
+/**
+ * Result of a confirmed import. Caller decides what to do with it — the
+ * sheet is intentionally VM-free so two different VMs (home & KB-detail)
+ * can share the same UI.
+ *
+ * @param displayName file name as shown in the picker
+ * @param mimeType resolved by ContentResolver; may be null for unknown types
+ * @param targetKbId ID of the chosen / locked knowledge base. Null only
+ *                  if the caller passed an empty `lockedKbId` AND the
+ *                  user somehow confirmed without a selection (shouldn't
+ *                  happen — the sheet always picks a default).
+ */
+data class ImportConfirmRequest(
+    val displayName: String,
+    val mimeType: String?,
+    val targetKbId: String?
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit) {
+fun ImportSheet(
+    uri: Uri,
+    knowledgeBases: List<KnowledgeBaseEntity>,
+    onClose: () -> Unit,
+    onConfirm: (ImportConfirmRequest) -> Unit,
+    /**
+     * When non-null, the sheet hides the KB dropdown and locks the
+     * destination to this KB. Use this when the user picks a file from
+     * INSIDE a knowledge base — the destination is obvious and forcing
+     * a choice is just friction.
+     */
+    lockedKb: KnowledgeBaseEntity? = null
+) {
     val context = LocalContext.current
     val fileName = remember(uri) { getFileName(context, uri) ?: "未知文档" }
-    var selectedLibrary by remember { mutableStateOf("未归类") }
+    var selectedLibrary by remember { mutableStateOf(lockedKb?.name ?: "未归类") }
     var expanded by remember { mutableStateOf(false) }
-    
-    val knowledgeBases by viewModel.knowledgeBases.collectAsState()
-    LaunchedEffect(knowledgeBases) {
+
+    LaunchedEffect(knowledgeBases, lockedKb) {
+        if (lockedKb != null) {
+            // Locked mode: the dropdown is hidden, but keep the state in
+            // sync so the callback below knows which KB to use.
+            selectedLibrary = lockedKb.name
+            return@LaunchedEffect
+        }
         if (knowledgeBases.isNotEmpty() && knowledgeBases.none { it.name == selectedLibrary }) {
-            selectedLibrary = knowledgeBases.firstOrNull { it.type == "unfiled" }?.name ?: knowledgeBases.first().name
+            selectedLibrary = knowledgeBases.firstOrNull { it.type == "unfiled" }?.name
+                ?: knowledgeBases.first().name
         }
     }
 
@@ -62,7 +98,7 @@ fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit
         ) {
             Text("导入知识", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Surface(
                 shape = RoundedCornerShape(12.dp),
                 color = Color(0xFFF7FBFF),
@@ -84,38 +120,69 @@ fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit
             Spacer(modifier = Modifier.height(20.dp))
             Text("归档位置", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF737373))
             Spacer(modifier = Modifier.height(8.dp))
-            
-            Box {
+
+            if (lockedKb != null) {
+                // Locked mode: render the destination as a non-interactive
+                // chip so the user can SEE where it's going, but can't
+                // accidentally redirect it to another base. The whole point
+                // of being inside a KB is the import lands HERE.
                 Surface(
-                    onClick = { expanded = true },
                     shape = RoundedCornerShape(10.dp),
-                    color = Color.White,
-                    border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
+                    color = Color(0xFFEFF7FF),
+                    border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(selectedLibrary, fontSize = 14.sp, color = Color(0xFF262626))
-                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color(0xFFA3A3A3))
+                        Text(
+                            text = lockedKb.name,
+                            fontSize = 14.sp,
+                            color = Color(0xFF0F172A),
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Text(
+                            text = "当前知识库",
+                            fontSize = 11.sp,
+                            color = Color(0xFF147EC5)
+                        )
                     }
                 }
-                
-                DropdownMenu(
-                    expanded = expanded,
-                    onDismissRequest = { expanded = false },
-                    modifier = Modifier.background(Color.White).fillMaxWidth(0.85f)
-                ) {
-                    knowledgeBases.forEach { kb ->
-                        DropdownMenuItem(
-                            text = { Text(kb.name) },
-                            onClick = {
-                                selectedLibrary = kb.name
-                                expanded = false
-                            }
-                        )
+            } else {
+                Box {
+                    Surface(
+                        onClick = { expanded = true },
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color.White,
+                        border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(selectedLibrary, fontSize = 14.sp, color = Color(0xFF262626))
+                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color(0xFFA3A3A3))
+                        }
+                    }
+
+                    DropdownMenu(
+                        expanded = expanded,
+                        onDismissRequest = { expanded = false },
+                        modifier = Modifier.background(Color.White).fillMaxWidth(0.85f)
+                    ) {
+                        knowledgeBases.forEach { kb ->
+                            DropdownMenuItem(
+                                text = { Text(kb.name) },
+                                onClick = {
+                                    selectedLibrary = kb.name
+                                    expanded = false
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -124,12 +191,17 @@ fun ImportSheet(viewModel: KnowledgeHomeViewModel, uri: Uri, onClose: () -> Unit
             Button(
                 onClick = {
                     val mimeType = context.contentResolver.getType(uri)
-                    viewModel.importUri(
-                        uri = uri,
-                        displayName = fileName,
-                        mimeType = mimeType,
-                        sourceType = "file_import",
-                        targetLibrary = selectedLibrary
+                    val targetKbId = if (lockedKb != null) {
+                        lockedKb.id
+                    } else {
+                        knowledgeBases.firstOrNull { it.name == selectedLibrary }?.id
+                    }
+                    onConfirm(
+                        ImportConfirmRequest(
+                            displayName = fileName,
+                            mimeType = mimeType,
+                            targetKbId = targetKbId
+                        )
                     )
                     onClose()
                 },

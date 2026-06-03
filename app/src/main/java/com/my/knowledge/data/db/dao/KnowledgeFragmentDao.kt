@@ -35,4 +35,8 @@ interface KnowledgeFragmentDao {
 
     @Query("DELETE FROM knowledge_fragment WHERE sourceId = :sourceId")
     suspend fun deleteBySource(sourceId: String)
+
+    /** Used when moving an item to a different KB — updates kbId on all its fragments. */
+    @Query("UPDATE knowledge_fragment SET knowledgeBaseId = :targetKbId WHERE itemId = :itemId")
+    suspend fun updateKbIdByItem(itemId: String, targetKbId: String)
 }

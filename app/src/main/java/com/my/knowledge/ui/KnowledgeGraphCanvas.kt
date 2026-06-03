@@ -31,7 +31,12 @@ import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.math.min
 
-private const val G6_CDN_URL = "https://unpkg.com/@antv/g6@5/dist/g6.min.js"
+// G6 v4 ships a UMD bundle; G6 v5 is ESM-only and cannot be loaded via
+// <script src>. Bundling G6 v4 into the APK also means the graph works
+// offline — the previous CDN approach would silently fail in regions
+// where unpkg is slow or blocked, leaving the page blank with no error
+// hint. The file lives at app/src/main/assets/graph/g6.min.js (~1.8 MB).
+private const val G6_ASSET_URL = "file:///android_asset/graph/g6.min.js"
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
@@ -65,6 +70,9 @@ fun ForceDirectedGraph(
                 factory = { context ->
                     WebView(context).apply {
                         setBackgroundColor(android.graphics.Color.rgb(250, 251, 253))
+                        // Mixed content would only matter if we kept the
+                        // CDN, but we still default to safe behaviour in
+                        // case a future maintainer swaps the source.
                         webViewClient = WebViewClient()
                         webChromeClient = WebChromeClient()
                         settings.javaScriptEnabled = true
@@ -80,7 +88,12 @@ fun ForceDirectedGraph(
                             "KnowledgeGraphBridge"
                         )
                         loadDataWithBaseURL(
-                            "https://antv-g6.local/",
+                            // The base URL must share an origin with the
+                            // G6 script for the file:// asset to load
+                            // under the same-origin policy. file://...
+                            // matches file:///android_asset/... so this
+                            // works without mixed-content config.
+                            "file:///android_asset/graph/",
                             graphHtml(),
                             "text/html",
                             "UTF-8",
@@ -217,6 +230,8 @@ private fun graphHtml(): String = """
       bottom: 14px;
       padding: 10px 12px;
       color: #B91C1C;
+      max-height: 40%;
+      overflow: auto;
     }
     #legend {
       left: 12px;
@@ -245,6 +260,19 @@ private fun graphHtml(): String = """
   </div>
   <div id="error"></div>
   <script>
+    // ---- G6 v4.x API (asset is 4.8.23 UMD bundle) ----------------
+    //
+    // 之前这段是 G6 v5 的写法:`new G6.Graph({ data, behaviors, node, edge })`,
+    // v4 的 Graph 构造器拿到这些键会全部忽略——v4 的标准流程是
+    //   new G6.Graph({ container, width, height, modes, layout,
+    //                  defaultNode, defaultEdge, nodeStateStyles,
+    //                  fitView, fitViewPadding })
+    //   graph.data({ nodes, edges });
+    //   graph.render();
+    // 同时节点/边的样式通过 defaultNode/defaultEdge 的 style 回调函数
+    // 写,不嵌套 data/style。状态用 setItemState 而非 setElementState。
+    // 这就是为什么图谱"一片白板"——graph 构造了、render() 跑了,但
+    // data 从未注入,画布始终空。
     let graph = null;
     let pendingData = null;
     let g6Ready = false;
@@ -264,82 +292,116 @@ private fun graphHtml(): String = """
     function renderGraph(data) {
       try {
         if (!window.G6 || !window.G6.Graph) {
-          showError('G6 加载失败，请检查网络。');
+          showError('G6 加载失败，请检查 assets/graph/g6.min.js 是否存在。');
           return;
         }
         const container = document.getElementById('container');
-        const width = container.clientWidth || window.innerWidth;
-        const height = container.clientHeight || window.innerHeight;
+        // 首次进入页面时 WebView 还没完成 layout,clientWidth/clientHeight
+        // 可能为 0——先用窗口尺寸兜底,等到 resize 时再 fitView。
+        const width = container.clientWidth || window.innerWidth || 360;
+        const height = container.clientHeight || window.innerHeight || 640;
+
+        // v4 node model: 直接把 node.id / size / color / label 平铺在节点上,
+        // defaultNode.style 回调函数读这些字段填到 G6 内部 model。
         const nodes = (data.nodes || []).map((node) => ({
           id: node.id,
-          data: node,
-          style: {
-            size: node.size,
-            fill: node.color,
-            stroke: '#FFFFFF',
-            lineWidth: 2,
-            labelText: node.label,
-            labelFill: '#334155',
-            labelFontSize: 12,
-            labelPlacement: 'bottom',
-            labelMaxWidth: 120
-          }
+          size: node.size,
+          color: node.color,
+          label: node.label,
+          type: node.type,
+          weight: node.weight
         }));
         const edges = (data.edges || []).map((edge) => ({
           id: edge.id,
           source: edge.source,
           target: edge.target,
-          data: edge,
-          style: {
-            stroke: edge.color,
-            lineWidth: edge.relationType && edge.relationType.indexOf('analysis:') === 0 ? 1.8 : 1.2,
-            opacity: Math.max(0.25, Math.min(0.85, (edge.confidence || 0.5) * 0.7 + 0.15))
-          }
+          color: edge.color,
+          relationType: edge.relationType,
+          confidence: edge.confidence,
+          // 把"分析关系/同源关联"是否加粗的判定挪到 G6 渲染时:
+          // edge.lineWidth 不在 model 上,用 relationType 在 defaultEdge
+          // 回调里判断即可,这里不再带冗余字段。
         }));
-        if (graph) graph.destroy();
+
+        if (graph) { graph.destroy(); graph = null; }
         graph = new window.G6.Graph({
           container,
           width,
           height,
-          data: { nodes, edges },
-          autoFit: 'view',
-          padding: 48,
+          fitView: true,
+          fitViewPadding: 48,
+          animate: false,
+          // v4 用 modes 描述交互(原 v5 的 behaviors 在 v4 里没有这个名字)
+          modes: {
+            default: ['drag-canvas', 'zoom-canvas', 'drag-node']
+          },
           layout: {
             type: 'force',
             preventOverlap: true,
-            nodeSize: (d) => d.data && d.data.size ? d.data.size : 28,
-            linkDistance: 120
+            linkDistance: 120,
+            // v4 nodeSize 接受数字或 (node) => number——传函数时回调收到
+            // G6 内部 model(已含我们放进去的 size 字段)
+            nodeSize: (n) => (n && n.size ? n.size : 30)
           },
-          behaviors: [
-            'drag-canvas',
-            'zoom-canvas',
-            'drag-element'
-          ],
-          node: {
-            state: {
-              selected: { stroke: '#0F172A', lineWidth: 3 },
-              hover: { stroke: '#0F172A', lineWidth: 2 }
+          defaultNode: {
+            type: 'circle',
+            size: (n) => (n && n.size ? n.size : 30),
+            style: {
+              fill: (n) => (n && n.color ? n.color : '#147EC5'),
+              stroke: '#FFFFFF',
+              lineWidth: 2,
+              // v4 把 label 配置塞在 style.label 里(value / fill / fontSize /
+              // position 字段名与 v5 不同,position 用 'bottom' / 'top' / 'center')
+              label: {
+                value: (n) => (n && n.label ? n.label : ''),
+                fill: '#334155',
+                fontSize: 12,
+                position: 'bottom'
+              }
             }
           },
-          edge: {
-            state: {
-              hover: { lineWidth: 2.4, opacity: 0.9 }
+          defaultEdge: {
+            type: 'line',
+            style: {
+              stroke: (e) => (e && e.color ? e.color : '#94A3B8'),
+              lineWidth: (e) => (e && e.relationType && e.relationType.indexOf('analysis:') === 0 ? 1.8 : 1.2),
+              opacity: (e) => {
+                const c = (e && typeof e.confidence === 'number') ? e.confidence : 0.5;
+                return Math.max(0.25, Math.min(0.85, c * 0.7 + 0.15));
+              },
+              endArrow: true
             }
+          },
+          // v4 节点状态样式用 nodeStateStyles(全局),通过 setItemState(id,
+          // 'hover', true) 切换。原代码用了 v5 的 `node: { state: {...} }` +
+          // setElementState,v4 完全不识别。
+          nodeStateStyles: {
+            hover: { stroke: '#0F172A', lineWidth: 3 },
+            selected: { stroke: '#0F172A', lineWidth: 3 }
           }
         });
-        graph.on('node:click', (event) => {
-          const id = event && event.target && event.target.id;
-          if (id && window.KnowledgeGraphBridge) {
-            window.KnowledgeGraphBridge.onNodeClick(String(id));
-          }
-        });
-        graph.on('node:pointerenter', (event) => {
-          if (event && event.target) graph.setElementState(event.target.id, 'hover');
-        });
-        graph.on('node:pointerleave', (event) => {
-          if (event && event.target) graph.setElementState(event.target.id, []);
-        });
+
+        // v4 标准三步:构造 → data → render
+        graph.data({ nodes, edges });
         graph.render();
+
+        // v4 事件对象:event.target 通常是节点 ID string,
+        // event.item 是节点 G6 model(instance)——两种都接受。
+        graph.on('node:click', (event) => {
+          const id = event && event.target ? String(event.target) : null;
+          if (id && window.KnowledgeGraphBridge) {
+            window.KnowledgeGraphBridge.onNodeClick(id);
+          }
+        });
+        graph.on('node:mouseenter', (event) => {
+          const id = event && event.target ? String(event.target) : null;
+          if (id) graph.setItemState(id, 'hover', true);
+        });
+        graph.on('node:mouseleave', (event) => {
+          const id = event && event.target ? String(event.target) : null;
+          if (id) graph.setItemState(id, 'hover', false);
+        });
+
         document.getElementById('loading').style.display = 'none';
       } catch (err) {
         showError('图谱渲染失败：' + (err && err.message ? err.message : err));
@@ -349,11 +411,17 @@ private fun graphHtml(): String = """
     window.addEventListener('resize', () => {
       if (!graph) return;
       const container = document.getElementById('container');
-      graph.resize(container.clientWidth || window.innerWidth, container.clientHeight || window.innerHeight);
-      graph.fitView();
+      const w = container.clientWidth || window.innerWidth;
+      const h = container.clientHeight || window.innerHeight;
+      try {
+        graph.changeSize(w, h);
+        graph.fitView(48);
+      } catch (_) {
+        // ignore resize on partially-initialised graph
+      }
     });
   </script>
-  <script src="$G6_CDN_URL" onload="g6Ready=true; if (pendingData) renderGraph(pendingData);" onerror="showError('G6 脚本加载失败，请检查网络。')"></script>
+  <script src="$G6_ASSET_URL" onload="g6Ready=true; if (pendingData) renderGraph(pendingData);" onerror="showError('G6 脚本加载失败，请重新安装 App。')"></script>
 </body>
 </html>
 """.trimIndent()

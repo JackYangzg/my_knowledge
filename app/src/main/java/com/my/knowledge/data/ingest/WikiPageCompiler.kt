@@ -29,11 +29,23 @@ class WikiPageCompiler {
         val entities = parseNamedObjects(analysis.entitiesJson, fallbackType = "entity")
         val concepts = parseNamedObjects(analysis.conceptsJson, fallbackType = "concept")
         val allNames = (entities + concepts).map { it.name }.distinct()
+        // Build a `name -> [related names]` map from the analysis
+        // relationsJson. The previous compile() ignored relationsJson,
+        // so entity / concept pages never showed relation-driven
+        // neighbors. This map augments each page's `related` list
+        // (entity-declared relations + every cross-entity / cross-
+        // concept relation the LLM emitted in the analysis stage).
+        val relationsByName: Map<String, List<String>> = buildRelationsByName(analysis.relationsJson, allNames)
         val today = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneOffset.UTC).toLocalDate().toString()
         val sourceRef = sourceTitle.escapeYaml()
         val tags = parseStringArray(analysis.tagsJson).take(8)
         val pages = mutableListOf<WikiPageDraft>()
 
+        // P1: frontmatter `type:` 是固定 enum(由 sourceType 决定),不再用
+        // LLM 的实体 / 概念语义类型。LLM 给的 "Person" / "Algorithm" /
+        // "Theory" 等值改走 `entityType` / `conceptCategory` 新字段,
+        // 这样 UI 才能按语义类型分组 / 上色,viewer's type 过滤器也不会被
+        // enum 外的值搞坏。
         pages += WikiPageDraft(
             type = "source",
             title = sourceTitle,
@@ -53,11 +65,16 @@ class WikiPageCompiler {
                 appendLine("## 摘要")
                 appendLine(analysis.summary.ifBlank { parsed.plainText.take(240) })
                 appendLine()
+                // 始终输出"## 相关页面"段,即使没有识别出实体/概念,也会给一条
+                // 跳回 overview 的兜底链接——保证来源页里也有 wikilink 跳转标识,
+                // 不会成为"裸来源页"。
+                appendLine("## 相关页面")
                 if (allNames.isNotEmpty()) {
-                    appendLine("## 相关页面")
                     allNames.forEach { appendLine("- [[${it.escapeWikiLink()}]]") }
-                    appendLine()
+                } else {
+                    appendLine("- [[overview.md]]")
                 }
+                appendLine()
                 appendLine("## 原始内容")
                 appendLine(parsed.markdown.take(12_000))
             },
@@ -133,9 +150,15 @@ class WikiPageCompiler {
         )
 
         entities.forEach { entity ->
-            val related = (entity.related + concepts.map { it.name }).distinct().filterNot { it == entity.name }.take(12)
+            val fromEntity = entity.related
+            val fromRelations = relationsByName[entity.name].orEmpty()
+            val fromConcepts = concepts.map { it.name }
+            val related = (fromEntity + fromConcepts + fromRelations)
+                .distinct()
+                .filterNot { it.equals(entity.name, ignoreCase = true) }
+                .take(12)
             pages += WikiPageDraft(
-                type = entity.type.ifBlank { "entity" },
+                type = "entity", // P1: 锁死 entity,不再用 LLM 的语义类型
                 title = entity.name,
                 sourceType = "wiki_entity",
                 markdown = buildEntityPage(entity, today, tags, sourceRef, related),
@@ -146,9 +169,15 @@ class WikiPageCompiler {
         }
 
         concepts.forEach { concept ->
-            val related = (concept.related + entities.map { it.name }).distinct().filterNot { it == concept.name }.take(12)
+            val fromConcept = concept.related
+            val fromRelations = relationsByName[concept.name].orEmpty()
+            val fromEntities = entities.map { it.name }
+            val related = (fromConcept + fromEntities + fromRelations)
+                .distinct()
+                .filterNot { it.equals(concept.name, ignoreCase = true) }
+                .take(12)
             pages += WikiPageDraft(
-                type = "concept",
+                type = "concept", // P1: 锁死 concept
                 title = concept.name,
                 sourceType = "wiki_concept",
                 markdown = buildConceptPage(concept, today, tags, sourceRef, related),
@@ -159,6 +188,102 @@ class WikiPageCompiler {
         }
 
         return pages
+    }
+
+    /**
+     * Backfill variant: only emit entity / concept pages from the
+     * analysis JSON, no source / index / overview / log. Used by the
+     * "重新生成图谱" path to repopulate the knowledge graph for
+     * knowledge bases whose wiki pages were created by the previous
+     * (buggy) ingest path that hard-coded `entitiesJson = "[]"`.
+     *
+     * Returns a fully-formed [WikiPageDraft] list, ready to be
+     * converted into `KnowledgeItemEntity` rows by the caller. The
+     * `sourceType` is `wiki_entity` / `wiki_concept` exactly like
+     * `compile()`, so [KnowledgeRepositoryImpl.rebuildGraphForBase]
+     * picks them up via the same `sourceType.startsWith("wiki_")`
+     * filter that drives the live ingest.
+     */
+    fun compileEntityAndConceptPages(
+        source: SourceDocumentEntity,
+        analysis: AnalysisResultEntity
+    ): List<WikiPageDraft> {
+        val entities = parseNamedObjects(analysis.entitiesJson, fallbackType = "entity")
+        val concepts = parseNamedObjects(analysis.conceptsJson, fallbackType = "concept")
+        if (entities.isEmpty() && concepts.isEmpty()) return emptyList()
+        val allNames = (entities + concepts).map { it.name }.distinct()
+        val relationsByName = buildRelationsByName(analysis.relationsJson, allNames)
+        val today = Instant.ofEpochMilli(System.currentTimeMillis()).atZone(ZoneOffset.UTC).toLocalDate().toString()
+        val sourceRef = source.title.trim().ifBlank { source.id }.escapeYaml()
+        val tags = parseStringArray(analysis.tagsJson).take(8)
+        val pages = mutableListOf<WikiPageDraft>()
+
+        entities.forEach { entity ->
+            val related = (entity.related + concepts.map { it.name } + relationsByName[entity.name].orEmpty())
+                .distinct()
+                .filterNot { it.equals(entity.name, ignoreCase = true) }
+                .take(12)
+            pages += WikiPageDraft(
+                type = "entity", // P1: 锁死 entity,与 compile() 保持一致
+                title = entity.name,
+                sourceType = "wiki_entity",
+                markdown = buildEntityPage(entity, today, tags, sourceRef, related),
+                summary = entity.description.ifBlank { "实体：${entity.name}" },
+                tagsJson = tags.toJsonArray(),
+                sourceTraceJson = sourceTrace(source, parsed = null, analysis, "wiki/entities/${entity.name.slug()}.md")
+            )
+        }
+        concepts.forEach { concept ->
+            val related = (concept.related + entities.map { it.name } + relationsByName[concept.name].orEmpty())
+                .distinct()
+                .filterNot { it.equals(concept.name, ignoreCase = true) }
+                .take(12)
+            pages += WikiPageDraft(
+                type = "concept",
+                title = concept.name,
+                sourceType = "wiki_concept",
+                markdown = buildConceptPage(concept, today, tags, sourceRef, related),
+                summary = concept.description.ifBlank { "概念：${concept.name}" },
+                tagsJson = tags.toJsonArray(),
+                sourceTraceJson = sourceTrace(source, parsed = null, analysis, "wiki/concepts/${concept.name.slug()}.md")
+            )
+        }
+        return pages
+    }
+
+    /**
+     * Project `analysis.relationsJson` (`[{source, target, type, ...}]`)
+     * into a `name -> [neighbor names]` map keyed on the source side
+     * AND the target side, so a page that appears as the target of
+     * someone else's relation also shows that relation in its
+     * `related` list. This is what the previous `compile()` was
+     * missing — without it, entity pages only saw `related_concepts`
+     * declared on themselves, and concept pages only saw
+     * `related_entities` declared on themselves. Cross-source relations
+     * emitted by the analysis stage never made it into the page body.
+     */
+    private fun buildRelationsByName(
+        relationsJson: String,
+        allKnownNames: List<String>
+    ): Map<String, List<String>> {
+        if (relationsJson.isBlank() || relationsJson == "[]") return emptyMap()
+        val arr = runCatching { JSONArray(relationsJson) }.getOrNull() ?: return emptyMap()
+        val known = allKnownNames.map { it.lowercase() }.toSet()
+        val out = linkedMapOf<String, LinkedHashSet<String>>()
+        for (i in 0 until arr.length()) {
+            val rel = arr.optJSONObject(i) ?: continue
+            val source = rel.optString("source").trim()
+            val target = rel.optString("target").trim()
+            if (source.isBlank() || target.isBlank()) continue
+            if (source.equals(target, ignoreCase = true)) continue
+            // Drop edges to nodes we never materialized — otherwise the
+            // generated page would carry a dead wikilink the graph
+            // rebuild would later warn about as a dangling reference.
+            if (source.lowercase() !in known && target.lowercase() !in known) continue
+            out.getOrPut(source) { linkedSetOf() } += target
+            out.getOrPut(target) { linkedSetOf() } += source
+        }
+        return out.mapValues { (_, v) -> v.toList() }
     }
 
     fun merge(existingMarkdown: String, incomingMarkdown: String, pageTitle: String? = null): String {
@@ -325,7 +450,24 @@ class WikiPageCompiler {
         sourceRef: String,
         related: List<String>
     ): String = buildString {
-        appendFrontMatter(entity.type.ifBlank { "entity" }, entity.name, today, today, tags, related, listOf(sourceRef))
+        // 即使 related 为空,也保留 frontmatter 的 related 字段——viewer
+        // 会把 frontmatter.related 渲染为顶部跳转 chips,让孤立实体也能
+        // 通过"返回索引"链接跳走。这样就不会出现"body 里完全没有 wikilink"
+        // 的"裸"实体页。
+        //
+        // P1: frontmatter `type:` 锁死为 "entity"——由 sourceType 决定。
+        // 语义类型(LLM 给的 "Person"/"Algorithm"/"Project" 等)走
+        // `entityType` 字段,KnowledgeRepositoryImpl / UI 拿它来分组 + 上色。
+        appendFrontMatter(
+            type = "entity",
+            title = entity.name,
+            created = today,
+            updated = today,
+            tags = tags,
+            related = related,
+            sources = listOf(sourceRef),
+            extraFields = extraFrontMatterFields(entityType = entity.semanticType),
+        )
         appendLine("# ${entity.name}")
         appendLine()
         appendLine("## 定义")
@@ -339,9 +481,13 @@ class WikiPageCompiler {
             appendLine("> ${entity.evidence}")
             appendLine()
         }
+        appendLine("## 相关")
         if (related.isNotEmpty()) {
-            appendLine("## 相关")
             related.forEach { appendLine("- [[${it.escapeWikiLink()}]]") }
+        } else {
+            // 没有任何 related 时的兜底:给个"返回索引"的跳转,保证 body
+            // 至少有一处 wikilink,用户点击能跳到 overview.md。
+            appendLine("- [[overview.md]]")
         }
     }
 
@@ -352,7 +498,19 @@ class WikiPageCompiler {
         sourceRef: String,
         related: List<String>
     ): String = buildString {
-        appendFrontMatter("concept", concept.name, today, today, tags, related, listOf(sourceRef))
+        // P1: frontmatter `type:` 锁死为 "concept"——由 sourceType 决定。
+        // 语义分类(LLM 给的 "Theory"/"Method"/"Framework" 等)走
+        // `conceptCategory` 字段,UI 拿它来分组 + 上色。
+        appendFrontMatter(
+            type = "concept",
+            title = concept.name,
+            created = today,
+            updated = today,
+            tags = tags,
+            related = related,
+            sources = listOf(sourceRef),
+            extraFields = extraFrontMatterFields(conceptCategory = concept.semanticType),
+        )
         appendLine("# ${concept.name}")
         appendLine()
         appendLine("## 定义")
@@ -366,10 +524,33 @@ class WikiPageCompiler {
             appendLine("> ${concept.evidence}")
             appendLine()
         }
+        appendLine("## 相关")
         if (related.isNotEmpty()) {
-            appendLine("## 相关")
             related.forEach { appendLine("- [[${it.escapeWikiLink()}]]") }
+        } else {
+            // 概念页:与实体页同样的兜底,确保孤立概念也能通过"返回索引"导航
+            appendLine("- [[overview.md]]")
         }
+    }
+
+    /**
+     * P1: 把 entityType / conceptCategory 渲染成 frontmatter 行。
+     * 走 List<Pair<String, String>> 而不是 Map,确保输出顺序稳定——
+     * LLM 给的 "type" / "category" 老字段已经被 WikiObject.semanticType
+     * 接管,这里只关心新字段。
+     */
+    private fun extraFrontMatterFields(
+        entityType: String? = null,
+        conceptCategory: String? = null,
+    ): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        if (!entityType.isNullOrBlank()) {
+            out += "entityType" to entityType.escapeYaml()
+        }
+        if (!conceptCategory.isNullOrBlank()) {
+            out += "conceptCategory" to conceptCategory.escapeYaml()
+        }
+        return out
     }
 
     private fun StringBuilder.appendFrontMatter(
@@ -379,7 +560,8 @@ class WikiPageCompiler {
         updated: String,
         tags: List<String>,
         related: List<String>,
-        sources: List<String>
+        sources: List<String>,
+        extraFields: List<Pair<String, String>> = emptyList(),
     ) {
         appendLine("---")
         appendLine("type: ${type.escapeYaml()}")
@@ -389,6 +571,7 @@ class WikiPageCompiler {
         appendLine("tags: ${tags.toYamlArray()}")
         appendLine("related: ${related.toYamlArray()}")
         appendLine("sources: ${sources.toYamlArray()}")
+        extraFields.forEach { (k, v) -> appendLine("$k: $v") }
         appendLine("---")
     }
 
@@ -401,7 +584,13 @@ class WikiPageCompiler {
                         val name = value.optString("name").ifBlank { value.optString("title") }.trim()
                         if (name.isBlank()) null else WikiObject(
                             name = name,
-                            type = value.optString("type", fallbackType).ifBlank { fallbackType },
+                            // P1: 语义类型走 `entityType` / `conceptCategory`,fallback
+                            // 到老的 `type` / `category` 以保持向后兼容(老 LLM 输出
+                            // / 老 analysis JSON 仍能正确解析)。
+                            semanticType = value.optString("entityType").ifBlank { value.optString("conceptCategory") }
+                                .ifBlank { value.optString("type").ifBlank { value.optString("category") } }
+                                .ifBlank { fallbackType }
+                                .trim(),
                             description = value.optString("description").ifBlank { value.optString("definition") },
                             role = value.optString("role_in_source").ifBlank { value.optString("why_it_matters") },
                             evidence = value.optString("evidence").ifBlank { value.optString("source_context") },
@@ -409,12 +598,12 @@ class WikiPageCompiler {
                                 parseStringArray(value.optJSONArray("related_entities"))
                         )
                     }
-                    is String -> WikiObject(name = value, type = fallbackType)
+                    is String -> WikiObject(name = value, semanticType = fallbackType)
                     else -> null
                 }
             }
         }.getOrElse {
-            parseStringArray(json).map { WikiObject(name = it, type = fallbackType) }
+            parseStringArray(json).map { WikiObject(name = it, semanticType = fallbackType) }
         }.distinctBy { it.name.lowercase() }.take(24)
     }
 
@@ -447,12 +636,24 @@ class WikiPageCompiler {
         return null
     }
 
-    private fun sourceTrace(source: SourceDocumentEntity, parsed: ParsedContentEntity, analysis: AnalysisResultEntity, path: String): String =
-        """{"wikiPath":"${path.escapeJson()}","sourceId":"${source.id}","parsedContentId":"${parsed.id}","analysisResultId":"${analysis.id}","sourceTitle":"${source.title.escapeJson()}"}"""
+    private fun sourceTrace(source: SourceDocumentEntity, parsed: ParsedContentEntity?, analysis: AnalysisResultEntity, path: String): String =
+        """{"wikiPath":"${path.escapeJson()}","sourceId":"${source.id}","parsedContentId":"${parsed?.id ?: ""}","analysisResultId":"${analysis.id}","sourceTitle":"${source.title.escapeJson()}"}"""
 
     private data class WikiObject(
         val name: String,
-        val type: String = "entity",
+        // P1: `semanticType` 取代了原来的 `type` 字段。`type` 之前被三处
+        // 同时用:(1) 作为 WikiObject 自己的 kind 标识;(2) 直接写入 wiki
+        // page frontmatter `type:` 字段(导致 enum 冲突);(3) 被
+        // KnowledgeRepositoryImpl.normalizeWikiGraphType 当作图谱节点的
+        // type。新设计中:
+        //   - Wiki page frontmatter `type:` 固定 enum("entity"/"concept"/...),
+        //     跟 `WikiPageDraft.sourceType` 一一对应,不由 LLM 给;
+        //   - `semanticType` 走 frontmatter 新字段 `entityType` /
+        //     `conceptCategory`(由 `fallbackType` 提示是实体还是概念);
+        //   - 图谱节点的 `type` 由 KnowledgeRepositoryImpl 读
+        //     `entityType` / `conceptCategory`,fallback 到
+        //     "entity" / "concept"。
+        val semanticType: String = "entity",
         val description: String = "",
         val role: String = "",
         val evidence: String = "",

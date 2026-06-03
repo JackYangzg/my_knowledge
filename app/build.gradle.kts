@@ -62,6 +62,7 @@ dependencies {
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.okhttp)
     implementation(libs.jsoup)
+    implementation(libs.pdfbox.android)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.text.recognition.chinese)
     implementation("androidx.pdf:pdf-viewer-fragment:1.0.0-alpha05")
@@ -74,6 +75,12 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     // implementation(libs.firebase.ai) // Unused, enable when Firebase AI integration needed
     testImplementation(libs.junit)
+    // org.json is part of the Android framework, but unit tests in
+    // src/test/ run on the JVM, so we add the standalone artifact
+    // explicitly. Without it, the analysis-JSON parsing tests would
+    // throw RuntimeException("Stub!") the moment they call
+    // JSONArray(string).
+    testImplementation(libs.json)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)

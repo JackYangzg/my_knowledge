@@ -1,10 +1,12 @@
 package com.my.knowledge.viewmodel
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.domain.repository.KnowledgeRepository
+import com.my.knowledge.domain.usecase.ImportSourceUseCase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
@@ -17,7 +19,8 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalCoroutinesApi::class)
 class KnowledgeItemListViewModel(
     private val knowledgeRepository: KnowledgeRepository,
-    private val fileStore: LocalFileStore
+    private val fileStore: LocalFileStore,
+    private val importSourceUseCase: ImportSourceUseCase
 ) : ViewModel() {
 
     companion object {
@@ -29,6 +32,11 @@ class KnowledgeItemListViewModel(
     private val _isLoadingMore = MutableStateFlow(false)
     private val _exportStatus = MutableStateFlow<String?>(null)
     val exportStatus: StateFlow<String?> = _exportStatus
+
+    // P1: 用于向用户提示一次性错误(比如"移动知识失败"避免闪退后无任何反馈)
+    private val _uiMessage = MutableStateFlow<String?>(null)
+    val uiMessage: StateFlow<String?> = _uiMessage
+    fun consumeUiMessage() { _uiMessage.value = null }
 
     // Total item count for the knowledge base
     val itemCount: StateFlow<Int> = _kbId
@@ -129,7 +137,58 @@ class KnowledgeItemListViewModel(
 
     fun moveItem(itemId: String, newKbId: String) {
         viewModelScope.launch {
-            knowledgeRepository.moveItemToBase(itemId, newKbId)
+            try {
+                knowledgeRepository.moveItemToBase(itemId, newKbId)
+            } catch (e: Throwable) {
+                // P1: moveItemToBase 内部任何 DAO / rebuild 异常都吞掉,
+                // 不让 viewModelScope 协程崩溃导致应用闪退。最坏情况
+                // 是 item 移动了但图谱没刷新,后续手动"重新生成图谱"即可。
+                android.util.Log.e("KnowledgeItemListVM", "moveItem failed", e)
+                _uiMessage.value = "移动知识失败:${e.message ?: e.javaClass.simpleName}"
+            }
+        }
+    }
+
+    // === In-place import (KnowledgeDetailScreen 头部入口) ===
+
+    /**
+     * Import one or more files into the currently-scoped knowledge base.
+     * The user invoked the picker from inside the base, so the target
+     * library is unambiguous — no dropdown, no "未归类" fallback. Each
+     * URI is registered as its own source so the import center still
+     * shows per-file progress.
+     *
+     * Caller is responsible for resolving [items] to a usable display
+     * name + MIME (typically via ContentResolver in the Composable).
+     * Keeping the VM context-free avoids leaking Activities into the
+     * ViewModel layer.
+     */
+    fun importFilesToCurrentBase(items: List<ImportFileItem>) {
+        val kbId = _kbId.value ?: return
+        if (items.isEmpty()) return
+        viewModelScope.launch {
+            for (item in items) {
+                importSourceUseCase.importUri(
+                    uri = item.uri,
+                    displayName = item.displayName,
+                    mimeType = item.mimeType,
+                    sourceType = "file_import",
+                    targetKbId = kbId,
+                    importFrom = "kb_internal_picker",
+                    folderHint = null
+                )
+            }
         }
     }
 }
+
+/**
+ * A single file the caller wants to import into the currently-scoped
+ * knowledge base. Resolved by the UI layer (where a [android.content.Context]
+ * is available) before being passed to [KnowledgeItemListViewModel].
+ */
+data class ImportFileItem(
+    val uri: Uri,
+    val displayName: String,
+    val mimeType: String?
+)

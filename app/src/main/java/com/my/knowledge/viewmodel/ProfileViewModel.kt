@@ -22,6 +22,17 @@ class ProfileViewModel(
     val unfiledWorkCount: StateFlow<Int> = knowledgeRepository.observeUnfiledWorkCount()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
+    /**
+     * 处理中任务数（pending + running）。驱动 ProfileScreen 上"日志中心"入口
+     * 的描述文案。旧的描述只显示"X 条未归档"过于单薄,日志中心页面本身
+     * 已经把计数拆成 处理中 / 失败 / 待确认 三张卡片,这里跟它对齐。
+     */
+    val processingTaskCount: StateFlow<Int> = knowledgeRepository.observeActiveTaskCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val failedTaskCount: StateFlow<Int> = knowledgeRepository.observeFailedTaskCount()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     val pendingRecommendationCount: StateFlow<Int> = knowledgeRepository.observePendingRecommendations()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
         .let { recommendations ->

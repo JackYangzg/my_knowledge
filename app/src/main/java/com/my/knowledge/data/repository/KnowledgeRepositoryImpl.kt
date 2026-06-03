@@ -39,10 +39,17 @@ import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
 import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.data.db.entity.AiConversationEntity
+import com.my.knowledge.data.ai.AiPromptTemplates
+import com.my.knowledge.data.ingest.WikiPageCompiler
+import com.my.knowledge.data.ingest.WikiPageDraft
+import com.my.knowledge.domain.repository.BackfillResult
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.domain.repository.ProfileStats
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import java.security.MessageDigest
 import java.util.*
 
@@ -234,8 +241,12 @@ class KnowledgeRepositoryImpl(
 
     override suspend fun deleteItem(id: String, softDelete: Boolean) {
         val item = itemDao.getById(id) ?: return
+        val now = System.currentTimeMillis()
         if (softDelete) {
-            itemDao.softDelete(id, System.currentTimeMillis())
+            itemDao.softDelete(id, now)
+            item.sourceId?.let { sourceId ->
+                cleanupIntermediateDataForSource(sourceId, now, softDeleteGeneratedItems = true)
+            }
         } else {
             permanentDeleteItem(id)
         }
@@ -245,10 +256,18 @@ class KnowledgeRepositoryImpl(
     }
 
     override suspend fun permanentDeleteItem(id: String) {
+        val item = itemDao.getByIdIncludeDeleted(id)
         taskDao.deleteByTarget("knowledge_item", id)
         recommendationDao.deleteByItemId(id)
         fragmentDao.deleteByItemId(id)
         taskLogDao.deleteByTarget("knowledge_item", id)
+        item?.sourceId?.let { sourceId ->
+            cleanupIntermediateDataForSource(
+                sourceId = sourceId,
+                now = System.currentTimeMillis(),
+                softDeleteGeneratedItems = false
+            )
+        }
         
         // Delete associated AI conversations and messages
         val conversationIds = conversationDao.getIdsByScope("knowledge_item", id)
@@ -259,6 +278,38 @@ class KnowledgeRepositoryImpl(
         conversationDao.deleteByScope("knowledge_item", id)
 
         itemDao.hardDelete(id)
+    }
+
+    private suspend fun cleanupIntermediateDataForSource(
+        sourceId: String,
+        now: Long,
+        softDeleteGeneratedItems: Boolean
+    ) {
+        taskDao.deleteBySource(sourceId)
+        taskLogDao.deleteByTarget("source_document", sourceId)
+        reviewItemDao.skipBySource(sourceId, now)
+        fragmentDao.deleteBySource(sourceId)
+        parsedContentDao.deleteBySource(sourceId)
+        analysisResultDao.deleteBySource(sourceId)
+
+        val generatedItems = itemDao.getAllBySourceId(sourceId)
+        generatedItems.forEach { generated ->
+            recommendationDao.deleteByItemId(generated.id)
+            taskDao.deleteByTarget("knowledge_item", generated.id)
+            taskLogDao.deleteByTarget("knowledge_item", generated.id)
+            fragmentDao.deleteByItemId(generated.id)
+            graphDao.deleteEmbeddingsByItem(generated.id)
+            val conversationIds = conversationDao.getIdsByScope("knowledge_item", generated.id)
+            conversationIds.forEach { conversationId ->
+                messageDao.deleteByConversation(conversationId)
+                askCitationDao.deleteByConversation(conversationId)
+            }
+            conversationDao.deleteByScope("knowledge_item", generated.id)
+            if (softDeleteGeneratedItems) {
+                itemDao.softDelete(generated.id, now)
+            }
+        }
+        sourceDocumentDao.markDeleted(sourceId, now)
     }
 
     override suspend fun restoreItem(id: String) {
@@ -298,25 +349,64 @@ class KnowledgeRepositoryImpl(
     }
 
     override suspend fun moveItemToBase(itemId: String, targetKbId: String) {
-        val item = itemDao.getById(itemId) ?: return
+        val item = itemDao.getById(itemId) ?: run {
+            android.util.Log.w("KnowledgeRepo", "moveItemToBase: item $itemId not found (deleted?)")
+            return
+        }
+        if (item.knowledgeBaseId == targetKbId) return // nothing to do
+
         val oldKbId = item.knowledgeBaseId
         val targetBase = kbDao.getById(targetKbId)
-        itemDao.moveToBase(itemId, targetKbId, System.currentTimeMillis())
-        if (targetBase?.type != "unfiled") {
-            itemDao.update(
-                item.copy(
-                    knowledgeBaseId = targetKbId,
-                    status = KnowledgeItemEntity.STATUS_ARCHIVED,
-                    updatedAt = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+
+        try {
+            // Step 1: move the item itself
+            itemDao.moveToBase(itemId, targetKbId, now)
+            if (targetBase?.type != "unfiled") {
+                itemDao.update(
+                    item.copy(
+                        knowledgeBaseId = targetKbId,
+                        status = KnowledgeItemEntity.STATUS_ARCHIVED,
+                        updatedAt = now
+                    )
                 )
+            }
+
+            // Step 2: migrate associated data so they stay in the same KB
+            // Fragments follow the item
+            fragmentDao.updateKbIdByItem(itemId, targetKbId)
+            // Embeddings follow the fragments
+            graphDao.updateEmbeddingsKbByItem(itemId, targetKbId)
+            // Entities that are exclusively backed by this item move with it;
+            // shared entities (backed by items across KBs) stay in the source KB
+            // and will be re-materialised by the source-side rebuild.
+            graphDao.moveExclusiveEntitiesByItem(itemId, oldKbId, targetKbId, now)
+            // Relations whose both endpoints landed in the target KB follow
+            graphDao.moveRelationsToKbByEndpoints(oldKbId, targetKbId, now)
+            // Communities whose every member is now in the target KB follow
+            graphDao.moveCommunitiesToKbByEntities(oldKbId, targetKbId, now)
+
+            // Step 3: update KB item counts and refresh overview
+            itemDao.updateItemCount(oldKbId)
+            itemDao.updateItemCount(targetKbId)
+            refreshOverviewForBase(oldKbId)
+            refreshOverviewForBase(targetKbId)
+
+            // Step 4: rebuild both KB graphs — the source loses orphaned data,
+            // the target gains the newly migrated records
+            rebuildGraphForBase(oldKbId)
+            if (targetBase?.type != "unfiled") rebuildGraphForBase(targetKbId)
+        } catch (e: Throwable) {
+            // P1: 之前任何 DAO / rebuild 抛 NPE / SQLite constraint 都会
+            // 沿着 viewModelScope 协程上抛,直接闪退。现在收到这里,
+            // 写 log 留证据,让 UI 显示一个友好的失败提示而不是白屏。
+            android.util.Log.e(
+                "KnowledgeRepo",
+                "moveItemToBase failed: item=$itemId old=$oldKbId target=$targetKbId",
+                e
             )
+            throw e
         }
-        itemDao.updateItemCount(oldKbId)
-        itemDao.updateItemCount(targetKbId)
-        refreshOverviewForBase(oldKbId)
-        refreshOverviewForBase(targetKbId)
-        rebuildGraphForBase(oldKbId)
-        if (targetBase?.type != "unfiled") rebuildGraphForBase(targetKbId)
     }
 
     // === Unfiled operations ===
@@ -428,7 +518,14 @@ class KnowledgeRepositoryImpl(
     }
 
     override suspend fun rebuildGraphForBase(kbId: String) {
-        val items = itemDao.getAllByKb(kbId).filter { it.deletedAt == null }
+        // 优先走 wiki-only 查询(刚加的 getAllWikiByKb)——脉络/图谱重建
+        // 只需要 wiki 页面,KB 笔记量很大时,这一步把内存 + Room I/O 减少
+        // 一个数量级。原 `getAllByKb` 仅在没有任何 wiki 页时作为兜底
+        // (比如老 KB 完全没经过 ingest pipeline)。
+        val allItems = itemDao.getAllByKb(kbId).filter { it.deletedAt == null }
+        val wikiOnly = itemDao.getAllWikiByKb(kbId)
+        val items: List<com.my.knowledge.data.db.entity.KnowledgeItemEntity> =
+            if (wikiOnly.isNotEmpty()) wikiOnly else allItems
         val now = System.currentTimeMillis()
 
         // Capture manually soft-deleted entity / relation / community names
@@ -659,15 +756,106 @@ class KnowledgeRepositoryImpl(
         graphDao.upsertCommunities(communities)
     }
 
+    /**
+     * One-shot backfill for knowledge bases whose `wiki_entity` /
+     * `wiki_concept` pages were never materialised — the typical
+     * symptom of the old ingest path that hard-coded
+     *   entitiesJson = "[]"
+     *   conceptsJson = tags.toJsonArray()
+     *   relationsJson = "[]"
+     * and never produced the wiki pages the graph rebuild relies on.
+     *
+     * Walks every source document in the KB, runs the local
+     * `WikiPageCompiler` template against the latest
+     * `AnalysisResultEntity`, and inserts the resulting
+     * `wiki_entity` / `wiki_concept` rows. No LLM call. Safe to run
+     * multiple times — pages that already exist for a given
+     * `(sourceType, title)` are skipped.
+     */
+    override suspend fun backfillWikiPagesForBase(kbId: String): BackfillResult {
+        if (kbId.isBlank()) return BackfillResult(0, 0, 0, 0)
+        val compiler = WikiPageCompiler()
+        val now = System.currentTimeMillis()
+        val sourcesFlow = sourceDocumentDao.observeByKnowledgeBase(kbId)
+        // `observeByKnowledgeBase` is a Flow — for a one-shot walk
+        // we want the current snapshot, not a hot stream. The
+        // source documents table is small (one row per ingest)
+        // and backed by Room, so the first emission arrives in a
+        // single query.
+        val sourceList: List<SourceDocumentEntity> = sourcesFlow.first()
+            .filter { it.status != SourceDocumentEntity.STATUS_DELETED }
+
+        var entityInserted = 0
+        var conceptInserted = 0
+        var sourcesSkipped = 0
+
+        for (source in sourceList) {
+            val analysis = analysisResultDao.getLatestBySource(source.id)
+            if (analysis == null || (analysis.entitiesJson == "[]" && analysis.conceptsJson == "[]")) {
+                sourcesSkipped++
+                continue
+            }
+            val drafts = compiler.compileEntityAndConceptPages(source, analysis)
+            for (draft in drafts) {
+                val existing = itemDao.getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
+                if (existing != null) continue
+                val item = KnowledgeItemEntity(
+                    id = java.util.UUID.randomUUID().toString(),
+                    sourceId = source.id,
+                    knowledgeBaseId = kbId,
+                    title = draft.title,
+                    contentMarkdown = draft.markdown,
+                    excerpt = draft.summary.take(120),
+                    sourceType = draft.sourceType,
+                    status = KnowledgeItemEntity.STATUS_ARCHIVED,
+                    contentHash = calculateContentHash(draft.markdown),
+                    sourceTraceJson = draft.sourceTraceJson,
+                    confidence = analysis.confidence,
+                    summary = draft.summary,
+                    tagsJson = draft.tagsJson,
+                    rawNoteId = null,
+                    importance = if (draft.sourceType == "wiki_entity") 1 else 1,
+                    createdAt = now,
+                    updatedAt = now,
+                    processedAt = now,
+                    archivedAt = now,
+                    deletedAt = null
+                )
+                itemDao.insert(item)
+                when (draft.sourceType) {
+                    "wiki_entity" -> entityInserted++
+                    "wiki_concept" -> conceptInserted++
+                }
+            }
+        }
+        if (entityInserted > 0 || conceptInserted > 0) {
+            rebuildGraphForBase(kbId)
+        }
+        return BackfillResult(
+            sourcesScanned = sourceList.size,
+            entityPagesInserted = entityInserted,
+            conceptPagesInserted = conceptInserted,
+            sourcesSkipped = sourcesSkipped,
+        )
+    }
+
     override suspend fun refreshOverviewForBase(kbId: String) {
         if (kbId.isBlank()) return
         val base = kbDao.getById(kbId) ?: return
         val now = System.currentTimeMillis()
-        val liveItems = itemDao.getAllByKb(kbId)
+        // 概览页要展示两类数据:原始知识(sourceItems)和 wiki 合成页。
+        // 之前一次性 getAllByKb + Kotlin 端 filter,KB 笔记多时查询压力
+        // 直接压在 Room 上。现在分两条查询:原始知识走 ALL,wiki 走
+        // getAllWikiByKb——让 SQLite 利用 sourceType 上的索引/类型。
+        val rawSourceItems = itemDao.getAllByKb(kbId)
+            .filter { it.deletedAt == null }
+            .filterNot { it.sourceType.startsWith("wiki_") }
+        val wikiItems = itemDao.getAllWikiByKb(kbId)
             .filter { it.deletedAt == null }
             .filterNot { it.sourceType == "wiki_overview" && it.title == "overview.md" }
-        val sourceItems = liveItems.filterNot { it.sourceType.startsWith("wiki_") }
-        val wikiItems = liveItems.filter { it.sourceType.startsWith("wiki_") }
+        val liveItems = rawSourceItems + wikiItems
+        val sourceItems = rawSourceItems
+        // wikiItems 已经排除了 overview 自身,保持原行为不变。
         val entityPages = wikiItems.filter { it.sourceType == "wiki_entity" }
         val conceptPages = wikiItems.filter { it.sourceType == "wiki_concept" }
         val sourcePages = wikiItems.filter { it.sourceType == "wiki_source" }
@@ -809,6 +997,20 @@ class KnowledgeRepositoryImpl(
         taskDao.getPendingTask(targetType, targetId)
 
     override suspend fun getActiveTasks(): Flow<List<ProcessingTaskEntity>> = taskDao.observeActiveTasks()
+
+    // In-flight count = pending + running. We fold the list down to a
+    // count via `map` + `distinctUntilChanged` so the ProfileScreen
+    // doesn't re-render on every task-status tick that leaves the
+    // total unchanged.
+    override fun observeActiveTaskCount(): Flow<Int> =
+        taskDao.observeActiveTasks()
+            .map { list -> list.count { it.status == "pending" || it.status == "running" } }
+            .distinctUntilChanged()
+
+    override fun observeFailedTaskCount(): Flow<Int> =
+        taskDao.observeActiveTasks()
+            .map { list -> list.count { it.status == "failed" } }
+            .distinctUntilChanged()
 
     override suspend fun retryTask(taskId: String) {
         taskDao.retryTask(taskId, System.currentTimeMillis())
@@ -1171,9 +1373,22 @@ class KnowledgeRepositoryImpl(
 
     private fun normalizeWikiGraphType(item: KnowledgeItemEntity): String {
         val fmType = frontMatterValue(item.contentMarkdown, "type")?.lowercase(Locale.ROOT)
+        // P1: wiki_* 页面的图谱节点 type 现在优先读 frontmatter 的
+        //   entityType (实体) / conceptCategory (概念)
+        // 这两个字段是 LLM 给的语义类型("Person"/"Algorithm"/"Theory"/...)
+        // ——之前被混到 `type:` 字段上,跟 generationPrompt 的 enum
+        // 冲突,被 KnowledgeGraphCanvas / IntermediateDataScreen 看到时
+        // 已经是"entity"/"concept"两个大桶。这里把它们接回正确的字段。
+        // 老数据(没有 entityType / conceptCategory 字段)回退到
+        // "entity"/"concept";老 frontmatter `type:` 字段(等于"entity" /
+        // "concept" / 老的 enum 值)继续兼容。
         return when (item.sourceType) {
-            "wiki_entity" -> "entity"
-            "wiki_concept" -> "concept"
+            "wiki_entity" -> frontMatterValue(item.contentMarkdown, "entityType")
+                ?.takeIf { it.isNotBlank() }
+                ?: "entity"
+            "wiki_concept" -> frontMatterValue(item.contentMarkdown, "conceptCategory")
+                ?.takeIf { it.isNotBlank() }
+                ?: "concept"
             "wiki_source" -> "source"
             "wiki_overview" -> "overview"
             "wiki_index" -> "index"
@@ -1277,4 +1492,105 @@ class KnowledgeRepositoryImpl(
         if (isEmpty()) return "[]"
         return joinToString(",", "[", "]") { "\"${it.replace("\\", "\\\\").replace("\"", "\\\"")}\"" }
     }
+
+    // === Inspiration thread context (LLM input) ========================
+    //
+    // 一次性把 LLM 脉络生成需要的所有原料拼好,worker 拿到这个 context
+    // 就能直接调大模型。关联 wiki 实体由 worker 自己用 DAO 拉(逻辑
+    // 跟 graph rebuild 共享,放在 worker 里更顺手)。
+    override suspend fun getInspirationContext(
+        kbId: String,
+        newItemId: String,
+    ): InspirationThreadContext {
+        val newItem = itemDao.getById(newItemId)
+        val newInspiration = if (newItem != null) {
+            AiPromptTemplates.NewInspiration(
+                id = newItem.id,
+                title = newItem.title,
+                tags = parseTagArray(newItem.tagsJson),
+                summary = newItem.summary?.takeIf { it.isNotBlank() } ?: newItem.excerpt,
+                content = newItem.contentMarkdown,
+            )
+        } else {
+            // 罕见的 race:worker 调度时 newItem 已被删除。
+            // 用一个 minimal 的 placeholder,让 worker 至少走完 fallback。
+            AiPromptTemplates.NewInspiration(
+                id = newItemId,
+                title = "(已删除的灵感)",
+                tags = emptyList(),
+                summary = "",
+                content = "",
+            )
+        }
+
+        val allInKb = itemDao.getAllByKb(kbId)
+            .filter { it.deletedAt == null }
+            .sortedBy { it.createdAt }
+        val historicalDigest = allInKb
+            .asSequence()
+            .filter { it.id != newItemId }
+            .map { item ->
+                AiPromptTemplates.InspirationDigest(
+                    id = item.id,
+                    title = item.title,
+                    tags = parseTagArray(item.tagsJson),
+                    summary = item.summary?.takeIf { it.isNotBlank() } ?: item.excerpt,
+                    createdAtLabel = formatDateLabel(item.createdAt),
+                )
+            }
+            .toList()
+            .takeLast(30) // 只取最近 30 条历史,够脉络使用
+
+        val existingThread = threadDao.getByKb(kbId)
+        val existingSnapshot = if (existingThread != null) {
+            AiPromptTemplates.ExistingThreadSnapshot(
+                description = existingThread.description,
+                coreQuestion = existingThread.coreQuestion,
+                mainline = parseStringList(existingThread.mainlineJson),
+                gaps = parseStringList(existingThread.gapsJson),
+                nextSuggestions = parseStringList(existingThread.nextSuggestionsJson),
+            )
+        } else null
+
+        return InspirationThreadContext(
+            kbId = kbId,
+            newInspiration = newInspiration,
+            historicalInspirationDigest = historicalDigest,
+            existingThread = existingSnapshot,
+        )
+    }
+
+    private fun parseTagArray(json: String?): List<String> {
+        if (json.isNullOrBlank() || json == "[]") return emptyList()
+        return runCatching {
+            org.json.JSONArray(json).let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun parseStringList(json: String?): List<String> {
+        if (json.isNullOrBlank() || json == "[]") return emptyList()
+        return runCatching {
+            org.json.JSONArray(json).let { arr ->
+                (0 until arr.length()).mapNotNull { arr.optString(it).trim().takeIf { s -> s.isNotBlank() } }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun formatDateLabel(epochMs: Long): String {
+        val date = java.time.Instant.ofEpochMilli(epochMs)
+            .atZone(java.time.ZoneId.systemDefault()).toLocalDate()
+        return "%d-%02d-%02d".format(date.year, date.monthValue, date.dayOfMonth)
+    }
 }
+
+/**
+ * 灵感脉络 LLM 生成的输入快照。worker 拿到这个就直接拼 prompt。
+ */
+data class InspirationThreadContext(
+    val kbId: String,
+    val newInspiration: AiPromptTemplates.NewInspiration,
+    val historicalInspirationDigest: List<AiPromptTemplates.InspirationDigest>,
+    val existingThread: AiPromptTemplates.ExistingThreadSnapshot?,
+)

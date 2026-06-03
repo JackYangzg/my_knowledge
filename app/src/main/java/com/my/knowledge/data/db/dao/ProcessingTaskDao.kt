@@ -62,4 +62,7 @@ interface ProcessingTaskDao {
 
     @Query("DELETE FROM processing_task WHERE targetType = :targetType AND targetId = :targetId")
     suspend fun deleteByTarget(targetType: String, targetId: String)
+
+    @Query("DELETE FROM processing_task WHERE sourceId = :sourceId OR (targetType = 'source_document' AND targetId = :sourceId)")
+    suspend fun deleteBySource(sourceId: String)
 }

@@ -250,6 +250,7 @@ fun KnowledgeApp() {
                     itemViewModel.setKnowledgeBaseId(kbId)
                     val kbBases by homeViewModel.knowledgeBases.collectAsState()
                     KnowledgeDetailScreen(
+                        kbId = kbId,
                         kbName = kbBases.find { it.id == kbId }?.name ?: "知识管理",
                         viewModel = itemViewModel,
                         askViewModel = askViewModel,

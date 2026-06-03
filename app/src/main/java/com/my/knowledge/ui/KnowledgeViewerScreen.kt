@@ -247,7 +247,13 @@ private fun WikiMarkdownContent(
     linkTargets: Map<String, String>,
     onOpenItem: (String) -> Unit
 ) {
+    // 把 frontmatter 里的 sources / related 列表都提取出来渲染成跳转
+    // chips。原来的实现只渲染 sources,related 被 stripFrontMatter 一起
+    // 剥掉——结果实体/概念页里"## 相关"段就算写了 wikilink,顶部的
+    // related chip 也不会出现,体感就是"页面没有跳转标识"。补上 related
+    // 之后,孤立实体也能从顶部跳到 overview.md。
     val sources = remember(markdown) { extractFrontMatterList(markdown, "sources") }
+    val related = remember(markdown) { extractFrontMatterList(markdown, "related") }
     val body = remember(markdown) { stripFrontMatter(markdown) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         if (sources.isNotEmpty()) {
@@ -257,6 +263,33 @@ private fun WikiMarkdownContent(
                     sources.forEach { source ->
                         InternalLinkText(
                             text = source,
+                            linkTargets = linkTargets,
+                            onOpenItem = onOpenItem,
+                            fallbackAsLink = true
+                        )
+                    }
+                }
+            }
+        }
+        // related 单独渲染成 chip 流——和 sources 一样的样式,但用更轻量
+        // 的方式(每个 chip 一行),让用户能快速跳到关联页面。空列表就
+        // 跳过,避免空 Surface 浪费空间。
+        if (related.isNotEmpty()) {
+            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFEFF7FF), modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        "相关页面（${related.size}）",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = Color(0xFF0F172A)
+                    )
+                    related.forEach { ref ->
+                        // related 的每一项就是一个页面标题(label)——直接当
+                        // 整行文本送进 InternalLinkText,fallbackAsLink=true
+                        // 表示即使没匹配上 linkTargets 也会按 plain 渲染,
+                        // 不会留下[[...]]的转义符号。
+                        InternalLinkText(
+                            text = ref,
                             linkTargets = linkTargets,
                             onOpenItem = onOpenItem,
                             fallbackAsLink = true

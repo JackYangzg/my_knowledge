@@ -11,15 +11,45 @@ package com.my.knowledge.data.ai
 object AiTextCleaner {
 
     /**
-     * Strips out the model's hidden reasoning block.
+     * All the "model is reasoning out loud" tags we have seen in the wild.
+     * Keeping the list in one place ensures every code path strips the same
+     * set — important because the `cleanModelOutput` contract guarantees
+     * "what's persisted never contains the chain-of-thought".
      *
-     * The regex is DOT_MATCHES_ALL so a multi-line <think>...</think> block
-     * is removed in one go, and `RegexOption.IGNORE_CASE` is set so models
-     * that write `<THINK>...</THINK>` or mixed case are also handled.
+     * - `<think>`     — DeepSeek-R1, Qwen-QwQ, OpenAI o-series
+     * - `<thinking>`  — some Anthropic-style adapters
+     * - `<reasoning>` — a handful of community gateways
+     * - `<reflection>`— older custom fine-tunes
+     *
+     * The regex is DOT_MATCHES_ALL so multi-line blocks disappear in one go,
+     * and IGNORE_CASE so models that write `<THINK>...</THINK>` or mixed
+     * case are also handled.
      */
-    private val thinkBlockRegex = Regex("<think>.*?</think>", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
-    private val danglingOpenRegex = Regex("<think>.*", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    private val THINK_OPEN_TAGS = listOf("<think>", "<thinking>", "<reasoning>", "<reflection>")
+    private val THINK_CLOSE_TAGS = listOf("</think>", "</thinking>", "</reasoning>", "</reflection>")
 
+    private val thinkBlockRegex: Regex by lazy {
+        // Build a single regex that matches ANY of the open/close pairs.
+        // Using alternation keeps the order in the original text — no risk
+        // of swallowing the wrong block when a model emits nested tags.
+        val open = THINK_OPEN_TAGS.joinToString("|") { Regex.escape(it) }
+        val close = THINK_CLOSE_TAGS.joinToString("|") { Regex.escape(it) }
+        Regex("($open).*?($close)", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    }
+
+    private val danglingOpenRegex: Regex by lazy {
+        // A reasoning block that never closed (truncation, streaming
+        // disconnect). Discard everything from the open tag to the end —
+        // the model was still thinking and produced no real content after.
+        val open = THINK_OPEN_TAGS.joinToString("|") { Regex.escape(it) }
+        Regex("($open).*", setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE))
+    }
+
+    /**
+     * Strips out the model's hidden reasoning block. Supports the four
+     * common tag variants (`<think>` / `<thinking>` / `<reasoning>` /
+     * `<reflection>`), case-insensitive, including dangling opens.
+     */
     fun String.removeThinkBlock(): String =
         this.replace(thinkBlockRegex, "")
             .replace(danglingOpenRegex, "")

@@ -4,6 +4,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.floatOrNull
 import kotlinx.serialization.json.jsonObject
@@ -153,19 +154,27 @@ object IngestJsonValidator {
     fun normalizeAnalysisJson(raw: String?, fallback: String): String {
         val fallbackObj = parseObjectOrNull(fallback) ?: return fallback
         val rawObj = raw?.let { parseObjectOrNull(it) } ?: return fallback
+        // Defensive: every `fallbackObj[key]!!` is a `!`-assertion
+        // that used to NPE if a future caller passed a fallback
+        // missing one of these fields (the previous version of
+        // `fallbackAnalysisJson` was missing `confidence` and the
+        // call site threw NPE deep inside this function). We now
+        // fall through to a typed default instead so a partial
+        // fallback degrades gracefully into "missing field" rather
+        // than crashing the whole pipeline.
         return kotlinx.serialization.json.buildJsonObject {
-            put("title", rawObj["title"] ?: fallbackObj["title"]!!)
-            put("summary", rawObj["summary"] ?: fallbackObj["summary"]!!)
-            put("tags", rawObj["tags"]?.takeIf { it is JsonArray } ?: fallbackObj["tags"]!!)
-            put("entities", rawObj["entities"]?.takeIf { it is JsonArray } ?: fallbackObj["entities"]!!)
-            put("concepts", rawObj["concepts"]?.takeIf { it is JsonArray } ?: fallbackObj["concepts"]!!)
-            put("relations", rawObj["relations"]?.takeIf { it is JsonArray } ?: fallbackObj["relations"]!!)
-            put("claims", rawObj["claims"]?.takeIf { it is JsonArray } ?: fallbackObj["claims"]!!)
-            put("gaps", rawObj["gaps"]?.takeIf { it is JsonArray } ?: fallbackObj["gaps"]!!)
-            put("archiveRecommendation", rawObj["archiveRecommendation"]?.takeIf { it is JsonObject } ?: fallbackObj["archiveRecommendation"]!!)
-            put("confidence", rawObj["confidence"] ?: fallbackObj["confidence"]!!)
-            put("needHumanReview", rawObj["needHumanReview"] ?: fallbackObj["needHumanReview"]!!)
-            put("reviewReasons", rawObj["reviewReasons"]?.takeIf { it is JsonArray } ?: fallbackObj["reviewReasons"]!!)
+            put("title", rawObj["title"] ?: fallbackObj["title"] ?: JsonPrimitive(""))
+            put("summary", rawObj["summary"] ?: fallbackObj["summary"] ?: JsonPrimitive(""))
+            put("tags", rawObj["tags"]?.takeIf { it is JsonArray } ?: fallbackObj["tags"] ?: JsonArray(emptyList()))
+            put("entities", rawObj["entities"]?.takeIf { it is JsonArray } ?: fallbackObj["entities"] ?: JsonArray(emptyList()))
+            put("concepts", rawObj["concepts"]?.takeIf { it is JsonArray } ?: fallbackObj["concepts"] ?: JsonArray(emptyList()))
+            put("relations", rawObj["relations"]?.takeIf { it is JsonArray } ?: fallbackObj["relations"] ?: JsonArray(emptyList()))
+            put("claims", rawObj["claims"]?.takeIf { it is JsonArray } ?: fallbackObj["claims"] ?: JsonArray(emptyList()))
+            put("gaps", rawObj["gaps"]?.takeIf { it is JsonArray } ?: fallbackObj["gaps"] ?: JsonArray(emptyList()))
+            put("archiveRecommendation", rawObj["archiveRecommendation"]?.takeIf { it is JsonObject } ?: fallbackObj["archiveRecommendation"] ?: buildJsonObject {})
+            put("confidence", rawObj["confidence"] ?: fallbackObj["confidence"] ?: JsonPrimitive(0.5))
+            put("needHumanReview", rawObj["needHumanReview"] ?: fallbackObj["needHumanReview"] ?: JsonPrimitive(false))
+            put("reviewReasons", rawObj["reviewReasons"]?.takeIf { it is JsonArray } ?: fallbackObj["reviewReasons"] ?: JsonArray(emptyList()))
         }.toString()
     }
 
@@ -180,13 +189,24 @@ object IngestJsonValidator {
         val escapedSummary = summary.escapeJson()
         val reasons = reviewReason?.let { "[\"${it.escapeJson()}\"]" } ?: "[]"
         val needReview = confidence < 0.6f
+        // NOTE: `concepts` is intentionally `[]`, NOT `$tagsJson`.
+        // The previous version of this function filled `concepts`
+        // with the same array as `tags`, which mirrored the same
+        // bug in the orchestrator's old hard-coded assignment
+        // (`conceptsJson = tags.toJsonArray()`). With concepts =
+        // tags, the downstream `WikiPageCompiler.compile()` would
+        // synthesize "concept" pages whose `name` was a tag and
+        // whose `description` was empty. The local fallback has
+        // no real concept information, so the right answer is
+        // `[]` and let the generation stage's AI path
+        // (`requestAiRawOutput`) produce pages from the raw text.
         return """
             {
               "title": "$escapedTitle",
               "summary": "$escapedSummary",
               "tags": $tagsJson,
               "entities": [],
-              "concepts": $tagsJson,
+              "concepts": [],
               "relations": [],
               "claims": [],
               "gaps": $reasons,
@@ -198,6 +218,7 @@ object IngestJsonValidator {
                 "suggestCreateNewBase": false,
                 "newBaseName": null
               },
+              "confidence": $confidence,
               "needHumanReview": $needReview,
               "reviewReasons": $reasons
             }

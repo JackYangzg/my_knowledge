@@ -61,10 +61,30 @@ DO NOT use any other language. This overrides all other instructions.
 """.trimIndent()
 
     /**
-     * Stage 1 prompt — 1:1 alignment with llm_wiki's `buildAnalysisPrompt`
-     * (src/lib/ingest.ts:978-1024). It intentionally emits a structured
-     * prose analysis rather than JSON; Stage 2 re-reads that analysis
-     * and generates FILE/REVIEW blocks, matching llm_wiki's ingest flow.
+     * Stage 1 prompt — produces a STRICT JSON object conforming to
+     * [IngestOrchestrator.ANALYSIS_SCHEMA]. This is the contract that
+     * downstream stages rely on:
+     *
+     *   - `entities`     → wiki/entities/ pages
+     *   - `concepts`     → wiki/concepts/ pages
+     *   - `relations`    → knowledge graph edges (rebuilt by
+     *                      KnowledgeRepositoryImpl.rebuildGraphForBase)
+     *   - `claims`       → persisted to AnalysisResultEntity.claimsJson
+     *   - `gaps`         → REVIEW items (missing-page / suggestion)
+     *   - `pageRecommendations` → drives Stage 2 FILE emission priorities
+     *
+     * The previous version of this prompt asked the LLM to emit a
+     * markdown analysis with `## Key Entities` / `## Key Concepts`
+     * sections. The orchestrator then hard-coded
+     *   entitiesJson = "[]"
+     *   conceptsJson = tags.toJsonArray()  // bug: tags leaked into concepts
+     *   relationsJson = "[]"
+     * on the resulting AnalysisResultEntity row, which meant no real
+     * entities, tag-named "concept" pages with empty descriptions, and
+     * an empty knowledge graph. This prompt is the fix: same shape as
+     * the Kotlin-side ANALYSIS_SCHEMA, same field names as the
+     * downstream WikiPageCompiler.parseNamedObjects and
+     * KnowledgeRepositoryImpl.parseRelations callers expect.
      */
     fun analysisPrompt(
         title: String,
@@ -73,52 +93,105 @@ DO NOT use any other language. This overrides all other instructions.
         currentIndex: String = "No existing index.",
         purpose: String = "Build a readable, maintainable, and evolvable local wiki.",
         fragments: List<String> = emptyList(),
+        schemaHint: String = "",
         language: String = "中文"
     ): String = """
-You are an expert research analyst. Read the source document and produce a structured analysis.
-Do not output chain-of-thought, hidden reasoning, or a thinking transcript. Reason internally and write only the concise final analysis.
-
 ${languageDirective(language)}
 
-Your analysis should cover:
+You are an expert research analyst. Read the source document and produce a single STRICT JSON object. Do NOT output markdown, code fences, chain-of-thought, hidden reasoning, or any prose. Reason internally and emit only the JSON.
 
-## Key Entities
-List people, organizations, products, datasets, tools mentioned. For each:
-- Name and type
-- Role in the source (central vs. peripheral)
-- Whether it likely already exists in the wiki (check the index)
+The JSON must conform to this schema (field names are case-sensitive):
 
-## Key Concepts
-List theories, methods, techniques, phenomena. For each:
-- Name and brief definition
-- Why it matters in this source
-- Whether it likely already exists in the wiki
+$schemaHint
 
-## Main Arguments & Findings
-- What are the core claims or results?
-- What evidence supports them?
-- How strong is the evidence?
+## Field-specific rules
+- `title`: a clean human-readable title for the source (may equal the filename).
+- `summary`: 2-4 sentence factual summary in $language. State what the source IS, not what it discusses in general.
+- `tags`: 3-8 short topic tags in $language (e.g. ["分布式系统", "共识算法"]).
+- `entities`: extract 1-10 named things mentioned in the source. Each entry:
+    - `name`: official / canonical name
+    - `entityType`: FREE-FORM semantic type. Pick the most specific noun that names what this thing IS — examples include (but are not limited to) Person, Organization, Company, Product, Tool, Dataset, System, Project, Place, Algorithm, Paper, Article, Book, Software, Library, API, Protocol, Standard, Event, Concept. Use your judgment; do not constrain yourself to a fixed list. Use the SAME casing style across the response (TitleCase is recommended for English, 中文直接用中文).
+    - `type`: DEPRECATED alias of `entityType`. Prefer `entityType`; the orchestrator accepts `type` as a fallback for backward compat.
+    - `aliases`: optional list of alternative names
+    - `description`: 1-2 sentence factual description in $language
+    - `role_in_source`: central|supporting|peripheral
+    - `evidence`: short verbatim or near-verbatim quote / locator
+    - `related_concepts`: names of concepts from the `concepts` array
+    - `related_entities`: names of other entities from the `entities` array
+    - `confidence`: 0.0-1.0
+  - **Hard extraction rule (P1, fixed)**: 哪怕来源只有一段话 / 一句话,也要至少提取 1 个
+    实体或概念,优先提取**主语**(谁/什么做了什么)和**核心术语**(被讨论的概念、工具、
+    方法、原则)。宁可提取一个模糊的实体,也不要返回空数组——空数组会直接让下游
+    Wiki 知识图谱缺失节点。用户体感是"导入了一篇文章,中间处理数据全是空"。
+  - DO NOT include abstract ideas, methods, or theories as entities.
+- `concepts`: extract 1-8 key ideas, methods, mechanisms, principles, or frameworks. Each entry:
+    - `name`: stable descriptive noun phrase in $language
+    - `conceptCategory`: FREE-FORM semantic category. Pick the most specific noun that names what kind of idea this IS — examples include (but are not limited to) Theory, Method, Technique, Phenomenon, Principle, Framework, Problem, Pattern, Protocol, Metric, Algorithm, Mechanism, Model, Process, Heuristic. Use your judgment; do not constrain yourself to a fixed list.
+    - `category`: DEPRECATED alias of `conceptCategory`. Prefer `conceptCategory`; the orchestrator accepts `category` as a fallback.
+    - `definition`: 1-2 sentence definition
+    - `why_it_matters`: why this concept matters in the source
+    - `source_context`: short verbatim or near-verbatim quote / locator
+    - `related_entities`: names of entities from the `entities` array
+    - `related_concepts`: names of other concepts from the `concepts` array
+    - `confidence`: 0.0-1.0
+  - **Hard extraction rule (P1, fixed)**: 即使来源没有"系统讲方法论",也要从主题词中
+    提取 1-3 个核心概念(被讨论的主题 / 试图解决的问题 / 用的方法)。空数组会让
+    knowledge graph 缺节点。
+  - DO NOT include vague or generic concepts (e.g. "介绍", "背景", "应用", "总结", section titles).
+- `relations`: list of edges between `entities` and/or `concepts` referenced by their `name`. Each entry:
+    - `source`: source node name (must match an entity or concept name)
+    - `target`: target node name
+    - `type`: one of supports|contradicts|extends|uses|part_of|related_to
+    - `reason`: 1 sentence why
+    - `evidenceFragmentIds`: array of fragment ids (can be empty)
+    - `confidence`: 0.0-1.0
+  Aim for 3-10 high-signal relations. If entities < 3 or concepts < 3, still produce the relations you can from what you have; don't pad with "related_to" everywhere.
+- `claims`: core factual claims the source makes. Each:
+    - `claim`: the claim text in $language
+    - `evidence`: short locator / quote
+    - `confidence`: 0.0-1.0
+- `gaps`: knowledge gaps worth flagging. Each:
+    - `gap`: what's missing
+    - `whyItMatters`: why the user should care
+    - `suggestedAction`: ask_user|web_research|connect_nodes|validate_claim
+- `pageRecommendations`: optional prioritization hint, used by Stage 2.
+- `archiveRecommendation`: keep conservative (targetKnowledgeBaseId=null is fine if unsure).
+- `confidence`: overall confidence in the analysis (0.0-1.0).
+- `needHumanReview`: true if anything is ambiguous.
+- `reviewReasons`: list of short reasons in $language (empty if needHumanReview is false).
 
-## Connections to Existing Wiki
-- What existing pages does this source relate to?
-- Does it strengthen, challenge, or extend existing knowledge?
+## Why `entityType` / `conceptCategory` are FREE-FORM, not enums
 
-## Contradictions & Tensions
-- Does anything in this source conflict with existing wiki content?
-- Are there internal tensions or caveats?
+The downstream UI groups entities / concepts by their semantic type
+(e.g. "人物", "组织", "地点", "算法", "理论", "方法") and the graph
+canvas colors them by the same bucket. Forcing a tight enum here would
+make the LLM either invent bogus values that get sanitized away, or
+under-classify (calling every algorithm a "Tool", every paper a
+"Product"). Free-form is the right call: a small normalization table
+on the consumer side maps both English and Chinese semantic types
+to UI buckets, so the user sees meaningful grouping.
 
-## Recommendations
-- What wiki pages should be created or updated?
-- What should be emphasized vs. de-emphasized?
-- Any open questions worth flagging for the user?
+## Anti-empty-array guard (P1, fixed)
 
-Be thorough but concise. Focus on what's genuinely important.
+The previous version of this prompt told the model to return AT LEAST 3
+entries "when the source names concrete people/..." — that conditional
+("when the source names ...") caused small / vague sources to return
+`[]`. The user-facing symptom was a knowledge graph with no nodes at
+all even after a successful import. This version drops the conditional
+and asks for 1-10 entities / 1-8 concepts unconditionally. The
+fallback is: when the AI path returns empty arrays, the orchestrator's
+local heuristic extracts high-frequency noun phrases from the source
+text as a last resort.
 
-If a folder context is provided, use it as a hint for categorization — the folder structure often reflects the user's organizational intent (e.g., 'papers/energy' suggests the file is an energy-related paper).
+## Hard rules
+1. Output ONLY the JSON object. No preamble, no code fence, no trailing prose.
+2. The FIRST character of your response must be `{`.
+3. All `name` fields in `entities` and `concepts` are referenced BY STRING in `relations` / `related_*` arrays. Make spelling consistent.
+4. Use empty arrays `[]` for empty collections. Do not omit required fields.
+5. If the source is empty / illegible, still emit the JSON with empty arrays and a short summary explaining why.
 
 ${if (purpose.isNotBlank()) "## Wiki Purpose (for context)\n$purpose" else ""}
-
-${if (currentIndex.isNotBlank()) "## Current Wiki Index (for checking existing content)\n$currentIndex" else ""}
+${if (currentIndex.isNotBlank()) "## Current Wiki Index (for de-dup hints)\n$currentIndex" else ""}
 """.trimIndent()
 
     /**
@@ -184,10 +257,15 @@ Do not output chain-of-thought, hidden reasoning, or explanatory preamble. Reaso
   • `related`  — 裸 slug 数组:`related: [foo, bar-baz]`。**不要**包含 `wiki/`、`.md` 或 `[[…]]`,只写 slug
   • `sources`  — 源文件名字符串数组;**必须**包含 "$fileName"
 
+可选字段(语义类型,跟 `type:` 严格 enum 解耦):
+  • `entityType`      — 仅实体页用,LLM 给的语义类型(例:`Person`、`Algorithm`、`Paper`)。**不要**把这个写到 `type:` 字段。
+  • `conceptCategory` — 仅概念页用,LLM 给的语义分类(例:`Theory`、`Method`、`Framework`)。**不要**把这个写到 `type:` 字段。
+
 完整可解析页面示例(两 `---` 之间是 frontmatter,下方是 body):
 
     ---
     type: entity
+    entityType: Algorithm
     title: Example Entity
     created: 2026-04-29
     updated: 2026-04-29
@@ -501,6 +579,188 @@ ${items.joinToString("\n") { "- $it" }}
 
 ${languageDirective(language)}
 """.trimIndent()
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 灵感脉络 —— 增量 LLM 脉络生成
+    //
+    // 跟 llm_wiki 的 `buildGenerationPrompt` 是同一类 prompt:
+    //   - head + tail 两次注入 languageDirective(防小模型语言漂移)
+    //   - 严格 JSON 输出 schema,字段名 case-sensitive
+    //   - 增量 diff 字段让前端能高亮"本次新增 / 演变 / 废弃"
+    //
+    // 设计要点:
+    //   1. 触发:每新增 1 条灵感(在 inspiration KB 下新增 knowledge_item)
+    //   2. 输入:历史灵感(只读摘要) + 本次新灵感(完整内容)
+    //          + 拉过来的关联知识条目(按 [[wikilink]] / tags / item refs 反查)
+    //   3. 输出:description / coreQuestion / mainline / relations /
+    //          gaps / nextSuggestions + diff 三段
+    //   4. 增量稳定性:不重写整个脉络,只描述本次改了什么
+    //
+    // P1 对齐:对照 P0 的"实体 / 概念 type 字段错位"修复,这里同样
+    // 把"主线"和"关系"严格 enum / 长度约束写死,避免 LLM 自由发挥
+    // 输出无法在前端卡片上渲染的内容。
+    // ─────────────────────────────────────────────────────────────────────
+
+    /**
+     * 历史灵感条目,只带摘要/标签/title,完整内容不进 prompt
+     * (灵感库可能很长,完整内容会让 prompt 爆炸)
+     */
+    data class InspirationDigest(
+        val id: String,
+        val title: String,
+        val tags: List<String>,
+        val summary: String,
+        val createdAtLabel: String,  // 例: "2026-05-28"
+    )
+
+    /** 本次新增的灵感,完整内容必须给到 LLM */
+    data class NewInspiration(
+        val id: String,
+        val title: String,
+        val tags: List<String>,
+        val summary: String,
+        val content: String,
+    )
+
+    /** 拉过来的关联知识条目,用于"灵感撞到既有知识"的发现 */
+    data class RelatedWikiPage(
+        val title: String,
+        val type: String,            // entity / concept / source
+        val summary: String,
+        val sourceKbName: String,
+    )
+
+    /** 现有脉络的快照,作为增量起点 */
+    data class ExistingThreadSnapshot(
+        val description: String,
+        val coreQuestion: String,
+        val mainline: List<String>,
+        val gaps: List<String>,
+        val nextSuggestions: List<String>,
+    )
+
+    fun inspirationThreadPrompt(
+        kbName: String,
+        newInspiration: NewInspiration,
+        historicalInspirationDigest: List<InspirationDigest>,
+        relatedWikiPages: List<RelatedWikiPage>,
+        existingThread: ExistingThreadSnapshot?,
+        language: String = "中文",
+    ): String = buildString {
+        appendLine(languageDirective(language))
+        appendLine()
+        appendLine("你是用户的灵感脉络编辑。每条灵感是用户随手记的片段(标题 + 标签 + 内容,可能 1-3 句,可能半篇),用户希望把它们组织成「我最近在想什么、推到了哪里、下一步该做什么」的可读主线,而不是机械的 tag 共现列表。")
+        appendLine()
+        appendLine("## 模式:增量更新(关键,跟从零生成的区别)")
+        appendLine()
+        appendLine("你不是从零生成脉络——`existingThread` 是上一次生成的脉络快照,代表用户已经认定的「主轴」。你的工作是**在保持主轴稳定的前提下,接入本次新增**:")
+        appendLine()
+        appendLine("  - 70% 情况下,本次新灵感会**丰富**现有主线的某一段,而非开新线;")
+        appendLine("  - 20% 情况下,新灵感会**分叉**出并行线(并行探索);")
+        appendLine("  - 8% 情况下,新灵感跟某条旧灵感**矛盾或推翻**——把旧段标记为 obsolete;")
+        appendLine("  - 2% 情况下,新灵感标志用户**主题切换**——主轴整体演化,旧主线变 background。")
+        appendLine()
+        appendLine("请在 `diff` 字段里如实记录本次改了什么,不要为了显得「有变化」而虚构 diff,也不要为了「稳定」而吞掉真实的演变。")
+        appendLine()
+        appendLine("## 输入")
+        appendLine()
+        appendLine("### 灵感知识库上下文")
+        appendLine("- 知识库名:「$kbName」")
+        appendLine("- 历史灵感总数:${historicalInspirationDigest.size + 1}(含本次新增)")
+        appendLine("- 触发:新增 1 条灵感")
+        appendLine()
+        appendLine("### 本次新增灵感(必须出现在主线条中)")
+        appendLine("- 灵感 id: ${newInspiration.id}")
+        appendLine("- 标题: ${newInspiration.title}")
+        appendLine("- 标签: ${newInspiration.tags.joinToString("、").ifBlank { "(无)" }}")
+        appendLine("- 摘要: ${newInspiration.summary.ifBlank { "(无摘要,从内容推断)" }}")
+        appendLine("- 完整内容:")
+        appendLine("```")
+        appendLine(newInspiration.content.take(4_000))
+        appendLine("```")
+
+        if (relatedWikiPages.isNotEmpty()) {
+            appendLine()
+            appendLine("### 关联到的知识条目(用户希望「灵感撞到既有知识」被识别出来)")
+            relatedWikiPages.take(20).forEach { wp ->
+                appendLine("- [${wp.type}] 「${wp.title}」 — ${wp.summary.take(120).ifBlank { "(无摘要)" }}  [来源:${wp.sourceKbName}]")
+            }
+        }
+
+        if (historicalInspirationDigest.isNotEmpty()) {
+            appendLine()
+            appendLine("### 历史灵感(只读摘要,不要再回显;按时间从旧到新)")
+            historicalInspirationDigest.take(30).forEach { d ->
+                appendLine("- [${d.createdAtLabel}] 「${d.title}」  标签:${d.tags.joinToString("、").ifBlank { "(无)" }}  摘要:${d.summary.take(80).ifBlank { "(无)" }}")
+            }
+        }
+
+        if (existingThread != null) {
+            appendLine()
+            appendLine("### 现有脉络(增量起点)")
+            appendLine("- 描述: ${existingThread.description}")
+            appendLine("- 核心问题: ${existingThread.coreQuestion}")
+            appendLine("- 主线:")
+            existingThread.mainline.forEachIndexed { i, m ->
+                appendLine("  ${i + 1}. $m")
+            }
+            appendLine("- 缺口:")
+            existingThread.gaps.forEach { appendLine("  - $it") }
+            appendLine("- 下一步建议:")
+            existingThread.nextSuggestions.forEach { appendLine("  - $it") }
+        } else {
+            appendLine()
+            appendLine("### 现有脉络")
+            appendLine("(灵感库尚无脉络,本次从零生成,但仍按「灵感是有机生长而非机械填充」原则)")
+        }
+
+        appendLine()
+        appendLine("## 输出")
+        appendLine()
+        appendLine("严格 JSON,字段名 case-sensitive,不要 markdown 围栏,不要解释,第一个字符必须是 `{`:")
+        appendLine()
+        appendLine("""{
+  "description": "2-3 句整体描述(说明灵感库当前在思考的主题/方向)",
+  "coreQuestion": "1 句,用户整体在尝试回答/解决的问题",
+  "mainline": [
+    "主线条 1:灵感 A → 灵感 B → 灵感 C,本条主线在追踪 / 推导出 ...(60-100 字)"
+  ],
+  "relations": [
+    {"from": "灵感标题 A", "to": "灵感标题 B", "relation": "从...推导出 / 与...矛盾 / 拓展了 / 收束到..."}
+  ],
+  "gaps": [
+    "知识缺口 1:目前缺少关于 X 的具体灵感或知识"
+  ],
+  "nextSuggestions": [
+    "下一步建议 1:具体到动作(写新灵感 / 整理到某知识库 / 做研究 / 跟既有知识交叉验证)"
+  ],
+  "diff": {
+    "newMainlineSegments": [
+      "本次新增的段(整条新增,而不是改写已有)"
+    ],
+    "evolvedSegments": [
+      {"label": "被改写的段的主题", "before": "改写前的内容", "after": "改写后的内容"}
+    ],
+    "obsoleteSegments": [
+      "本次被废弃的整条主线 / 段(灵感被推翻 / 主题切换 / 收束)"
+    ]
+  }
+}""")
+        appendLine()
+        appendLine("## 硬约束(违反直接丢弃响应)")
+        appendLine()
+        appendLine("1. description 严格 2-3 句,coreQuestion 严格 1 句。")
+        appendLine("2. mainline 1-5 条;relations 0-8 条;gaps 0-5 条;nextSuggestions 1-5 条。")
+        appendLine("3. mainline 每条 60-100 字,relation 严格 1 句话,nextSuggestions 每条 1 句话并以动词开头。")
+        appendLine("4. 第一个字符必须是 `{`,最后一个字符必须是 `}`。")
+        appendLine("5. 所有灵感标题 / 实体名用「关联到的知识条目」段中**完全相同的字面量**;不要改大小写、不要加「灵感」后缀。")
+        appendLine("6. 不要把 tag 当成主线——主线是灵感之间的**叙事递进**,不是 tag 共现。")
+        appendLine("7. 关联到的 wiki 实体/概念,只引用其 title 字面量作为「撞点」,不要臆测其内容。")
+        appendLine("8. diff.newMainlineSegments / evolvedSegments / obsoleteSegments 必填,即使本次没变化也要写空数组 `[]`,让前端能可靠检测「无 diff」。")
+        appendLine("9. 整体输出 ≤ 2,000 字符——灵感脉络是要在卡片上读的,不能写论文。")
+        appendLine()
+        appendLine(languageDirective(language))
+    }
 }
 
 /**

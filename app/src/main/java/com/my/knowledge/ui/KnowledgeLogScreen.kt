@@ -10,12 +10,15 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Cancel
@@ -168,7 +171,20 @@ fun KnowledgeLogScreen(
             onDismissRequest = { detailRow = null },
             title = { Text(row.source.title, fontWeight = FontWeight.Bold) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 给整段加 verticalScroll：来源在长任务链下可能堆积几十条
+                // 内部日志（parse → analysis → generation → embedding），原来
+                // 用 .take(6) 截断,用户根本看不到后续阶段的失败原因。改成
+                // 可滚动列表后,所有日志行都可见,且不影响 AlertDialog 自带
+                // 的高度上限(Material 3 会按内容收缩 dialog 高度,我们再手动
+                // 给整体一个 360dp 的内层高度上限,保证移动端不被压扁)。
+                val logScroll = rememberScrollState()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(logScroll),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Text("来源类型：${row.source.sourceType}")
                     Text("MIME：${row.source.mimeType ?: "unknown"}")
                     Text("导入状态：${row.source.status}")
@@ -183,10 +199,30 @@ fun KnowledgeLogScreen(
                     }
                     if (recentLogs.isNotEmpty()) {
                         HorizontalDivider()
-                        Text("最近内部日志：", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                        recentLogs.take(6).forEach { log ->
+                        // 用行数+首末时间标注一行小标题,方便用户一眼看到
+                        // 这段是不是已截断——以后只要日志变长,标题里会带着
+                        // 真实的条数,而不是"最近 6 条"。
+                        val first = recentLogs.lastOrNull()
+                        val last = recentLogs.firstOrNull()
+                        Text(
+                            buildString {
+                                append("最近内部日志（")
+                                append(recentLogs.size)
+                                append(" 条")
+                                if (first != null && last != null && first.id != last.id) {
+                                    append(" · ")
+                                    append(formatLogTime(first.createdAt))
+                                    append(" ~ ")
+                                    append(formatLogTime(last.createdAt))
+                                }
+                                append("）")
+                            },
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp
+                        )
+                        recentLogs.forEach { log ->
                             Text(
-                                "[${log.stage}] ${log.message}",
+                                "[${formatLogTime(log.createdAt)}][${log.stage}] ${log.message}",
                                 fontSize = 11.sp,
                                 color = when (log.status) {
                                     "success" -> Color(0xFF16A34A)

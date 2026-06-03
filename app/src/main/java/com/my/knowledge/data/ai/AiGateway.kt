@@ -281,11 +281,26 @@ class AiGateway : AiProvider {
                 }
 
                 val parsed = parseChatResponse(responseText)
+                // Strip the model's hidden chain-of-thought block(s) before
+                // the response leaves the gateway. Every non-streaming
+                // caller (IngestOrchestrator, TagWorker, etc.) feeds the
+                // return value into a database row or a markdown file
+                // later — if we don't clean here, a long `<think>` would
+                // get persisted into KnowledgeItemEntity.contentMarkdown
+                // and show up in the viewer.
+                val cleaned = with(AiTextCleaner) { parsed.cleanModelOutput() }
                 // Diagnose "reasoning-only" outputs: many models emit a long
                 // thinking block but no real content. Surface that as an error
                 // instead of silently returning empty / truncated text.
-                if (parsed.startsWith("[API 错误]")) return@withContext parsed
-                parsed
+                if (cleaned.startsWith("[API 错误]")) return@withContext cleaned
+                if (cleaned.isBlank() && parsed.isNotBlank()) {
+                    // The model thought aloud but produced nothing else —
+                    // explicit empty-after-clean signal so callers can
+                    // branch on it (e.g. IngestOrchestrator falls back to
+                    // the local summary heuristic).
+                    return@withContext "[AI 调用失败] 模型仅返回了思考过程，未给出实际内容。"
+                }
+                cleaned
             } finally {
                 connection.disconnect()
             }

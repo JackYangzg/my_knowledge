@@ -6,6 +6,9 @@ import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
+import com.tom_roush.pdfbox.pdmodel.PDDocument
+import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.File
 import kotlin.coroutines.resume
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -193,68 +196,85 @@ class PdfTextParser : ContentParser {
 
     override suspend fun parse(source: SourceDocumentEntity): ParsedContent {
         val file = source.localPath?.let { File(it) }
-        val raw = file?.takeIf { it.exists() }?.readBytes()?.toString(Charsets.ISO_8859_1).orEmpty()
-        val extracted = extractPdfText(raw)
-        val pageCount = Regex("/Type\\s*/Page\\b").findAll(raw).count().coerceAtLeast(1)
+        // The previous implementation regex-scanned the raw PDF byte stream
+        // for `(...)` / `<...>` fragments and decoded them as ISO-8859-1 or
+        // UTF-16BE. That breaks in three common cases:
+        //   1. Compressed content streams (FlateDecode) — the strings we
+        //      scraped were the compressed bytes, not real text.
+        //   2. CIDFont / Type0 fonts with ToUnicode CMaps — the raw
+        //      character codes aren't in any one-byte encoding.
+        //   3. Embedded fonts whose glyph IDs map through a CMap.
+        // PDFTextStripper walks the content stream, applies the resource
+        // dictionary's fonts + CMaps, and returns the decoded text — which
+        // is what we want for both Latin and CJK PDFs.
+        val extractResult = file?.takeIf { it.exists() }?.let { runCatching { extractWithPdfBox(it) }.getOrNull() }
+        val extracted = extractResult?.text.orEmpty()
+        val pageCount = extractResult?.pageCount ?: 0
         val markdown = buildString {
             appendLine("# ${source.title}")
             appendLine()
-            appendLine("- PDF 页数估计：$pageCount")
+            if (pageCount > 0) {
+                appendLine("- PDF 页数：$pageCount")
+            } else {
+                appendLine("- PDF 页数：解析失败（仅保留元数据）")
+            }
             appendLine("- SHA256：${source.sha256}")
             appendLine()
             if (extracted.isNotBlank()) {
                 appendLine("## 抽取文本")
                 appendLine()
                 appendLine(extracted)
+            } else if (file?.exists() == true) {
+                appendLine("> PDF 已保存到本地，但未检测到可直接抽取的文本流。扫描版 PDF 需要 OCR 识别图片中的文字。")
             } else {
-                appendLine("> PDF 已保存到本地，但未检测到可直接抽取的文本流。扫描版 PDF 需要 OCR。")
+                appendLine("> PDF 原始文件不存在，仅保留来源元数据。")
             }
         }
         return ParsedContent(
             parserType = if (extracted.isBlank()) "pdf_metadata" else "pdf_text",
             markdown = markdown,
             plainText = extracted.ifBlank { markdown.stripMarkdown() },
-            metadataJson = """{"title":"${source.title.escapeJson()}","sourceType":"pdf","estimatedPages":$pageCount,"extractedChars":${extracted.length}}"""
+            metadataJson = buildString {
+                append("{")
+                append("\"title\":\"${source.title.escapeJson()}\"")
+                append(",\"sourceType\":\"pdf\"")
+                if (pageCount > 0) append(",\"pages\":$pageCount")
+                append(",\"extractedChars\":${extracted.length}")
+                if (file?.exists() != true) append(",\"fileMissing\":true")
+                append("}")
+            }
         )
     }
 
-    private fun extractPdfText(raw: String): String {
-        val literalStrings = Regex("\\((?:\\\\.|[^\\\\)]){2,}\\)")
-            .findAll(raw)
-            .map { it.value.removePrefix("(").removeSuffix(")").decodePdfLiteral() }
-            .filter { it.count { c -> c.isLetterOrDigit() } >= 2 }
-            .toList()
-        val hexStrings = Regex("<([0-9A-Fa-f]{4,})>")
-            .findAll(raw)
-            .mapNotNull { decodePdfHex(it.groupValues[1]) }
-            .filter { it.count { c -> c.isLetterOrDigit() } >= 2 }
-            .toList()
-        return (literalStrings + hexStrings)
-            .joinToString(" ")
-            .replace(Regex("\\s+"), " ")
-            .trim()
-            .take(200_000)
-    }
+    private data class PdfExtractResult(val text: String, val pageCount: Int)
 
-    private fun String.decodePdfLiteral(): String =
-        replace("\\n", "\n")
-            .replace("\\r", "\n")
-            .replace("\\t", "\t")
-            .replace("\\(", "(")
-            .replace("\\)", ")")
-            .replace("\\\\", "\\")
-
-    private fun decodePdfHex(hex: String): String? {
-        return runCatching {
-            val clean = if (hex.length % 2 == 0) hex else "${hex}0"
-            val bytes = clean.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-            val utf16 = if (bytes.size >= 2 && bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()) {
-                bytes.copyOfRange(2, bytes.size).toString(Charsets.UTF_16BE)
-            } else {
-                bytes.toString(Charsets.ISO_8859_1)
+    private fun extractWithPdfBox(file: File): PdfExtractResult {
+        // PDFBox-Android 2.0.27 is a repackaged Apache PDFBox — the static
+        // helper on PDDocument is the most stable load path across versions
+        // (the `Loader` class in `org.apache.pdfbox` exists in some shims
+        // and not others, so we avoid it).
+        val document: PDDocument = PDDocument.load(file)
+        return try {
+            val pageCount = document.numberOfPages
+            // PDFTextStripper's default settings already:
+            //   - follow the content stream order
+            //   - apply each page's resource dictionary (fonts + CMaps)
+            //   - decode FlateDecode / LZWDecode / ASCIIHex filters
+            //   - produce a layout-aware text approximation with newlines
+            // Setting sortByPosition keeps the reading order stable across
+            // page layouts. We trim the output so a 1000-page PDF doesn't
+            // blow up the markdown column.
+            val stripper = PDFTextStripper().apply {
+                sortByPosition = true
             }
-            utf16
-        }.getOrNull()
+            val raw = stripper.getText(document)
+            PdfExtractResult(
+                text = raw.replace("\r\n", "\n").replace('\u0000', ' ').trim().take(200_000),
+                pageCount = pageCount
+            )
+        } finally {
+            document.close()
+        }
     }
 }
 

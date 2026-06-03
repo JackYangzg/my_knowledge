@@ -1,5 +1,8 @@
 package com.my.knowledge.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -10,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.shadow
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.FileUpload
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Checklist
@@ -22,22 +26,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
+import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
-import com.my.knowledge.ui.component.KnowledgeItemRow
 import com.my.knowledge.ui.component.AskSheet
+import com.my.knowledge.ui.component.ImportSheet
+import com.my.knowledge.ui.component.KnowledgeItemRow
+import com.my.knowledge.viewmodel.ImportFileItem
 import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.data.ai.ScopeType
+import kotlin.math.roundToInt
 
 @Composable
 fun KnowledgeDetailScreen(
+    kbId: String,
     kbName: String,
     viewModel: KnowledgeItemListViewModel,
     askViewModel: AskViewModel,
     knowledgeRepository: com.my.knowledge.domain.repository.KnowledgeRepository,
-    allKnowledgeBases: List<com.my.knowledge.data.db.entity.KnowledgeBaseEntity>,
+    allKnowledgeBases: List<KnowledgeBaseEntity>,
     onBack: () -> Unit,
     onOpenItem: (String) -> Unit = {},
     onOpenIntermediate: (String) -> Unit = {}
@@ -56,16 +68,43 @@ fun KnowledgeDetailScreen(
     var selectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showAskSheet by remember { mutableStateOf(false) }
-    
+
     // Popup Menu State
     var showPopupMenu by remember { mutableStateOf(false) }
     var showMoveSelectionDialog by remember { mutableStateOf(false) }
     var popupTargetItem by remember { mutableStateOf<KnowledgeItemEntity?>(null) }
+    // P1: 记录长按的窗口像素坐标,Popup 直接从手指位置弹出。
+    var popupOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+
+    // In-place import: when the user opens the file picker from inside a
+    // knowledge base, we want to lock the destination to THIS base. We
+    // resolve the base entity from the [kbId] argument + [allKnowledgeBases]
+    // — passing the id down from the nav graph is more reliable than
+    // inferring it from the first list item, which can be empty.
+    val currentKb: KnowledgeBaseEntity? = remember(kbId, allKnowledgeBases) {
+        allKnowledgeBases.firstOrNull { it.id == kbId }
+    }
+    // Queue of files waiting for the import sheet. The picker supports
+    // multi-select, so we keep the rest and pop one at a time onto the
+    // sheet (mirroring KnowledgeScreen's behaviour on the home tab).
+    var pendingImportUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+    var showImportSheet by remember { mutableStateOf(false) }
+    val pendingImportUri = pendingImportUris.firstOrNull()
+
+    val kbFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments(),
+        onResult = { uris ->
+            if (uris.isNotEmpty()) {
+                pendingImportUris = uris
+                showImportSheet = true
+            }
+        }
+    )
 
     // Resolve the current knowledge base id once so the floating "AI 问一问"
     // button can scope Ask to this whole base (rather than to any single
     // item the user happens to have hovered).
-    val currentKbId = remember(items) { items.firstOrNull()?.knowledgeBaseId }
+    val currentKbId = remember(items, kbId) { kbId.takeIf { it.isNotBlank() } ?: items.firstOrNull()?.knowledgeBaseId }
     val showFloatingAskButton = !currentKbId.isNullOrBlank()
 
     Box(
@@ -135,6 +174,42 @@ fun KnowledgeDetailScreen(
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // In-place import. Always visible (not gated on
+                    // selection mode) because the user can be browsing
+                    // an empty list and still want to add the first
+                    // file. Tapping opens the system file picker and
+                    // routes the import straight into THIS knowledge
+                    // base — no "where should this go?" question.
+                    // Visual style deliberately matches the
+                    // multi-select / search buttons (36dp light-blue
+                    // square with brand-blue icon) so the three
+                    // actions read as one toolbar.
+                    if (currentKb != null) {
+                        IconButton(
+                            onClick = {
+                                kbFilePickerLauncher.launch(
+                                    arrayOf(
+                                        "application/pdf",
+                                        "application/msword",
+                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        "text/plain",
+                                        "text/markdown",
+                                        "image/*"
+                                    )
+                                )
+                            },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .background(Color(0xFFF7FBFF), RoundedCornerShape(10.dp))
+                        ) {
+                            Icon(
+                                Icons.Default.FileUpload,
+                                contentDescription = "导入到本知识库",
+                                tint = Color(0xFF147EC5),
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                     if (selectionMode && selectedIds.isNotEmpty()) {
                         IconButton(
                             onClick = {
@@ -257,8 +332,9 @@ fun KnowledgeDetailScreen(
                         onSelectionChange = { checked ->
                             selectedIds = if (checked) selectedIds + item.id else selectedIds - item.id
                         },
-                        onLongClick = {
+                        onLongClick = { pressOffset ->
                             popupTargetItem = item
+                            popupOffset = pressOffset
                             showPopupMenu = true
                         },
                         onClick = {
@@ -278,25 +354,39 @@ fun KnowledgeDetailScreen(
         
         // Popup Menu
         if (showPopupMenu && popupTargetItem != null) {
-            DropdownMenu(
-                expanded = showPopupMenu,
-                onDismissRequest = { showPopupMenu = false }
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = IntOffset(
+                    popupOffset.x.roundToInt(),
+                    popupOffset.y.roundToInt()
+                ),
+                onDismissRequest = { showPopupMenu = false },
+                properties = PopupProperties(focusable = true)
             ) {
-                DropdownMenuItem(
-                    text = { Text("将知识移动到知识库") },
-                    onClick = {
-                        showPopupMenu = false
-                        showMoveSelectionDialog = true
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color.White,
+                    shadowElevation = 8.dp,
+                    tonalElevation = 2.dp
+                ) {
+                    Column(modifier = Modifier.widthIn(min = 180.dp)) {
+                        DropdownMenuItem(
+                            text = { Text("将知识移动到知识库") },
+                            onClick = {
+                                showPopupMenu = false
+                                showMoveSelectionDialog = true
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("删除知识") },
+                            onClick = {
+                                showPopupMenu = false
+                                deleteTarget = popupTargetItem
+                                showDeleteDialog = true
+                            }
+                        )
                     }
-                )
-                DropdownMenuItem(
-                    text = { Text("删除知识") },
-                    onClick = {
-                        showPopupMenu = false
-                        deleteTarget = popupTargetItem
-                        showDeleteDialog = true
-                    }
-                )
+                }
             }
         }
 
@@ -441,6 +531,35 @@ fun KnowledgeDetailScreen(
 
     if (showAskSheet) {
         AskSheet(askViewModel = askViewModel, onClose = { showAskSheet = false })
+    }
+
+    // In-place import sheet. Only show when we know where the file is
+    // going (we need [currentKb] for the locked destination). The picker
+    // result is a multi-URI queue — we pop one at a time and the
+    // remaining URIs stay queued for the next sheet iteration, so a
+    // bulk import still gets per-file confirmation.
+    if (showImportSheet && pendingImportUri != null && currentKb != null) {
+        ImportSheet(
+            uri = pendingImportUri,
+            knowledgeBases = allKnowledgeBases,
+            lockedKb = currentKb,
+            onClose = {
+                val remaining = pendingImportUris.drop(1)
+                pendingImportUris = remaining
+                showImportSheet = remaining.isNotEmpty()
+            },
+            onConfirm = { req ->
+                viewModel.importFilesToCurrentBase(
+                    listOf(
+                        ImportFileItem(
+                            uri = pendingImportUri,
+                            displayName = req.displayName,
+                            mimeType = req.mimeType
+                        )
+                    )
+                )
+            }
+        )
     }
 
     statusTarget?.let { item ->

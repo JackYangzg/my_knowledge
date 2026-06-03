@@ -12,6 +12,7 @@ import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.parser.WeChatArticleParser
+import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -72,6 +73,12 @@ object KnowledgeManager {
         db = AppDatabase.getInstance(context)
         scheduler = ProcessingTaskScheduler(context)
         fileStore = LocalFileStore(context)
+        // PDFBox-Android reads its bundled font/CMAP resources from the APK
+        // the first time Loader.loadPDF is called. Initializing once at app
+        // startup is cheaper than re-checking on every PDF and ensures the
+        // call is on the main thread (PDFBoxResourceLoader is not documented
+        // as thread-safe for init).
+        PDFBoxResourceLoader.init(context.applicationContext)
         preferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val storedVoiceApiKey = preferences.getString(KEY_VOICE_API_KEY, "") ?: ""
         val sanitizedVoiceApiKey = storedVoiceApiKey.takeUnless {
@@ -194,10 +201,12 @@ object KnowledgeManager {
                 deletedAt = null
             )
             database.knowledgeItemDao().insert(item)
-            
-            // Note: We don't call updateItemCount here as it will be handled by the pipeline or is handled in Repository.
-            // But for immediate UI update, we can call it if we have access.
-            // database.knowledgeItemDao().updateItemCount(kbId, ...)
+            // 立刻把 kb.itemCount +1,避免用户切回主页看到"导入完成但知识库
+            // 数量没变"的假象(此前这里依赖 generationTask 跑完才更新,中间
+            // 这段空窗期 user 看到的就是错的数字)。generationTask 完成后
+            // 会再次 updateItemCount,值会重新计算——这是幂等的,不会重复
+            // 累加,因为只 insert 了一条 root item,后续 rootItem 会被 reuse。
+            database.knowledgeItemDao().updateItemCount(kbId)
 
             // 3. Create initial parse task for the Ingest Pipeline
             database.processingTaskDao().insert(
