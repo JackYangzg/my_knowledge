@@ -803,7 +803,7 @@ private fun InspirationThreadCard(thread: InspirationThreadUi, itemCount: Int) {
             Text(thread.summary, fontSize = 14.sp, lineHeight = 22.sp, color = Color(0xFF334155))
             // 主线条带 diff 角标(本次新增/演变/废弃)
             InspirationThreadSection(
-                title = "主线",
+                title = stringResource(R.string.auto_342ed943),
                 values = thread.mainlines,
                 hints = thread.diff.mainlineSegmentHints,
             )
@@ -814,8 +814,8 @@ private fun InspirationThreadCard(thread: InspirationThreadUi, itemCount: Int) {
             ) {
                 ThreadDiffSummary(diff = thread.diff)
             }
-            InspirationThreadSection(title = "问题", values = thread.questions)
-            InspirationThreadSection(title = "下一步", values = thread.nextActions)
+            InspirationThreadSection(title = stringResource(R.string.auto_2fb49eec), values = thread.questions)
+            InspirationThreadSection(title = stringResource(R.string.auto_ea0ef2ae), values = thread.nextActions)
         }
     }
 }

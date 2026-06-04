@@ -45,7 +45,7 @@ fun ProfileScreen(
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
         item {
-            PageHeader(title = "我")
+            PageHeader(title = stringResource(R.string.auto_34f201bc))
         }
 
         item {
@@ -94,8 +94,8 @@ fun ProfileScreen(
 
         item {
             Section(
-                title = "知识加工数据",
-                more = "查看详情",
+                title = stringResource(R.string.auto_66f12078),
+                more = stringResource(R.string.auto_faea8c1d),
                 onMoreClick = {
                     onOpenIntermediateData(processingSummaries.firstOrNull()?.knowledgeBaseId)
                 }
@@ -104,7 +104,7 @@ fun ProfileScreen(
                 if (visibleSummaries.isEmpty()) {
                     QuietCell(
                         icon = Icons.Default.Hub,
-                        title = "暂无加工数据",
+                        title = stringResource(R.string.auto_3e739db5),
                         desc = "导入并完成知识加工后，会按知识库展示实体、概念和关系"
                     )
                 } else {
@@ -128,7 +128,7 @@ fun ProfileScreen(
         }
 
         item {
-            Section(title = "管理") {
+            Section(title = stringResource(R.string.auto_4989b5cf)) {
                 val items = listOf(
                     // 日志中心描述要跟日志中心自身的 summary 卡片对齐:
                     //   - 处理中: pending + running + pending_network 任务

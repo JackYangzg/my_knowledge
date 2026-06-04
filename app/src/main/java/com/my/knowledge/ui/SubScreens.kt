@@ -55,8 +55,8 @@ fun KnowledgeContextScreen(
     ) {
         item {
             PageHeader(
-                title = "知识脉络",
-                hint = "自动化分析后的逻辑演进",
+                title = stringResource(R.string.auto_93960a93),
+                hint = stringResource(R.string.auto_b721d9b3),
                 back = {
                     TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
@@ -417,8 +417,8 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
     ) {
         item {
             PageHeader(
-                title = "碎片整理",
-                hint = "把零散记录进一步归纳整理",
+                title = stringResource(R.string.auto_c6bce0ff),
+                hint = stringResource(R.string.auto_9340db23),
                 back = {
                     TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
@@ -482,7 +482,7 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
             }
         } else {
             item {
-                Section(title = "推荐整理") {
+                Section(title = stringResource(R.string.auto_73565d17)) {
                     fragments.forEachIndexed { index, fragment ->
                         if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
                         QuietCell(

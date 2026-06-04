@@ -962,7 +962,7 @@ private fun RelationList(
         ) {
             item(key = "relation-header") {
                 CollapsibleSectionHeader(
-                    title = "关联关系",
+                    title = stringResource(R.string.auto_cd549def),
                     total = relations.size,
                     shown = visible.size,
                     expanded = expanded,
@@ -1190,7 +1190,7 @@ private fun CommunityList(
         ) {
             item(key = "community-header") {
                 CollapsibleSectionHeader(
-                    title = "主题群",
+                    title = stringResource(R.string.auto_989adfc8),
                     total = communities.size,
                     shown = visible.size,
                     expanded = expanded,

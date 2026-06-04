@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.ui.KnowledgeInsight
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun KnowledgeDigestSection(onOpenContext: () -> Unit, onOpenFragments: () -> Unit) {
@@ -43,10 +45,10 @@ fun KnowledgeDigestSection(onOpenContext: () -> Unit, onOpenFragments: () -> Uni
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text("知识整理", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF737373))
-                Text("自动化提炼后的成果", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                Text(stringResource(R.string.auto_e2ca3cf4), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF737373))
+                Text(stringResource(R.string.auto_1cad8496), fontSize = 12.sp, color = Color(0xFFA3A3A3))
             }
-            Text("查看全部", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+            Text(stringResource(R.string.auto_ed2172fd), fontSize = 12.sp, color = Color(0xFFA3A3A3))
         }
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -58,7 +60,7 @@ fun KnowledgeDigestSection(onOpenContext: () -> Unit, onOpenFragments: () -> Uni
             DigestCard(
                 modifier = Modifier.weight(1f),
                 iconText = "⌘",
-                title = "知识脉络",
+                title = stringResource(R.string.auto_93960a93),
                 desc = "导入文件后自动提炼脉络",
                 bottomText = "立即查看",
                 onClick = onOpenContext
@@ -66,7 +68,7 @@ fun KnowledgeDigestSection(onOpenContext: () -> Unit, onOpenFragments: () -> Uni
             DigestCard(
                 modifier = Modifier.weight(1f),
                 iconText = "▦",
-                title = "碎片整理",
+                title = stringResource(R.string.auto_c6bce0ff),
                 desc = "18 条零散记录待归纳",
                 bottomText = "继续整理",
                 onClick = onOpenFragments
@@ -197,7 +199,7 @@ fun InsightRow(insight: KnowledgeInsight) {
     Column(modifier = Modifier.background(Color.White).padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(16.dp))
-            Text("自动提炼的洞察", fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFF147EC5))
+            Text(stringResource(R.string.auto_14d3a72c), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFF147EC5))
         }
         Spacer(modifier = Modifier.height(10.dp))
         Text(

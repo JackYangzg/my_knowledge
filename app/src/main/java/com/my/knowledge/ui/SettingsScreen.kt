@@ -162,25 +162,25 @@ fun SettingsScreen(onBack: () -> Unit) {
                 null -> {
                     SettingsSectionRow(
                         icon = Icons.Default.SmartToy,
-                        title = "模型配置",
+                        title = stringResource(R.string.auto_4db4aab1),
                         desc = "$provider · $modelName",
                         onClick = { section = SettingsSection.Model }
                     )
                     SettingsSectionRow(
                         icon = Icons.Default.ImageSearch,
-                        title = "图片分析接口",
+                        title = stringResource(R.string.auto_ce8b57b2),
                         desc = "$imageAnalysisProvider · ${if (imageAnalysisApiKey.isBlank()) "未配置 API Key" else "已配置"}",
                         onClick = { section = SettingsSection.Image }
                     )
                     SettingsSectionRow(
                         icon = Icons.Default.Search,
-                        title = "搜索分析接口",
+                        title = stringResource(R.string.auto_38e5f976),
                         desc = "$searchAnalysisProvider · ${if (searchAnalysisApiKey.isBlank()) "未配置 API Key" else "已配置"}",
                         onClick = { section = SettingsSection.Search }
                     )
                     SettingsSectionRow(
                         icon = Icons.Default.Mic,
-                        title = "语音功能配置",
+                        title = stringResource(R.string.auto_6c6f71fe),
                         desc = "$voiceProvider · ${if (voiceApiKey.isBlank()) "未配置 API Key" else "已配置"}",
                         onClick = { section = SettingsSection.Voice }
                     )

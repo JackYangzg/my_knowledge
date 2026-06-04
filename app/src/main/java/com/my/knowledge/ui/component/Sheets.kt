@@ -34,6 +34,8 @@ import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.ui.ComposeMarkdown
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 /**
  * Result of a confirmed import. Caller decides what to do with it — the
@@ -96,7 +98,7 @@ fun ImportSheet(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 32.dp)
         ) {
-            Text("导入知识", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            Text(stringResource(R.string.auto_f4cd0bec), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
             Spacer(modifier = Modifier.height(16.dp))
 
             Surface(
@@ -112,13 +114,13 @@ fun ImportSheet(
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(fileName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                        Text("将通过本地加工引擎进行解析与归纳", fontSize = 12.sp, color = Color(0xFF5F87A3))
+                        Text(stringResource(R.string.auto_36872c93), fontSize = 12.sp, color = Color(0xFF5F87A3))
                     }
                 }
             }
 
             Spacer(modifier = Modifier.height(20.dp))
-            Text("归档位置", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF737373))
+            Text(stringResource(R.string.auto_442d21cc), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF737373))
             Spacer(modifier = Modifier.height(8.dp))
 
             if (lockedKb != null) {
@@ -144,7 +146,7 @@ fun ImportSheet(
                             modifier = Modifier.weight(1f)
                         )
                         Text(
-                            text = "当前知识库",
+                            text = stringResource(R.string.auto_7edce8dc),
                             fontSize = 11.sp,
                             color = Color(0xFF147EC5)
                         )
@@ -209,7 +211,7 @@ fun ImportSheet(
                 shape = RoundedCornerShape(12.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
             ) {
-                Text("开始导入", fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(stringResource(R.string.auto_3d048808), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
     }
@@ -253,13 +255,13 @@ fun AskSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("问一问", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_b773dbb2), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                     if (activeConversationId != null) {
                         TextButton(
                             onClick = { askViewModel.startNewConversation() },
                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
                         ) {
-                            Text("+ 新对话", fontSize = 12.sp, color = Color(0xFF147EC5))
+                            Text(stringResource(R.string.auto_ccde88e4), fontSize = 12.sp, color = Color(0xFF147EC5))
                         }
                     }
                 }
@@ -307,7 +309,7 @@ fun AskSheet(
                 ) {
                     Column(modifier = Modifier.padding(8.dp)) {
                         Text(
-                            "本范围内的对话",
+                            stringResource(R.string.auto_539d8bbe),
                             fontSize = 11.sp,
                             color = Color(0xFF94A3B8),
                             fontWeight = FontWeight.SemiBold,
@@ -354,7 +356,7 @@ fun AskSheet(
                                                 shape = RoundedCornerShape(6.dp)
                                             ) {
                                                 Text(
-                                                    "当前",
+                                                    stringResource(R.string.auto_25e74dce),
                                                     fontSize = 10.sp,
                                                     color = Color.White,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -394,7 +396,7 @@ fun AskSheet(
                                     color = Color(0xFF147EC5)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("思考中...", fontSize = 13.sp, color = Color(0xFF5F87A3))
+                                Text(stringResource(R.string.auto_7f318ca4), fontSize = 13.sp, color = Color(0xFF5F87A3))
                             }
                         }
                     }
@@ -436,7 +438,7 @@ fun AskSheet(
                     TextField(
                         value = inputText,
                         onValueChange = { if (!isLoading) inputText = it },
-                        placeholder = { Text("输入问题", fontSize = 14.sp, color = Color(0xFFA3A3A3)) },
+                        placeholder = { Text(stringResource(R.string.auto_86b9da2d), fontSize = 14.sp, color = Color(0xFFA3A3A3)) },
                         modifier = Modifier.weight(1f),
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
@@ -677,7 +679,7 @@ private fun MessageBubble(
                     tint = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("保存为知识", fontSize = 11.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_ad868eb9), fontSize = 11.sp, color = Color(0xFF147EC5))
             }
         }
     }

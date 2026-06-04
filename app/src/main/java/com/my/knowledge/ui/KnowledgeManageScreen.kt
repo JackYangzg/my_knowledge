@@ -127,7 +127,7 @@ fun KnowledgeManageScreen(
             }
 
             item {
-                Section(title = "全部知识库", more = "编辑") {
+                Section(title = stringResource(R.string.auto_6a782196), more = stringResource(R.string.auto_a7f814c0)) {
                     knowledgeBases.forEachIndexed { index, item ->
                         if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
                         QuietCell(
