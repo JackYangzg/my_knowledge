@@ -63,7 +63,27 @@ interface SearchDao {
     fun searchFragmentsAll(query: String, limit: Int): Flow<List<KnowledgeSearchResult>>
 
     @Query("""
-        SELECT 
+        SELECT
+            ki.id AS itemId,
+            kf.id AS fragmentId,
+            ki.knowledgeBaseId AS knowledgeBaseId,
+            ki.title AS title,
+            kf.content AS snippet,
+            ki.sourceType AS sourceType,
+            2.0 AS score,
+            'fragment' AS matchType
+        FROM knowledge_fragment_fts fts
+        INNER JOIN knowledge_fragment kf ON kf.rowid = fts.rowid
+        INNER JOIN knowledge_item ki ON ki.id = kf.itemId
+        WHERE knowledge_fragment_fts MATCH :query
+        AND ki.deletedAt IS NULL
+        ORDER BY ki.updatedAt DESC
+        LIMIT :limit
+    """)
+    fun ftsSearchFragmentsAll(query: String, limit: Int): Flow<List<KnowledgeSearchResult>>
+
+    @Query("""
+        SELECT
             ki.id AS itemId,
             kf.id AS fragmentId,
             ki.knowledgeBaseId AS knowledgeBaseId,
@@ -81,6 +101,27 @@ interface SearchDao {
         LIMIT :limit
     """)
     fun searchFragmentsByKb(query: String, kbId: String, limit: Int): Flow<List<KnowledgeSearchResult>>
+
+    @Query("""
+        SELECT
+            ki.id AS itemId,
+            kf.id AS fragmentId,
+            ki.knowledgeBaseId AS knowledgeBaseId,
+            ki.title AS title,
+            kf.content AS snippet,
+            ki.sourceType AS sourceType,
+            2.0 AS score,
+            'fragment' AS matchType
+        FROM knowledge_fragment_fts fts
+        INNER JOIN knowledge_fragment kf ON kf.rowid = fts.rowid
+        INNER JOIN knowledge_item ki ON ki.id = kf.itemId
+        WHERE knowledge_fragment_fts MATCH :query
+        AND ki.knowledgeBaseId = :kbId
+        AND ki.deletedAt IS NULL
+        ORDER BY ki.updatedAt DESC
+        LIMIT :limit
+    """)
+    fun ftsSearchFragmentsByKb(query: String, kbId: String, limit: Int): Flow<List<KnowledgeSearchResult>>
 
     @Query("""
         SELECT 

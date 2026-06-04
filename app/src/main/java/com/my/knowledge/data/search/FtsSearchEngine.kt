@@ -31,10 +31,19 @@ class FtsSearchEngine(
         knowledgeBaseId: String?,
         limit: Int
     ): Flow<List<KnowledgeSearchResult>> {
-        val fragmentFlow = if (knowledgeBaseId == null) {
-            searchDao.searchFragmentsAll(query, limit)
+        val useFts = query.length >= 2 && !query.contains("*")
+        val fragmentFlow = if (useFts) {
+            if (knowledgeBaseId == null) {
+                searchDao.ftsSearchFragmentsAll("\"$query\"", limit)
+            } else {
+                searchDao.ftsSearchFragmentsByKb("\"$query\"", knowledgeBaseId, limit)
+            }
         } else {
-            searchDao.searchFragmentsByKb(query, knowledgeBaseId, limit)
+            if (knowledgeBaseId == null) {
+                searchDao.searchFragmentsAll(query, limit)
+            } else {
+                searchDao.searchFragmentsByKb(query, knowledgeBaseId, limit)
+            }
         }
         val itemFlow = if (knowledgeBaseId == null) {
             searchDao.searchItemsAsResultsAll(query, limit)

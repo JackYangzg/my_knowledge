@@ -14,6 +14,7 @@ import com.my.knowledge.data.db.entity.*
         KnowledgeBaseEntity::class,
         KnowledgeItemEntity::class,
         KnowledgeItemFts::class,
+        KnowledgeFragmentFts::class,
         NoteEntity::class,
         AttachmentEntity::class,
         ProcessingTaskEntity::class,
@@ -35,7 +36,7 @@ import com.my.knowledge.data.db.entity.*
         AnalysisResultEntity::class,
         ReviewItemEntity::class
     ],
-    version = 9,
+    version = 10,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -74,7 +75,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
-                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9)
+                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .build()
         }
 
@@ -227,6 +228,75 @@ abstract class AppDatabase : RoomDatabase() {
             // its no-op short-circuit. Older threads simply leave it null
             // and get re-derived on the next schedule — nothing to backfill.
             db.execSQL("ALTER TABLE `knowledge_thread` ADD COLUMN `inputHash` TEXT")
+        }
+    }
+
+    /**
+     * v9 -> v10: PERF-7 fragment FTS4 index. The
+     * `searchFragments*` queries used to do `LIKE '%q%'`
+     * substring scans over `knowledge_fragment`, which scales
+     * O(N) per query. We now mirror `content` / `summary` /
+     * tagsJson into a FTS4 table (`knowledge_fragment_fts`) and
+     * route fragment searches through it. Three sync triggers
+     * keep the FTS table in lock-step with the underlying
+     * `knowledge_fragment` row; Room would have generated
+     * them automatically if we had added the entity before
+     * the first install, but for an existing v9 DB the
+     * triggers + backfill have to come in the migration.
+     *
+     * Tokenizer matches [KnowledgeItemFts] (unicode61) so
+     * phrase queries and ranking work the same way across
+     * both FTS indexes.
+     */
+    val MIGRATION_9_10 = object : Migration(9, 10) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE VIRTUAL TABLE IF NOT EXISTS `knowledge_fragment_fts` USING fts4(
+                    `content`,
+                    `summary`,
+                    `tagsJson`,
+                    tokenize=unicode61,
+                    content=`knowledge_fragment`
+                )
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS `knowledge_fragment_ai` AFTER INSERT ON `knowledge_fragment` BEGIN
+                    INSERT INTO `knowledge_fragment_fts`(rowid, content, summary, tagsJson)
+                    VALUES (new.rowid, new.content, new.summary, new.tagsJson);
+                END
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS `knowledge_fragment_ad` AFTER DELETE ON `knowledge_fragment` BEGIN
+                    INSERT INTO `knowledge_fragment_fts`(`knowledge_fragment_fts`, rowid, content, summary, tagsJson)
+                    VALUES ('delete', old.rowid, old.content, old.summary, old.tagsJson);
+                END
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS `knowledge_fragment_au` AFTER UPDATE ON `knowledge_fragment` BEGIN
+                    INSERT INTO `knowledge_fragment_fts`(`knowledge_fragment_fts`, rowid, content, summary, tagsJson)
+                    VALUES ('delete', old.rowid, old.content, old.summary, old.tagsJson);
+                    INSERT INTO `knowledge_fragment_fts`(rowid, content, summary, tagsJson)
+                    VALUES (new.rowid, new.content, new.summary, new.tagsJson);
+                END
+                """.trimIndent()
+            )
+            // Backfill existing rows. Newer versions of Room
+            // generate this automatically; for the v9->v10
+            // migration we have to populate the FTS table from
+            // the live `knowledge_fragment` rows ourselves.
+            db.execSQL(
+                """
+                INSERT INTO `knowledge_fragment_fts`(rowid, content, summary, tagsJson)
+                SELECT rowid, content, summary, tagsJson FROM `knowledge_fragment`
+                """.trimIndent()
+            )
         }
     }
 
