@@ -23,7 +23,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.net.HttpURLConnection
 import java.net.URL
 
-private class RetryableRemoteCallException(message: String, cause: Throwable? = null) : Exception(message, cause)
+internal class RetryableRemoteCallException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 data class AiRetryEvent(
     val attempt: Int,
@@ -175,18 +175,8 @@ class AiGateway(
                     cleaned
                 }
             }
-        } catch (e: java.net.UnknownHostException) {
-            "[DNS 失败] 无法解析 ${config.baseUrl} 中的主机名，请检查 Base URL 或网络。"
-        } catch (e: java.net.ConnectException) {
-            "[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。"
-        } catch (e: java.net.SocketTimeoutException) {
-            "[超时] AI 服务 5 分钟内未返回结果，请稍后重试或减小输入长度。"
-        } catch (e: javax.net.ssl.SSLException) {
-            "[SSL 错误] 与 ${config.baseUrl} 的 TLS 握手失败：${e.localizedMessage ?: "未知"}"
-        } catch (e: RetryableRemoteCallException) {
-            "[AI 调用异常] ${e.localizedMessage ?: "远端请求失败"}"
-        } catch (e: Exception) {
-            "[AI 调用异常] ${e.localizedMessage ?: "未知错误"}"
+        } catch (e: Throwable) {
+            return@withContext e.toAiErrorMessage(config.baseUrl)
         }
     }
 
@@ -331,18 +321,8 @@ class AiGateway(
                     cleaned
                 }
             }
-        } catch (e: java.net.UnknownHostException) {
-            "[DNS 失败] 无法解析 ${config.baseUrl} 中的主机名，请检查 Base URL 或网络。"
-        } catch (e: java.net.ConnectException) {
-            "[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。"
-        } catch (e: java.net.SocketTimeoutException) {
-            "[超时] AI 服务 5 分钟内未返回结果，请稍后重试或减小输入长度。"
-        } catch (e: javax.net.ssl.SSLException) {
-            "[SSL 错误] 与 ${config.baseUrl} 的 TLS 握手失败：${e.localizedMessage ?: "未知"}"
-        } catch (e: RetryableRemoteCallException) {
-            "[AI 调用异常] ${e.localizedMessage ?: "远端请求失败"}"
-        } catch (e: Exception) {
-            "[AI 调用异常] ${e.localizedMessage ?: "未知错误"}"
+        } catch (e: Throwable) {
+            return@withContext e.toAiErrorMessage(config.baseUrl)
         }
     }
 
@@ -400,16 +380,8 @@ class AiGateway(
             retryRemoteCall {
                 analyzeImageOnce(baseUrl, apiKey, requestBody.toString())
             }
-        } catch (e: java.net.UnknownHostException) {
-            throw IllegalStateException("图片分析 DNS 失败：无法解析 $baseUrl", e)
-        } catch (e: java.net.ConnectException) {
-            throw IllegalStateException("图片分析连接失败：无法连接到 $baseUrl", e)
-        } catch (e: java.net.SocketTimeoutException) {
-            throw IllegalStateException("图片分析超时：AI 服务 5 分钟内未返回结果", e)
-        } catch (e: javax.net.ssl.SSLException) {
-            throw IllegalStateException("图片分析 SSL 错误：${e.localizedMessage ?: "未知"}", e)
-        } catch (e: RetryableRemoteCallException) {
-            throw IllegalStateException(e.localizedMessage ?: "图片分析远端请求失败", e)
+        } catch (e: Throwable) {
+            throw e.toImageAnalysisException(baseUrl)
         }
     }
 
@@ -429,18 +401,8 @@ class AiGateway(
             retryRemoteCall(maxAttempts, onRetry) {
                 callApiOnce(config, systemPrompt, userMessage, temperature)
             }
-        } catch (e: java.net.UnknownHostException) {
-            "[DNS 失败] 无法解析 ${config.baseUrl} 中的主机名，请检查 Base URL 或网络。"
-        } catch (e: java.net.ConnectException) {
-            "[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。"
-        } catch (e: java.net.SocketTimeoutException) {
-            "[超时] AI 服务 5 分钟内未返回结果，请稍后重试或减小输入长度。"
-        } catch (e: javax.net.ssl.SSLException) {
-            "[SSL 错误] 与 ${config.baseUrl} 的 TLS 握手失败：${e.localizedMessage ?: "未知"}"
-        } catch (e: RetryableRemoteCallException) {
-            "[AI 调用异常] ${e.localizedMessage ?: "远端请求失败"}"
-        } catch (e: Exception) {
-            "[AI 调用异常] ${e.localizedMessage ?: "未知错误"}"
+        } catch (e: Throwable) {
+            return@withContext e.toAiErrorMessage(config.baseUrl)
         }
     }
 
