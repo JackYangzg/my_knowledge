@@ -138,8 +138,7 @@ fun KnowledgeScreen(
                                         shape = CircleShape
                                     ) {
                                         Text(
-                                            text = item.itemCount.toString(),
-                                            fontSize = 11.sp,
+                                            text = item.itemCount.toString(), style = MaterialTheme.typography.labelSmall,
                                             color = if (item.isSystem) palette.semanticWarning else palette.brand,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                         )

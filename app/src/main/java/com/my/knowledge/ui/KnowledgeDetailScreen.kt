@@ -157,8 +157,7 @@ fun KnowledgeDetailScreen(
                         color = palette.textPrimary
                     )
                     Text(
-                        text = if (itemCount > 0) "共 $itemCount 条知识" else "暂无知识",
-                        fontSize = 13.sp,
+                        text = if (itemCount > 0) "共 $itemCount 条知识" else "暂无知识", style = MaterialTheme.typography.labelLarge,
                         color = palette.textSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
@@ -176,7 +175,7 @@ fun KnowledgeDetailScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(R.string.auto_1503df87), fontSize = 12.sp, color = palette.brand)
+                            Text(stringResource(R.string.auto_1503df87), style = MaterialTheme.typography.labelMedium, color = palette.brand)
                         }
                     }
                     // In-place import. Always visible (not gated on
@@ -286,8 +285,7 @@ fun KnowledgeDetailScreen(
             if (selectionMode) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "已选择 ${selectedIds.size} 条",
-                    fontSize = 12.sp,
+                    text = "已选择 ${selectedIds.size} 条", style = MaterialTheme.typography.labelMedium,
                     color = palette.textSecondary
                 )
             }
@@ -427,8 +425,7 @@ fun KnowledgeDetailScreen(
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
                                             Text(
-                                                base.iconText.ifBlank { base.name.take(1) },
-                                                fontSize = 12.sp,
+                                                base.iconText.ifBlank { base.name.take(1) }, style = MaterialTheme.typography.labelMedium,
                                                 color = palette.brand
                                             )
                                         }
@@ -456,8 +453,7 @@ fun KnowledgeDetailScreen(
                 shadowElevation = 2.dp
             ) {
                 Text(
-                    text = status,
-                    fontSize = 12.sp,
+                    text = status, style = MaterialTheme.typography.labelMedium,
                     color = palette.brand,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)
                 )
@@ -618,11 +614,10 @@ private fun ListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
                     color = palette.brand
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.auto_300ee3de), fontSize = 12.sp, color = palette.textTertiary)
+                Text(stringResource(R.string.auto_300ee3de), style = MaterialTheme.typography.labelMedium, color = palette.textTertiary)
             }
             !hasMore -> Text(
-                stringResource(R.string.auto_049d09bf),
-                fontSize = 12.sp,
+                stringResource(R.string.auto_049d09bf), style = MaterialTheme.typography.labelMedium,
                 color = palette.textTertiary
             )
         }

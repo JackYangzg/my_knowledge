@@ -72,7 +72,7 @@ fun ReviewQueueScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text("Review Queue", style = MaterialTheme.typography.displayLarge, color = palette.textPrimary)
-            Text(stringResource(R.string.auto_1191b28d), fontSize = 13.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
+            Text(stringResource(R.string.auto_1191b28d), style = MaterialTheme.typography.labelLarge, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
         }
 
         LazyColumn(
@@ -116,13 +116,13 @@ private fun ReviewQueueCard(
                 Spacer(modifier = Modifier.size(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(review.title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
-                    Text(review.type, fontSize = 11.sp, color = palette.semanticWarning, modifier = Modifier.padding(top = 2.dp))
+                    Text(review.type, style = MaterialTheme.typography.labelSmall, color = palette.semanticWarning, modifier = Modifier.padding(top = 2.dp))
                 }
             }
-            Text(review.description, fontSize = 13.sp, lineHeight = 20.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 10.dp))
+            Text(review.description, style = MaterialTheme.typography.labelLarge, lineHeight = 20.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 10.dp))
             if (review.payloadJson.isNotBlank()) {
                 Surface(color = palette.bgPage, shape = RoundedCornerShape(spacing.sm), modifier = Modifier.fillMaxWidth().padding(top = 10.dp)) {
-                    Text(review.payloadJson, fontSize = 11.sp, color = palette.textSecondary, modifier = Modifier.padding(10.dp))
+                    Text(review.payloadJson, style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, modifier = Modifier.padding(10.dp))
                 }
             }
             Row(modifier = Modifier.fillMaxWidth().padding(top = 12.dp), horizontalArrangement = Arrangement.End) {

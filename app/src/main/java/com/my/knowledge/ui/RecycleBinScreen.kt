@@ -78,7 +78,7 @@ fun RecycleBinScreen(
             ) {
                 Column {
                     Text(stringResource(R.string.auto_64ea8751), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
-                    Text("共 $totalCount 条已删除", fontSize = 13.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
+                    Text("共 $totalCount 条已删除", style = MaterialTheme.typography.labelLarge, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
                 }
                 if (items.isNotEmpty()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -90,7 +90,7 @@ fun RecycleBinScreen(
                             },
                             colors = CheckboxDefaults.colors(checkedColor = palette.brand)
                         )
-                        Text(stringResource(R.string.auto_3e44b2a9), fontSize = 13.sp, color = palette.textSecondary)
+                        Text(stringResource(R.string.auto_3e44b2a9), style = MaterialTheme.typography.labelLarge, color = palette.textSecondary)
                     }
                 }
             }
@@ -119,7 +119,7 @@ fun RecycleBinScreen(
                         ) {
                             Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(R.string.auto_e0bde70d), fontSize = 13.sp, color = Color.White)
+                            Text(stringResource(R.string.auto_e0bde70d), style = MaterialTheme.typography.labelLarge, color = Color.White)
                         }
                         Button(
                             onClick = { showBatchDeleteDialog = true },
@@ -129,7 +129,7 @@ fun RecycleBinScreen(
                         ) {
                             Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(R.string.auto_5d071a7a), fontSize = 13.sp, color = Color.White)
+                            Text(stringResource(R.string.auto_5d071a7a), style = MaterialTheme.typography.labelLarge, color = Color.White)
                         }
                     }
                 }
@@ -192,16 +192,14 @@ fun RecycleBinScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    item.excerpt,
-                                    fontSize = 13.sp,
+                                    item.excerpt, style = MaterialTheme.typography.labelLarge,
                                     color = palette.textSecondary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
                                 Text(
-                                    "删除时间: ${formatTimestamp(item.deletedAt ?: 0)}",
-                                    fontSize = 11.sp,
+                                    "删除时间: ${formatTimestamp(item.deletedAt ?: 0)}", style = MaterialTheme.typography.labelSmall,
                                     color = palette.textTertiary,
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
@@ -271,11 +269,10 @@ private fun RecycleBinListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
                     color = palette.brand
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.auto_300ee3de), fontSize = 12.sp, color = palette.textTertiary)
+                Text(stringResource(R.string.auto_300ee3de), style = MaterialTheme.typography.labelMedium, color = palette.textTertiary)
             }
             !hasMore -> Text(
-                stringResource(R.string.auto_049d09bf),
-                fontSize = 12.sp,
+                stringResource(R.string.auto_049d09bf), style = MaterialTheme.typography.labelMedium,
                 color = palette.textTertiary
             )
         }

@@ -98,7 +98,7 @@ fun KnowledgeLogScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(stringResource(R.string.auto_b9543b21), style = MaterialTheme.typography.displayLarge, color = palette.textPrimary)
-            Text(stringResource(R.string.auto_949f9b3a), fontSize = 13.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
+            Text(stringResource(R.string.auto_949f9b3a), style = MaterialTheme.typography.labelLarge, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
         }
 
         LazyColumn(
@@ -142,14 +142,14 @@ fun KnowledgeLogScreen(
                             Spacer(modifier = Modifier.size(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(review.title, style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
-                                Text("文件/来源：${review.sourceId ?: "未知"}", fontSize = 11.sp, color = palette.textSecondary)
+                                Text("文件/来源：${review.sourceId ?: "未知"}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
                             }
                         }
-                        Text(review.description, fontSize = 12.sp, lineHeight = 18.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 8.dp))
+                        Text(review.description, style = MaterialTheme.typography.labelMedium, lineHeight = 18.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 8.dp))
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = { processingViewModel.skipReview(review.id) }) { Text(stringResource(R.string.auto_479fcc1c), fontSize = 13.sp, color = palette.textTertiary) }
+                            TextButton(onClick = { processingViewModel.skipReview(review.id) }) { Text(stringResource(R.string.auto_479fcc1c), style = MaterialTheme.typography.labelLarge, color = palette.textTertiary) }
                             Button(onClick = { processingViewModel.acceptReview(review.id) }, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = palette.brand)) {
-                                Text(stringResource(R.string.auto_b56d9ac6), fontSize = 13.sp)
+                                Text(stringResource(R.string.auto_b56d9ac6), style = MaterialTheme.typography.labelLarge)
                             }
                         }
                     }
@@ -227,13 +227,11 @@ fun KnowledgeLogScreen(
                                 }
                                 append("）")
                             },
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 13.sp
+                            fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge
                         )
                         recentLogs.forEach { log ->
                             Text(
-                                "[${formatLogTime(log.createdAt)}][${log.stage}] ${displayLogMessage(log.message)}",
-                                fontSize = 11.sp,
+                                "[${formatLogTime(log.createdAt)}][${log.stage}] ${displayLogMessage(log.message)}", style = MaterialTheme.typography.labelSmall,
                                 color = when (log.status) {
                                     "success" -> palette.semanticSuccess
                                     "pending_config", "failed" -> palette.semanticError
@@ -260,7 +258,7 @@ private fun LogSummaryCard(count: Int, label: String, color: Color, modifier: Mo
     Surface(modifier = modifier, shape = RoundedCornerShape(spacing.md), color = Color.White, shadowElevation = 1.dp) {
         Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(count.toString(), style = MaterialTheme.typography.headlineMedium, color = color)
-            Text(label, fontSize = 11.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }
@@ -290,7 +288,7 @@ private fun LogSourceCard(
                 Spacer(modifier = Modifier.size(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(row.source.title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
-                    Text("${row.source.sourceType} · ${row.source.mimeType ?: "unknown"} · ${formatLogTime(row.source.updatedAt)}", fontSize = 11.sp, color = palette.textSecondary)
+                    Text("${row.source.sourceType} · ${row.source.mimeType ?: "unknown"} · ${formatLogTime(row.source.updatedAt)}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
                 }
                 LogStatusPill(task?.status ?: row.source.status)
             }
@@ -319,13 +317,12 @@ private fun LogSourceCard(
                         }
                         append(" · ")
                         append(displayStep)
-                    },
-                    fontSize = 12.sp,
+                    }, style = MaterialTheme.typography.labelMedium,
                     color = palette.textSecondary
                 )
                 LinearProgressIndicator(progress = { task.progress / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp), color = logStatusColor(palette, task.status), trackColor = palette.brandSubtle)
                 if (!task.errorMessage.isNullOrBlank()) {
-                    Text(task.errorMessage, fontSize = 12.sp, color = palette.semanticError, modifier = Modifier.padding(top = 8.dp))
+                    Text(task.errorMessage, style = MaterialTheme.typography.labelMedium, color = palette.semanticError, modifier = Modifier.padding(top = 8.dp))
                 }
             }
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
@@ -420,7 +417,7 @@ private fun LogStatusPill(status: String) {
 
     val spacing = LocalSpacing.current
     Surface(color = logStatusColor(palette, status).copy(alpha = 0.12f), shape = CircleShape) {
-        Text(logStatusLabel(status), fontSize = 11.sp, color = logStatusColor(palette, status), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+        Text(logStatusLabel(status), style = MaterialTheme.typography.labelSmall, color = logStatusColor(palette, status), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
     }
 }
 

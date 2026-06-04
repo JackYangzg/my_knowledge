@@ -93,8 +93,7 @@ fun AskScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "基于「$itemTitle」的知识内容",
-                    fontSize = 13.sp,
+                    text = "基于「$itemTitle」的知识内容", style = MaterialTheme.typography.labelLarge,
                     color = palette.textSecondary,
                     modifier = Modifier.padding(top = 4.dp).weight(1f)
                 )
@@ -109,7 +108,7 @@ fun AskScreen(
                         tint = palette.semanticError
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.auto_578bbcfa), fontSize = 13.sp, color = palette.semanticError)
+                    Text(stringResource(R.string.auto_578bbcfa), style = MaterialTheme.typography.labelLarge, color = palette.semanticError)
                 }
             }
         }
@@ -138,8 +137,7 @@ fun AskScreen(
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                stringResource(R.string.auto_b5d282f1),
-                                fontSize = 13.sp,
+                                stringResource(R.string.auto_b5d282f1), style = MaterialTheme.typography.labelLarge,
                                 color = palette.textSecondary
                             )
                         }
@@ -169,7 +167,7 @@ fun AskScreen(
                             strokeWidth = 2.dp,
                             color = palette.brand
                         )
-                        Text(stringResource(R.string.auto_55b4eacf), fontSize = 13.sp, color = palette.textSecondary)
+                        Text(stringResource(R.string.auto_55b4eacf), style = MaterialTheme.typography.labelLarge, color = palette.textSecondary)
                     }
                 }
             }
@@ -268,10 +266,9 @@ private fun MessageBubble(
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(color = Color.White.copy(alpha = 0.16f), shape = RoundedCornerShape(10.dp)) {
                         Column(modifier = Modifier.padding(10.dp)) {
-                            Text(stringResource(R.string.auto_7f13af3e), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            Text(stringResource(R.string.auto_7f13af3e), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = Color.White)
                             Text(
-                                debugPrompt,
-                                fontSize = 10.sp,
+                                debugPrompt, style = MaterialTheme.typography.labelSmall,
                                 lineHeight = 15.sp,
                                 color = Color.White.copy(alpha = 0.86f),
                                 modifier = Modifier.padding(top = 4.dp)
@@ -286,8 +283,7 @@ private fun MessageBubble(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isUser) "你" else "AI",
-                        fontSize = 11.sp,
+                        text = if (isUser) "你" else "AI", style = MaterialTheme.typography.labelSmall,
                         color = if (isUser) Color.White.copy(alpha = 0.7f) else palette.textTertiary
                     )
                     if (!isUser) {
@@ -299,8 +295,7 @@ private fun MessageBubble(
                             modifier = Modifier.height(28.dp)
                         ) {
                             Text(
-                                text = if (isSaved) "已保存到知识库" else "保存到知识库",
-                                fontSize = 11.sp,
+                                text = if (isSaved) "已保存到知识库" else "保存到知识库", style = MaterialTheme.typography.labelSmall,
                                 color = if (isSaved) palette.textTertiary else palette.brand
                             )
                         }
@@ -334,14 +329,12 @@ private fun CitationRow(citation: AskCitationEntity) {
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
             Text(
-                "〖${citation.label}〗${citation.fragmentId?.let { " 片段 ${it.take(8)}" } ?: ""}",
-                fontSize = 11.sp,
+                "〖${citation.label}〗${citation.fragmentId?.let { " 片段 ${it.take(8)}" } ?: ""}", style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = palette.textPrimary
             )
             Text(
-                citation.quote,
-                fontSize = 11.sp,
+                citation.quote, style = MaterialTheme.typography.labelSmall,
                 lineHeight = 16.sp,
                 color = palette.textSecondary,
                 modifier = Modifier.padding(top = 2.dp)

@@ -77,7 +77,7 @@ fun KnowledgeContextScreen(
                             border = BorderStroke(1.dp, palette.borderBrand),
                             shadowElevation = 1.dp
                         ) {
-                            Text(stringResource(R.string.auto_146d3b54), fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                            Text(stringResource(R.string.auto_146d3b54), style = MaterialTheme.typography.labelMedium, color = palette.brand, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                         }
                     }
                 }
@@ -91,7 +91,7 @@ fun KnowledgeContextScreen(
                         Icon(Icons.Default.AccountTree, contentDescription = null, tint = palette.textTertiary, modifier = Modifier.size(48.dp))
                         Spacer(modifier = Modifier.height(12.dp))
                         Text(stringResource(R.string.auto_d09adbd6), color = palette.textSecondary, fontSize = 14.sp)
-                        Text(stringResource(R.string.auto_19cab229), fontSize = 12.sp, color = palette.textTertiary)
+                        Text(stringResource(R.string.auto_19cab229), style = MaterialTheme.typography.labelMedium, color = palette.textTertiary)
                     }
                 }
             }
@@ -111,7 +111,7 @@ fun KnowledgeContextScreen(
                                 selectedKbId = base.id
                                 threadViewModel.setKnowledgeBaseId(base.id)
                             },
-                            label = { Text(base.name, fontSize = 12.sp) },
+                            label = { Text(base.name, style = MaterialTheme.typography.labelMedium) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = palette.brand,
                                 selectedLabelColor = Color.White
@@ -134,7 +134,7 @@ fun KnowledgeContextScreen(
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Text(stringResource(R.string.auto_153042ed), style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
                                 Spacer(modifier = Modifier.height(6.dp))
-                                Text(thread!!.description, fontSize = 13.sp, color = palette.textSecondary, lineHeight = 20.sp)
+                                Text(thread!!.description, style = MaterialTheme.typography.labelLarge, color = palette.textSecondary, lineHeight = 20.sp)
                             }
                         }
 
@@ -170,10 +170,10 @@ fun KnowledgeContextScreen(
                                                     .background(palette.brand, CircleShape),
                                                 contentAlignment = Alignment.Center
                                             ) {
-                                                Text("${idx + 1}", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                                                Text("${idx + 1}", style = MaterialTheme.typography.labelSmall, color = Color.White, fontWeight = FontWeight.Bold)
                                             }
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(line, fontSize = 13.sp, color = palette.textPrimary)
+                                            Text(line, style = MaterialTheme.typography.labelLarge, color = palette.textPrimary)
                                         }
                                         if (idx < mainlines.size - 1) {
                                             Spacer(modifier = Modifier.height(4.dp))
@@ -208,17 +208,17 @@ fun KnowledgeContextScreen(
                                                 color = palette.brandSubtle,
                                                 shape = RoundedCornerShape(6.dp)
                                             ) {
-                                                Text(rel.from, fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                                Text(rel.from, style = MaterialTheme.typography.labelMedium, color = palette.brand, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                                             }
-                                            Text(" → ", fontSize = 12.sp, color = palette.textTertiary)
+                                            Text(" → ", style = MaterialTheme.typography.labelMedium, color = palette.textTertiary)
                                             Surface(
                                                 color = palette.brandSubtle,
                                                 shape = RoundedCornerShape(6.dp)
                                             ) {
-                                                Text(rel.to, fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                                Text(rel.to, style = MaterialTheme.typography.labelMedium, color = palette.brand, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                                             }
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(rel.relation, fontSize = 11.sp, color = palette.textSecondary)
+                                            Text(rel.relation, style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
                                         }
                                     }
                                 }
@@ -234,8 +234,7 @@ fun KnowledgeContextScreen(
                             ) {
                                 Column(modifier = Modifier.padding(16.dp)) {
                                     Text(
-                                        "${graphEntities.size} 个实体 · ${graphRelations.size} 条关系",
-                                        fontSize = 12.sp,
+                                        "${graphEntities.size} 个实体 · ${graphRelations.size} 条关系", style = MaterialTheme.typography.labelMedium,
                                         color = palette.textSecondary
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
@@ -243,8 +242,7 @@ fun KnowledgeContextScreen(
                                         graphEntities.take(16).forEach { entity ->
                                             Surface(color = palette.brandSubtle, shape = CircleShape) {
                                                 Text(
-                                                    entity.name,
-                                                    fontSize = 11.sp,
+                                                    entity.name, style = MaterialTheme.typography.labelSmall,
                                                     color = palette.brand,
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                 )
@@ -265,8 +263,8 @@ fun KnowledgeContextScreen(
                                 Column(modifier = Modifier.padding(16.dp)) {
                                     graphCommunities.take(6).forEach { community ->
                                         Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                            Text(community.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
-                                            Text(community.summary, fontSize = 12.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
+                                            Text(community.name, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                                            Text(community.summary, style = MaterialTheme.typography.labelMedium, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
                                         }
                                     }
                                 }
@@ -288,7 +286,7 @@ fun KnowledgeContextScreen(
                                         ) {
                                             Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = palette.semanticWarning, modifier = Modifier.size(6.dp).padding(top = 6.dp))
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(gap, fontSize = 13.sp, color = Color(0xFF92400E))
+                                            Text(gap, style = MaterialTheme.typography.labelLarge, color = Color(0xFF92400E))
                                         }
                                     }
                                 }
@@ -310,7 +308,7 @@ fun KnowledgeContextScreen(
                                         ) {
                                             Icon(Icons.Default.Lightbulb, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(14.dp))
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(s, fontSize = 13.sp, color = palette.textPrimary)
+                                            Text(s, style = MaterialTheme.typography.labelLarge, color = palette.textPrimary)
                                         }
                                     }
                                 }
@@ -339,10 +337,9 @@ fun KnowledgeContextScreen(
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Column {
-                                                Text(log.summary, fontSize = 12.sp, color = palette.textPrimary)
+                                                Text(log.summary, style = MaterialTheme.typography.labelMedium, color = palette.textPrimary)
                                                 Text(
-                                                    log.triggerType + " · " + java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(log.createdAt)),
-                                                    fontSize = 10.sp,
+                                                    log.triggerType + " · " + java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(log.createdAt)), style = MaterialTheme.typography.labelSmall,
                                                     color = palette.textTertiary
                                                 )
                                             }
@@ -358,8 +355,7 @@ fun KnowledgeContextScreen(
                                             contentPadding = PaddingValues(horizontal = 0.dp, vertical = 4.dp)
                                         ) {
                                             Text(
-                                                if (showAllEvolutionLogs) "收起日志" else "展开全部 ${logs.size} 条日志",
-                                                fontSize = 12.sp,
+                                                if (showAllEvolutionLogs) "收起日志" else "展开全部 ${logs.size} 条日志", style = MaterialTheme.typography.labelMedium,
                                                 color = palette.brand,
                                                 fontWeight = FontWeight.SemiBold
                                             )
@@ -386,7 +382,7 @@ fun KnowledgeContextScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = palette.brand)
                             Spacer(modifier = Modifier.height(12.dp))
-                            Text(stringResource(R.string.auto_5b54efff), fontSize = 13.sp, color = palette.textSecondary)
+                            Text(stringResource(R.string.auto_5b54efff), style = MaterialTheme.typography.labelLarge, color = palette.textSecondary)
                         }
                     }
                 }
@@ -446,7 +442,7 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
                         border = BorderStroke(1.dp, palette.borderBrand),
                         shadowElevation = 1.dp
                     ) {
-                        Text(stringResource(R.string.auto_dcce9a14), fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                        Text(stringResource(R.string.auto_dcce9a14), style = MaterialTheme.typography.labelMedium, color = palette.brand, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                     }
                 }
             )
@@ -475,8 +471,7 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
                             border = if (selected) null else BorderStroke(1.dp, palette.borderBrand)
                         ) {
                             Text(
-                                text = item,
-                                fontSize = 12.sp,
+                                text = item, style = MaterialTheme.typography.labelMedium,
                                 color = if (selected) Color.White else palette.textSecondary,
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                             )
@@ -528,7 +523,7 @@ fun StatCard(modifier: Modifier = Modifier, value: String, label: String) {
     ) {
         Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text(value, style = MaterialTheme.typography.headlineMedium, color = palette.textPrimary)
-            Text(label, fontSize = 11.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
+            Text(label, style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }

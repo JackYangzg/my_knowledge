@@ -388,8 +388,7 @@ fun BottomNavigationBar(
                         tint = if (selected) palette.brand else Color(0xFF8BB9D8)
                     )
                     Text(
-                        text = tab.label,
-                        fontSize = 10.sp,
+                        text = tab.label, style = MaterialTheme.typography.labelSmall,
                         color = if (selected) palette.brand else Color(0xFF8BB9D8)
                     )
                 }

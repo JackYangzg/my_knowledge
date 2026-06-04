@@ -199,7 +199,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(stringResource(R.string.auto_0ee20898), style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
-                                Text(stringResource(R.string.auto_2804e24e), fontSize = 12.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 3.dp))
+                                Text(stringResource(R.string.auto_2804e24e), style = MaterialTheme.typography.labelMedium, color = palette.textSecondary, modifier = Modifier.padding(top = 3.dp))
                             }
                             Switch(
                                 checked = debugPromptEnabled,
@@ -278,7 +278,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(stringResource(R.string.auto_876fcbec), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1))
-                                Text(stringResource(R.string.auto_09db5d2c), fontSize = 12.sp, color = Color(0xFF0284C7))
+                                Text(stringResource(R.string.auto_09db5d2c), style = MaterialTheme.typography.labelMedium, color = Color(0xFF0284C7))
                             }
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color(0xFF0284C7))
                         }
@@ -462,7 +462,7 @@ private fun SettingsSectionRow(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
-                Text(desc, fontSize = 12.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 3.dp))
+                Text(desc, style = MaterialTheme.typography.labelMedium, color = palette.textSecondary, modifier = Modifier.padding(top = 3.dp))
             }
             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = palette.textTertiary)
         }
@@ -479,7 +479,7 @@ private fun SettingsHint() {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
             Icon(Icons.Filled.Info, contentDescription = null, tint = palette.semanticWarning, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text(stringResource(R.string.auto_3c554377), fontSize = 12.sp, color = Color(0xFF92400E))
+            Text(stringResource(R.string.auto_3c554377), style = MaterialTheme.typography.labelMedium, color = Color(0xFF92400E))
         }
     }
 }
@@ -516,7 +516,7 @@ private fun SaveButton(
         }
         statusMessage?.let {
             Surface(color = palette.brandSubtle, shape = RoundedCornerShape(spacing.sm), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                Text(it, fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(12.dp))
+                Text(it, style = MaterialTheme.typography.labelMedium, color = palette.brand, modifier = Modifier.padding(12.dp))
             }
         }
     }

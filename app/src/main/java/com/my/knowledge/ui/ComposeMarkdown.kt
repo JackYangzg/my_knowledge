@@ -134,8 +134,7 @@ private fun renderCodeBlock(code: String) {
         shape = RoundedCornerShape(spacing.sm)
     ) {
         Text(
-            text = code,
-            fontSize = 13.sp,
+            text = code, style = MaterialTheme.typography.labelLarge,
             fontFamily = FontFamily.Monospace,
             color = palette.borderDefault,
             modifier = Modifier.padding(12.dp),
@@ -200,7 +199,7 @@ fun ImageBlock(raw: String, onLinkClick: (String) -> Unit) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(36.dp), tint = Color(0xFFCBD5E1))
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(alt.ifEmpty { "Image" }, fontSize = 12.sp, color = palette.textMuted)
+                    Text(alt.ifEmpty { "Image" }, style = MaterialTheme.typography.labelMedium, color = palette.textMuted)
                 }
             }
         }

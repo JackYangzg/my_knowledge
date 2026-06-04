@@ -31,7 +31,7 @@ data class Palette(
     val semanticWarning: Color,
     val semanticSuccess: Color,
     val semanticErrorBg: Color,
-    val semanticErrorBorder: Color,
+    val semanticErrorBorder: Color
 )
 
 val LightPalette = Palette(
@@ -54,7 +54,7 @@ val LightPalette = Palette(
     semanticWarning = Color(0xFFEA580C),
     semanticSuccess = Color(0xFF16A34A),
     semanticErrorBg = Color(0xFFFEF2F2),
-    semanticErrorBorder = Color(0xFFFECACA),
+    semanticErrorBorder = Color(0xFFFECACA)
 )
 
 val DarkPalette = Palette(
@@ -77,7 +77,7 @@ val DarkPalette = Palette(
     semanticWarning = Color(0xFFF59E0B),
     semanticSuccess = Color(0xFF22C55E),
     semanticErrorBg = Color(0xFF450A0A),
-    semanticErrorBorder = Color(0xFF7F1D1D),
+    semanticErrorBorder = Color(0xFF7F1D1D)
 )
 
 val LocalPalette = staticCompositionLocalOf { LightPalette }

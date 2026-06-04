@@ -91,8 +91,7 @@ fun KnowledgeManageScreen(
                         color = palette.textPrimary
                     )
                     Text(
-                        text = stringResource(R.string.auto_af04525e),
-                        fontSize = 13.sp,
+                        text = stringResource(R.string.auto_af04525e), style = MaterialTheme.typography.labelLarge,
                         color = palette.textSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
@@ -208,7 +207,7 @@ fun KnowledgeManageScreen(
                             singleLine = true,
                             isError = createNameError != null,
                             supportingText = if (createNameError != null) {
-                                { Text(createNameError!!, color = palette.semanticError, fontSize = 12.sp) }
+                                { Text(createNameError!!, color = palette.semanticError, style = MaterialTheme.typography.labelMedium) }
                             } else null,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(spacing.md)
@@ -266,8 +265,7 @@ fun KnowledgeManageScreen(
                         Text("确定要删除「${deleteTarget!!.name}」吗？")
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            "该知识库包含 ${deleteTarget!!.itemCount} 条知识。",
-                            fontSize = 13.sp,
+                            "该知识库包含 ${deleteTarget!!.itemCount} 条知识。", style = MaterialTheme.typography.labelLarge,
                             color = palette.textSecondary
                         )
                         Spacer(modifier = Modifier.height(12.dp))

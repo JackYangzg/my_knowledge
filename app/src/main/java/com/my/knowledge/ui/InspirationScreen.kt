@@ -346,7 +346,7 @@ fun InspirationScreen(
                             Row(modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
                                 CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = Color(0xFF3B82F6))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(aiActionStatus!!, fontSize = 12.sp, color = Color(0xFF3B82F6))
+                                Text(aiActionStatus!!, style = MaterialTheme.typography.labelMedium, color = Color(0xFF3B82F6))
                             }
                         }
                     }
@@ -430,7 +430,7 @@ fun InspirationScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF4B5563))
-                                Text(stringResource(R.string.auto_be8da62e), fontSize = 12.sp, color = Color(0xFF4B5563))
+                                Text(stringResource(R.string.auto_be8da62e), style = MaterialTheme.typography.labelMedium, color = Color(0xFF4B5563))
                             }
                         }
                         Surface(
@@ -444,7 +444,7 @@ fun InspirationScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF4B5563))
-                                Text(stringResource(R.string.auto_99f6fe6c), fontSize = 12.sp, color = Color(0xFF4B5563))
+                                Text(stringResource(R.string.auto_99f6fe6c), style = MaterialTheme.typography.labelMedium, color = Color(0xFF4B5563))
                             }
                         }
                     }
@@ -734,7 +734,7 @@ private fun InspirationHomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(stringResource(R.string.auto_b589cf12), style = MaterialTheme.typography.titleLarge, color = palette.textPrimary)
-                    Text("${items.size} 条", fontSize = 13.sp, color = palette.textMuted)
+                    Text("${items.size} 条", style = MaterialTheme.typography.labelLarge, color = palette.textMuted)
                 }
             }
             if (items.isEmpty()) {
@@ -750,7 +750,7 @@ private fun InspirationHomeScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Text(stringResource(R.string.auto_b748221a), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = palette.bgInverse)
-                            Text(stringResource(R.string.auto_032a01c0), fontSize = 13.sp, lineHeight = 20.sp, color = palette.textMuted)
+                            Text(stringResource(R.string.auto_032a01c0), style = MaterialTheme.typography.labelLarge, lineHeight = 20.sp, color = palette.textMuted)
                         }
                     }
                 }
@@ -809,7 +809,7 @@ private fun InspirationThreadCard(thread: InspirationThreadUi, itemCount: Int) {
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(stringResource(R.string.auto_ec9e36b8), style = MaterialTheme.typography.titleLarge, color = palette.textPrimary)
-                    Text("基于 $itemCount 条灵感整理", fontSize = 12.sp, color = palette.textMuted)
+                    Text("基于 $itemCount 条灵感整理", style = MaterialTheme.typography.labelMedium, color = palette.textMuted)
                 }
             }
             Text(thread.summary, fontSize = 14.sp, lineHeight = 22.sp, color = Color(0xFF334155))
@@ -844,7 +844,7 @@ private fun InspirationThreadSection(
     val spacing = LocalSpacing.current
     if (values.isEmpty()) return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(title, fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1))
+        Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1))
         values.take(4).forEachIndexed { i, value ->
             val hint = hints.getOrNull(i) ?: com.my.knowledge.viewmodel.InspirationThreadUi.SegmentHint.UNCHANGED
             Row(
@@ -861,8 +861,7 @@ private fun InspirationThreadSection(
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            value,
-                            fontSize = 13.sp,
+                            value, style = MaterialTheme.typography.labelLarge,
                             lineHeight = 20.sp,
                             color = Color(0xFF334155),
                             modifier = Modifier.weight(1f)
@@ -899,7 +898,7 @@ private fun DiffBadge(hint: com.my.knowledge.viewmodel.InspirationThreadUi.Segme
             .background(bg, RoundedCornerShape(4.dp))
             .padding(horizontal = 6.dp, vertical = 2.dp)
     ) {
-        Text(text, fontSize = 10.sp, color = fg, fontWeight = FontWeight.SemiBold)
+        Text(text, style = MaterialTheme.typography.labelSmall, color = fg, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -916,15 +915,15 @@ private fun ThreadDiffSummary(diff: com.my.knowledge.viewmodel.InspirationThread
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(stringResource(R.string.auto_5a0af1a0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF475569))
+        Text(stringResource(R.string.auto_5a0af1a0), style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold, color = Color(0xFF475569))
         if (diff.newMainlineSegments.isNotEmpty()) {
-            Text("+ 新增 ${diff.newMainlineSegments.size} 段主线", fontSize = 11.sp, color = palette.semanticSuccess)
+            Text("+ 新增 ${diff.newMainlineSegments.size} 段主线", style = MaterialTheme.typography.labelSmall, color = palette.semanticSuccess)
         }
         if (diff.evolvedSegments.isNotEmpty()) {
-            Text("↻ 演变 ${diff.evolvedSegments.size} 段", fontSize = 11.sp, color = palette.semanticWarning)
+            Text("↻ 演变 ${diff.evolvedSegments.size} 段", style = MaterialTheme.typography.labelSmall, color = palette.semanticWarning)
         }
         if (diff.obsoleteSegments.isNotEmpty()) {
-            Text("✕ 废弃 ${diff.obsoleteSegments.size} 段", fontSize = 11.sp, color = palette.semanticError)
+            Text("✕ 废弃 ${diff.obsoleteSegments.size} 段", style = MaterialTheme.typography.labelSmall, color = palette.semanticError)
         }
     }
 }
@@ -960,8 +959,7 @@ private fun InspirationItemRow(item: KnowledgeItemEntity, onClick: () -> Unit) {
                 )
                 if (excerpt.isNotBlank()) {
                     Text(
-                        text = excerpt,
-                        fontSize = 13.sp,
+                        text = excerpt, style = MaterialTheme.typography.labelLarge,
                         lineHeight = 20.sp,
                         color = palette.textMuted,
                         maxLines = 3
@@ -969,9 +967,9 @@ private fun InspirationItemRow(item: KnowledgeItemEntity, onClick: () -> Unit) {
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Surface(shape = RoundedCornerShape(6.dp), color = palette.bgSubtle) {
-                        Text(stringResource(R.string.auto_ae2e58ab), fontSize = 11.sp, color = Color(0xFF475569), modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+                        Text(stringResource(R.string.auto_ae2e58ab), style = MaterialTheme.typography.labelSmall, color = Color(0xFF475569), modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
                     }
-                    Text(formatInspirationTime(item.updatedAt), fontSize = 11.sp, color = palette.textMuted)
+                    Text(formatInspirationTime(item.updatedAt), style = MaterialTheme.typography.labelSmall, color = palette.textMuted)
                 }
             }
             Spacer(modifier = Modifier.width(10.dp))
@@ -991,7 +989,7 @@ fun VoiceRealtimePanel(state: VoiceRecognitionState, onStop: () -> Unit, modifie
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.size(10.dp).background(if (state.errorMessage == null) Color(0xFF22C55E) else palette.semanticError, CircleShape))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(text = state.statusMessage, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                Text(text = state.statusMessage, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
                 TextButton(onClick = onStop) { Text(stringResource(R.string.auto_a17f70a8)) }
             }
             val displayText = state.errorMessage ?: state.partialTranscript.ifBlank { "正在等待语音..." }

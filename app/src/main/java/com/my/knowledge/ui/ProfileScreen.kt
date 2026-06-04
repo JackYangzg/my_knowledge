@@ -88,8 +88,7 @@ fun ProfileScreen(
                             modifier = Modifier.padding(top = 4.dp)
                         )
                         Text(
-                            "${profileStats.entityCount} 个实体，${profileStats.conceptCount} 个概念",
-                            fontSize = 12.sp,
+                            "${profileStats.entityCount} 个实体，${profileStats.conceptCount} 个概念", style = MaterialTheme.typography.labelMedium,
                             color = palette.textTertiary,
                             modifier = Modifier.padding(top = 2.dp)
                         )
@@ -123,7 +122,7 @@ fun ProfileScreen(
                             right = {
                                 val topText = summary.topTerms.take(2).joinToString("、")
                                 if (topText.isNotBlank()) {
-                                    Text(topText, fontSize = 11.sp, color = Color(0xFF6AA8D0), maxLines = 1)
+                                    Text(topText, style = MaterialTheme.typography.labelSmall, color = Color(0xFF6AA8D0), maxLines = 1)
                                 }
                             },
                             onClick = { onOpenIntermediateData(summary.knowledgeBaseId) }

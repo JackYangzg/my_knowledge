@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.viewmodel.KnowledgeEditorViewModel
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import androidx.compose.material3.MaterialTheme
 import com.my.knowledge.ui.theme.LocalPalette
 import com.my.knowledge.ui.theme.LocalSpacing
 
@@ -151,8 +152,7 @@ fun KnowledgeEditorScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = stringResource(R.string.auto_748d7dc7),
-                    fontSize = 12.sp,
+                    text = stringResource(R.string.auto_748d7dc7), style = MaterialTheme.typography.labelMedium,
                     color = palette.textMuted,
                     fontWeight = FontWeight.Medium
                 )
@@ -170,8 +170,7 @@ fun KnowledgeEditorScreen(
                 )
 
                 Text(
-                    text = stringResource(R.string.auto_92633211),
-                    fontSize = 12.sp,
+                    text = stringResource(R.string.auto_92633211), style = MaterialTheme.typography.labelMedium,
                     color = palette.textMuted,
                     fontWeight = FontWeight.Medium
                 )
@@ -195,8 +194,7 @@ fun KnowledgeEditorScreen(
                 ) {
                     Text(
                         text = stringResource(R.string.auto_ea35bac2) +
-                            "保存后会立即生效,知识图谱和检索都会更新。",
-                        fontSize = 11.sp,
+                            "保存后会立即生效,知识图谱和检索都会更新。", style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF9A6A1F),
                         modifier = Modifier.padding(10.dp)
                     )

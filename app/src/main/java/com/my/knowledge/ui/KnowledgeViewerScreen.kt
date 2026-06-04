@@ -129,7 +129,7 @@ fun KnowledgeViewerScreen(
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (showProcessedItems) "原文" else "加工数据", fontSize = 12.sp, color = palette.brand)
+                            Text(if (showProcessedItems) "原文" else "加工数据", style = MaterialTheme.typography.labelMedium, color = palette.brand)
                         }
                     }
                     // Per-item ask history used to open AskHistorySheet; the
@@ -147,7 +147,7 @@ fun KnowledgeViewerScreen(
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(R.string.auto_a7f814c0), fontSize = 12.sp, color = palette.brand)
+                            Text(stringResource(R.string.auto_a7f814c0), style = MaterialTheme.typography.labelMedium, color = palette.brand)
                         }
                     }
                     MiniTag(fileTypeLabel(currentItem.sourceType))
@@ -272,7 +272,7 @@ private fun WikiMarkdownContent(
         if (sources.isNotEmpty()) {
             Surface(shape = RoundedCornerShape(spacing.md), color = palette.bgPage, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(stringResource(R.string.auto_5b11946d), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                    Text(stringResource(R.string.auto_5b11946d), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
                     sources.forEach { source ->
                         InternalLinkText(
                             text = source,
@@ -291,8 +291,7 @@ private fun WikiMarkdownContent(
             Surface(shape = RoundedCornerShape(spacing.md), color = palette.brandSubtle, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        "相关页面（${related.size}）",
-                        fontSize = 13.sp,
+                        "相关页面（${related.size}）", style = MaterialTheme.typography.labelLarge,
                         fontWeight = FontWeight.SemiBold,
                         color = palette.textPrimary
                     )
@@ -459,8 +458,7 @@ private fun KnowledgeBodyHeader(
         MiniTag(item.status)
         MiniTag(item.sourceType)
         Text(
-            formatTimestamp(item.updatedAt),
-            fontSize = 12.sp,
+            formatTimestamp(item.updatedAt), style = MaterialTheme.typography.labelMedium,
             color = palette.textTertiary
         )
     }
@@ -489,7 +487,7 @@ private fun ProcessedWikiSection(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.auto_60d89c2c), style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
                 Spacer(modifier = Modifier.weight(1f))
-                Text("${items.size} 项", fontSize = 12.sp, color = palette.textSecondary)
+                Text("${items.size} 项", style = MaterialTheme.typography.labelMedium, color = palette.textSecondary)
             }
             Spacer(modifier = Modifier.height(10.dp))
             items.forEachIndexed { index, processed ->
@@ -503,7 +501,7 @@ private fun ProcessedWikiSection(
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(processed.title, style = MaterialTheme.typography.labelLarge, color = palette.textPrimary)
-                        Text(fileTypeLabel(processed.sourceType), fontSize = 11.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
+                        Text(fileTypeLabel(processed.sourceType), style = MaterialTheme.typography.labelSmall, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
                     }
                     Icons.AutoMirrored.Filled.KeyboardArrowRight.let {
                         Icon(it, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(16.dp))
@@ -561,16 +559,15 @@ private fun PdfContentViewer(
         item {
             Surface(shape = RoundedCornerShape(spacing.md), color = palette.bgPage, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.auto_08be1e8e), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                    Text(stringResource(R.string.auto_08be1e8e), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
                     previewError?.let {
-                        Text(it, color = palette.semanticError, fontSize = 12.sp)
+                        Text(it, color = palette.semanticError, style = MaterialTheme.typography.labelMedium)
                     } ?: Text(
-                        "为避免大文件卡顿，仅预览前 ${previewPages.size.coerceAtLeast(1).coerceAtMost(PDF_PREVIEW_PAGE_LIMIT)} 页；完整内容请查看下方解析文本。",
-                        fontSize = 12.sp,
+                        "为避免大文件卡顿，仅预览前 ${previewPages.size.coerceAtLeast(1).coerceAtMost(PDF_PREVIEW_PAGE_LIMIT)} 页；完整内容请查看下方解析文本。", style = MaterialTheme.typography.labelMedium,
                         color = palette.textSecondary
                     )
                     TextButton(onClick = { localPath?.let { openFile(context, "file://$it") } }) {
-                        Text(stringResource(R.string.auto_b7eecdbe), fontSize = 13.sp)
+                        Text(stringResource(R.string.auto_b7eecdbe), style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }
@@ -587,10 +584,9 @@ private fun PdfContentViewer(
         item {
             Surface(shape = RoundedCornerShape(spacing.md), color = palette.bgPage, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    Text(stringResource(R.string.auto_b8c3d2a6), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                    Text(stringResource(R.string.auto_b8c3d2a6), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
                     Text(
-                        "共 ${item.contentMarkdown.length} 字符，已分块懒加载显示。",
-                        fontSize = 12.sp,
+                        "共 ${item.contentMarkdown.length} 字符，已分块懒加载显示。", style = MaterialTheme.typography.labelMedium,
                         color = palette.textSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
@@ -601,8 +597,7 @@ private fun PdfContentViewer(
             Surface(shape = RoundedCornerShape(10.dp), color = Color.White, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(vertical = 8.dp)) {
                     Text(
-                        "文本片段 ${chunk.index + 1}",
-                        fontSize = 11.sp,
+                        "文本片段 ${chunk.index + 1}", style = MaterialTheme.typography.labelSmall,
                         color = palette.textMuted,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                     )

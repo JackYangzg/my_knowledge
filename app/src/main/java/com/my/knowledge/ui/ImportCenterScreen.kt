@@ -92,7 +92,7 @@ fun ImportCenterScreen(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(stringResource(R.string.auto_2ff3cc93), style = MaterialTheme.typography.displayLarge, color = palette.textPrimary)
-            Text(stringResource(R.string.auto_00b4a995), fontSize = 13.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
+            Text(stringResource(R.string.auto_00b4a995), style = MaterialTheme.typography.labelLarge, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
         }
 
         LazyColumn(
@@ -164,14 +164,14 @@ private fun ImportSourceCard(
                 Spacer(modifier = Modifier.size(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(row.source.title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
-                    Text("${row.source.sourceType} · ${row.source.mimeType ?: "unknown"} · ${formatTime(row.source.updatedAt)}", fontSize = 11.sp, color = palette.textSecondary)
+                    Text("${row.source.sourceType} · ${row.source.mimeType ?: "unknown"} · ${formatTime(row.source.updatedAt)}", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
                 }
                 StatusPill(row.source.status)
             }
 
             Spacer(modifier = Modifier.height(10.dp))
             if (task != null) {
-                Text("${task.taskType} · ${task.currentStep ?: task.status}", fontSize = 12.sp, color = palette.textSecondary)
+                Text("${task.taskType} · ${task.currentStep ?: task.status}", style = MaterialTheme.typography.labelMedium, color = palette.textSecondary)
                 LinearProgressIndicator(
                     progress = { task.progress / 100f },
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
@@ -179,7 +179,7 @@ private fun ImportSourceCard(
                     trackColor = palette.brandSubtle
                 )
             } else {
-                Text(stringResource(R.string.auto_147d229d), fontSize = 12.sp, color = palette.textTertiary)
+                Text(stringResource(R.string.auto_147d229d), style = MaterialTheme.typography.labelMedium, color = palette.textTertiary)
             }
 
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
@@ -208,7 +208,7 @@ private fun StatusPill(status: String) {
 
     val spacing = LocalSpacing.current
     Surface(color = statusColor(palette, status).copy(alpha = 0.12f), shape = CircleShape) {
-        Text(status, fontSize = 11.sp, color = statusColor(palette, status), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+        Text(status, style = MaterialTheme.typography.labelSmall, color = statusColor(palette, status), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
     }
 }
 

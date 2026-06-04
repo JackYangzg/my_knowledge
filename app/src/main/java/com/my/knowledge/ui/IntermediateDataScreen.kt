@@ -216,8 +216,7 @@ fun IntermediateDataScreen(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Text(
-                            text = currentBaseName ?: "全部知识库",
-                            fontSize = 12.sp,
+                            text = currentBaseName ?: "全部知识库", style = MaterialTheme.typography.labelMedium,
                             color = palette.brand,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -514,8 +513,7 @@ private fun BulkSelectHeader(
                 )
                 Text(
                     text = if (selectedCount > 0) "已选 $selectedCount / $totalCount 项"
-                    else "共 $totalCount 项",
-                    fontSize = 11.sp,
+                    else "共 $totalCount 项", style = MaterialTheme.typography.labelSmall,
                     color = palette.textMuted
                 )
             }
@@ -722,8 +720,7 @@ private fun EntityGroupSection(
                             maxLines = 1
                         )
                         Text(
-                            "${type.entityTypeLabel()} · 权重 ${entity.weight.toInt()}",
-                            fontSize = 11.sp,
+                            "${type.entityTypeLabel()} · 权重 ${entity.weight.toInt()}", style = MaterialTheme.typography.labelSmall,
                             color = palette.textSecondary,
                             maxLines = 1
                         )
@@ -799,8 +796,7 @@ private fun EntityKindHeader(
             Spacer(modifier = Modifier.width(8.dp))
             Surface(color = color.copy(alpha = 0.12f), shape = CircleShape) {
                 Text(
-                    "$count",
-                    fontSize = 11.sp,
+                    "$count", style = MaterialTheme.typography.labelSmall,
                     color = color,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -851,8 +847,7 @@ private fun EntityGroupHeader(
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = title,
-            fontSize = 13.sp,
+            text = title, style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
             color = palette.textPrimary
         )
@@ -862,8 +857,7 @@ private fun EntityGroupHeader(
             shape = RoundedCornerShape(spacing.md)
         ) {
             Text(
-                text = "$count",
-                fontSize = 11.sp,
+                text = "$count", style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = color,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -872,8 +866,7 @@ private fun EntityGroupHeader(
         if (expandable) {
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (expanded) "已展开全部" else "已折叠 ${count - shownCount} 条",
-                fontSize = 10.sp,
+                text = if (expanded) "已展开全部" else "已折叠 ${count - shownCount} 条", style = MaterialTheme.typography.labelSmall,
                 color = palette.textMuted
             )
             Spacer(modifier = Modifier.weight(1f))
@@ -1024,9 +1017,9 @@ private fun RelationList(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Default.BubbleChart, contentDescription = null, tint = Color(0xFF6366F1), modifier = Modifier.size(14.dp))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text(relation.relationType, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6366F1), maxLines = 1)
+                                Text(relation.relationType, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color(0xFF6366F1), maxLines = 1)
                                 Spacer(modifier = Modifier.weight(1f))
-                                Text("置信度 ${(relation.confidence * 100).toInt()}%", fontSize = 10.sp, color = palette.textTertiary, maxLines = 1)
+                                Text("置信度 ${(relation.confidence * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = palette.textTertiary, maxLines = 1)
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Row(
@@ -1040,8 +1033,7 @@ private fun RelationList(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text(
-                                        fromName,
-                                        fontSize = 12.sp,
+                                        fromName, style = MaterialTheme.typography.labelMedium,
                                         color = palette.textPrimary,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                                         fontWeight = FontWeight.Medium,
@@ -1060,8 +1052,7 @@ private fun RelationList(
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text(
-                                        toName,
-                                        fontSize = 12.sp,
+                                        toName, style = MaterialTheme.typography.labelMedium,
                                         color = palette.textPrimary,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                                         fontWeight = FontWeight.Medium,
@@ -1118,8 +1109,7 @@ private fun CollapsibleSectionHeader(
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
-            text = title,
-            fontSize = 13.sp,
+            text = title, style = MaterialTheme.typography.labelLarge,
             fontWeight = FontWeight.Bold,
             color = palette.textPrimary
         )
@@ -1129,8 +1119,7 @@ private fun CollapsibleSectionHeader(
             shape = RoundedCornerShape(spacing.md)
         ) {
             Text(
-                text = "$total",
-                fontSize = 11.sp,
+                text = "$total", style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = palette.brand,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
@@ -1139,8 +1128,7 @@ private fun CollapsibleSectionHeader(
         if (expandable) {
             Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = if (expanded) "已展开全部" else "已折叠 ${total - shown} 条",
-                fontSize = 10.sp,
+                text = if (expanded) "已展开全部" else "已折叠 ${total - shown} 条", style = MaterialTheme.typography.labelSmall,
                 color = palette.textMuted
             )
             Spacer(modifier = Modifier.weight(1f))
@@ -1168,7 +1156,7 @@ private fun ExpandToggleRow(expanded: Boolean, remaining: Int, onToggle: () -> U
         contentPadding = PaddingValues(vertical = 4.dp)
     ) {
         if (expanded) {
-            Text(stringResource(R.string.auto_5d581564), fontSize = 12.sp, color = palette.textMuted)
+            Text(stringResource(R.string.auto_5d581564), style = MaterialTheme.typography.labelMedium, color = palette.textMuted)
             Spacer(modifier = Modifier.width(4.dp))
             Icon(
                 Icons.Default.ArrowDropDown,
@@ -1180,8 +1168,7 @@ private fun ExpandToggleRow(expanded: Boolean, remaining: Int, onToggle: () -> U
             )
         } else {
             Text(
-                "展开更多（还有 $remaining 条）",
-                fontSize = 12.sp,
+                "展开更多（还有 $remaining 条）", style = MaterialTheme.typography.labelMedium,
                 color = palette.brand
             )
             Spacer(modifier = Modifier.width(4.dp))
@@ -1258,7 +1245,7 @@ private fun CommunityList(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(community.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text(community.summary, fontSize = 12.sp, color = palette.textSecondary, lineHeight = 18.sp, maxLines = 2)
+                            Text(community.summary, style = MaterialTheme.typography.labelMedium, color = palette.textSecondary, lineHeight = 18.sp, maxLines = 2)
                         }
                         if (!isSelectionMode) {
                             IconButton(

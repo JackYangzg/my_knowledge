@@ -188,15 +188,15 @@ private fun ReviewCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(review.title, style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
-                    Text(review.type, fontSize = 11.sp, color = palette.semanticWarning, modifier = Modifier.padding(top = 2.dp))
+                    Text(review.type, style = MaterialTheme.typography.labelSmall, color = palette.semanticWarning, modifier = Modifier.padding(top = 2.dp))
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(review.description, fontSize = 12.sp, lineHeight = 18.sp, color = palette.textSecondary)
+            Text(review.description, style = MaterialTheme.typography.labelMedium, lineHeight = 18.sp, color = palette.textSecondary)
             Spacer(modifier = Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onSkip) {
-                    Text(stringResource(R.string.auto_479fcc1c), fontSize = 13.sp, color = palette.textTertiary)
+                    Text(stringResource(R.string.auto_479fcc1c), style = MaterialTheme.typography.labelLarge, color = palette.textTertiary)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
@@ -205,7 +205,7 @@ private fun ReviewCard(
                     colors = ButtonDefaults.buttonColors(containerColor = palette.brand),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Text(stringResource(R.string.auto_b56d9ac6), fontSize = 13.sp)
+                    Text(stringResource(R.string.auto_b56d9ac6), style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
@@ -245,7 +245,7 @@ private fun StatusSummaryCard(
             }
             Column {
                 Text(count.toString(), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
-                Text(label, fontSize = 12.sp, color = palette.textSecondary)
+                Text(label, style = MaterialTheme.typography.labelMedium, color = palette.textSecondary)
             }
         }
     }
@@ -326,8 +326,7 @@ private fun TaskCard(
                             color = palette.textPrimary
                         )
                         Text(
-                            "目标: ${task.targetType}/${task.targetId.take(8)}...",
-                            fontSize = 12.sp,
+                            "目标: ${task.targetType}/${task.targetId.take(8)}...", style = MaterialTheme.typography.labelMedium,
                             color = palette.textSecondary
                         )
                     }
@@ -349,14 +348,14 @@ private fun TaskCard(
                     trackColor = palette.borderBrand
                 )
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(task.currentStep ?: "执行中", fontSize = 11.sp, color = palette.textSecondary)
-                    Text("${task.progress}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = palette.brand)
+                    Text(task.currentStep ?: "执行中", style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
+                    Text("${task.progress}%", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = palette.brand)
                 }
             }
 
             if (expanded) {
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(stringResource(R.string.auto_8316b0a2), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                Text(stringResource(R.string.auto_8316b0a2), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, color = palette.textPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 // Pipeline Stages
@@ -377,11 +376,10 @@ private fun TaskCard(
 
                 if (logs.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text(stringResource(R.string.auto_70f1aab1), fontSize = 12.sp, color = palette.textSecondary)
+                    Text(stringResource(R.string.auto_70f1aab1), style = MaterialTheme.typography.labelMedium, color = palette.textSecondary)
                     logs.take(3).forEach { log ->
                         Text(
-                            "• [${log.status}] ${log.message}",
-                            fontSize = 11.sp,
+                            "• [${log.status}] ${log.message}", style = MaterialTheme.typography.labelSmall,
                             color = palette.textSecondary,
                             modifier = Modifier.padding(top = 4.dp)
                         )
@@ -397,8 +395,7 @@ private fun TaskCard(
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        task.errorMessage,
-                        fontSize = 12.sp,
+                        task.errorMessage, style = MaterialTheme.typography.labelMedium,
                         color = palette.semanticError,
                         modifier = Modifier.padding(12.dp)
                     )
@@ -411,8 +408,7 @@ private fun TaskCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "重试: ${task.retryCount}/${task.maxRetry}",
-                    fontSize = 11.sp,
+                    "重试: ${task.retryCount}/${task.maxRetry}", style = MaterialTheme.typography.labelSmall,
                     color = palette.textTertiary
                 )
 
@@ -428,7 +424,7 @@ private fun TaskCard(
                             tint = palette.brand
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.auto_e2d53a6d), fontSize = 12.sp, color = palette.brand)
+                        Text(stringResource(R.string.auto_e2d53a6d), style = MaterialTheme.typography.labelMedium, color = palette.brand)
                     }
                 }
                 if (task.status == "pending" || task.status == "running") {
@@ -443,7 +439,7 @@ private fun TaskCard(
                             tint = palette.semanticError
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.auto_4d0b4688), fontSize = 12.sp, color = palette.semanticError)
+                        Text(stringResource(R.string.auto_4d0b4688), style = MaterialTheme.typography.labelMedium, color = palette.semanticError)
                     }
                 }
             }
@@ -471,9 +467,9 @@ private fun StageRow(label: String, status: String, message: String?) {
         Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(8.dp))
         Column {
-            Text(label, fontSize = 12.sp, color = if (status == "pending") palette.textTertiary else palette.textPrimary)
+            Text(label, style = MaterialTheme.typography.labelMedium, color = if (status == "pending") palette.textTertiary else palette.textPrimary)
             if (!message.isNullOrBlank()) {
-                Text(displayTaskMessage(message), fontSize = 11.sp, color = palette.textSecondary)
+                Text(displayTaskMessage(message), style = MaterialTheme.typography.labelSmall, color = palette.textSecondary)
             }
         }
     }
@@ -532,22 +528,19 @@ private fun RecommendationCard(
                         color = palette.textPrimary
                     )
                     Text(
-                        "推荐归档到: ${recommendation.recommendedKnowledgeBaseName ?: recommendation.recommendedKnowledgeBaseId ?: "未指定"}",
-                        fontSize = 12.sp,
+                        "推荐归档到: ${recommendation.recommendedKnowledgeBaseName ?: recommendation.recommendedKnowledgeBaseId ?: "未指定"}", style = MaterialTheme.typography.labelMedium,
                         color = palette.textSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        recommendation.reason,
-                        fontSize = 12.sp,
+                        recommendation.reason, style = MaterialTheme.typography.labelMedium,
                         color = palette.textSecondary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            "置信度: ",
-                            fontSize = 11.sp,
+                            "置信度: ", style = MaterialTheme.typography.labelSmall,
                             color = palette.textTertiary
                         )
                         val confColor = when {
@@ -556,8 +549,7 @@ private fun RecommendationCard(
                             else -> palette.semanticError
                         }
                         Text(
-                            "${(recommendation.confidence * 100).toInt()}%",
-                            fontSize = 11.sp,
+                            "${(recommendation.confidence * 100).toInt()}%", style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = confColor
                         )
@@ -580,7 +572,7 @@ private fun RecommendationCard(
                         tint = palette.textTertiary
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.auto_03e210a6), fontSize = 13.sp, color = palette.textTertiary)
+                    Text(stringResource(R.string.auto_03e210a6), style = MaterialTheme.typography.labelLarge, color = palette.textTertiary)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
@@ -595,7 +587,7 @@ private fun RecommendationCard(
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.auto_dd794381), fontSize = 13.sp)
+                    Text(stringResource(R.string.auto_dd794381), style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
