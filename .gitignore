@@ -48,3 +48,7 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Local tool / harness directories (not part of the project source)
+.mavis/
+.opencode/

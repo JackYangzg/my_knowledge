@@ -17,9 +17,7 @@ import com.my.knowledge.ui.KnowledgeManager
 import org.json.JSONArray
 import org.json.JSONObject
 import java.security.MessageDigest
-import java.util.Locale
 import java.util.UUID
-import kotlinx.coroutines.flow.first
 
 /**
  * 灵感脉络 —— 增量 LLM 脉络 worker。
@@ -31,13 +29,11 @@ import kotlinx.coroutines.flow.first
  * 流程:
  *   1. [KnowledgeRepository.getInspirationContext] 一次性拿齐输入
  *      (本次新灵感 / 历史摘要 / 现有脉络);
- *   2. 本地启发式反查"本次灵感撞到的 wiki 实体 / 概念"——
- *      按 tags / [[wikilink]] 在其他 KB 里找;
- *   3. 算 input hash,如果跟现有 thread 的 inputHash 一致,跳过 LLM;
- *   4. 拼 [AiPromptTemplates.inspirationThreadPrompt],调 LLM(用 chatJson
+ *   2. 算 input hash,如果跟现有 thread 的 inputHash 一致,跳过 LLM;
+ *   3. 拼 [AiPromptTemplates.inspirationThreadPrompt],调 LLM(用 chatJson
  *      拿到严格 JSON);
- *   5. 解析 LLM 输出,写回 KnowledgeThreadEntity;
- *   6. 失败 / 不可用 / 解析失败 → fallback:本地 tag 聚类,保证 UI 不会空。
+ *   4. 解析 LLM 输出,写回 KnowledgeThreadEntity;
+ *   5. 失败 / 不可用 / 解析失败 → fallback:本地 tag 聚类,保证 UI 不会空。
  *
  * 1:1 对齐 llm_wiki 的两步 ingest 设计 —— 这里是"增量分析 + 增量写入",
  * 跟 [ThreadEvolutionWorker] 的全量程序化算法是双轨:LLM 优先,启发式兜底。
@@ -77,12 +73,7 @@ class LlmInspirationThreadWorker(
         val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector
             .detect(newInspiration.content.ifBlank { newInspiration.title })
 
-        val newItem = db.knowledgeItemDao().getById(newItemId)
-        val relatedWikiPages = if (newItem != null) {
-            findRelatedWikiPages(db, newItem, kbId)
-        } else emptyList() // suspend 在 doWork 内自然支持
-
-        val inputHash = computeInputHash(inspirationCtx, relatedWikiPages)
+        val inputHash = computeInputHash(inspirationCtx)
         val existing = repository.getThreadByKb(kbId)
         if (existing != null && existing.inputHash == inputHash) {
             return Result.success()
@@ -92,7 +83,6 @@ class LlmInspirationThreadWorker(
             kbName = base.name,
             newInspiration = newInspiration,
             historicalInspirationDigest = inspirationCtx.historicalInspirationDigest,
-            relatedWikiPages = relatedWikiPages,
             existingThread = inspirationCtx.existingThread,
             language = detectedLanguage,
         )
@@ -248,75 +238,10 @@ class LlmInspirationThreadWorker(
         )
     }
 
-    // ---- 关联 wiki pages 反查 --------------------------------------------
-
-    private suspend fun findRelatedWikiPages(
-        db: AppDatabase,
-        newItem: KnowledgeItemEntity,
-        excludeKbId: String,
-    ): List<AiPromptTemplates.RelatedWikiPage> {
-        val tags = parseStringArray(newItem.tagsJson)
-            .map { it.lowercase(Locale.ROOT) }
-            .toSet()
-        val wikiLinks = Regex("\\[\\[([^\\]\\n]+?)]]")
-            .findAll(newItem.contentMarkdown)
-            .map { m -> m.groupValues[1].substringAfterLast("/").removeSuffix(".md").trim() }
-            .filter { it.isNotBlank() }
-            .toSet()
-        if (tags.isEmpty() && wikiLinks.isEmpty()) return emptyList()
-
-        // DAO 没有"全 KB 的所有 item"查询,getAllActive(1000, 0) 是个
-        // 实用的兜底(灵感脉络关联查询的命中率低,1000 条足够覆盖常见 KB)。
-        // 后续如果 KB 规模到 1000+ ,再补一个 `getAllActiveWiki()` DAO 方法。
-        val allKbItems = db.knowledgeItemDao().getAllActive(1000, 0)
-            .asSequence()
-            .filter { it.deletedAt == null }
-            .filter { it.knowledgeBaseId != excludeKbId }
-            .filter { it.sourceType == "wiki_entity" || it.sourceType == "wiki_concept" || it.sourceType == "wiki_source" }
-            .toList()
-
-        val scored = allKbItems.map { item ->
-            val itemTags = parseStringArray(item.tagsJson).map { it.lowercase(Locale.ROOT) }.toSet()
-            val tagHit = (itemTags intersect tags).size
-            val titleHit = if (wikiLinks.any { link ->
-                    item.title.contains(link, ignoreCase = true) || link.contains(item.title, ignoreCase = true)
-                }) 2 else 0
-            val score = tagHit + titleHit
-            score to item
-        }.filter { it.first > 0 }
-            .sortedByDescending { it.first }
-            .take(20)
-            .map { it.second }
-
-        val bases = db.knowledgeBaseDao().observeAll().first()
-        val kbNames = bases.associate { it.id to it.name }
-        return scored.mapNotNull { item ->
-            val kbName = kbNames[item.knowledgeBaseId] ?: return@mapNotNull null
-            val type = when {
-                item.sourceType == "wiki_entity" -> "entity"
-                item.sourceType == "wiki_concept" -> "concept"
-                item.sourceType == "wiki_source" -> "source"
-                else -> return@mapNotNull null
-            }
-            val summary = when {
-                !item.summary.isNullOrBlank() -> item.summary!!
-                item.excerpt.isNotBlank() -> item.excerpt
-                else -> ""
-            }
-            AiPromptTemplates.RelatedWikiPage(
-                title = item.title,
-                type = type,
-                summary = summary,
-                sourceKbName = kbName,
-            )
-        }
-    }
-
     // ---- Hash & helpers --------------------------------------------------
 
     private fun computeInputHash(
         ctx: InspirationThreadContext,
-        relatedWiki: List<AiPromptTemplates.RelatedWikiPage>,
     ): String {
         val ni: AiPromptTemplates.NewInspiration = ctx.newInspiration
         val pieces = buildList {
@@ -328,9 +253,6 @@ class LlmInspirationThreadWorker(
             for (d in ctx.historicalInspirationDigest) {
                 add(d.id)
                 add(d.title)
-            }
-            for (r in relatedWiki) {
-                add(r.title + "@" + r.sourceKbName)
             }
         }
         return sha256(pieces.joinToString("\n"))
