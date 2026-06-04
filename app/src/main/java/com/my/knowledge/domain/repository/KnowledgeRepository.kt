@@ -76,17 +76,17 @@ interface KnowledgeRepository {
     suspend fun getActiveTasks(): Flow<List<ProcessingTaskEntity>>
 
     /**
-     * In-flight processing task count across all sources — status
-     * `pending` or `running`. The ProfileScreen "日志中心" entry
-     * description splits the same way the log center does (处理中 /
-     * 失败 / 待确认), so this feed keeps both sides in sync.
+     * In-flight source-row count for the log center. This intentionally
+     * matches KnowledgeLogScreen's summary cards: group tasks by source,
+     * inspect each source's latest task, then count pending / running /
+     * pending_network rows.
      */
     fun observeActiveTaskCount(): Flow<Int>
 
     /**
-     * Failed processing task count across all sources. Companion to
-     * [observeActiveTaskCount] — these two together replace the old
-     * single-axis "X 条未归档" string with a richer summary.
+     * Failed source-row count for the log center. Companion to
+     * [observeActiveTaskCount], using the same source-row grouping as the
+     * log center itself.
      */
     fun observeFailedTaskCount(): Flow<Int>
 
@@ -95,6 +95,7 @@ interface KnowledgeRepository {
     suspend fun retryProcessingForSource(sourceId: String)
     suspend fun retryProcessingForSourceFromLogCenter(sourceId: String)
     suspend fun cancelTask(taskId: String)
+    suspend fun resetInterruptedRunningTasks(excludedTaskId: String? = null)
     suspend fun appendProcessingLog(log: ProcessingTaskLogEntity)
     fun observeProcessingLogs(targetType: String, targetId: String): Flow<List<ProcessingTaskLogEntity>>
 
@@ -156,7 +157,6 @@ interface KnowledgeRepository {
      * 一次性拉齐:
      *   - 本次新增灵感(完整内容)
      *   - 历史灵感(只带摘要 / 标签)
-     *   - 关联到的 wiki 实体 / 概念(从 tags / [[wikilink]] / 显式 link 反查)
      *   - 现有脉络(增量起点)
      * 数据由 Impl 在一次 DB 读路径里拼好,worker 只管拼 prompt。
      */

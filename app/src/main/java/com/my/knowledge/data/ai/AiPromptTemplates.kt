@@ -577,7 +577,7 @@ ${languageDirective(language)}
     // 设计要点:
     //   1. 触发:每新增 1 条灵感(在 inspiration KB 下新增 knowledge_item)
     //   2. 输入:历史灵感(只读摘要) + 本次新灵感(完整内容)
-    //          + 拉过来的关联知识条目(按 [[wikilink]] / tags / item refs 反查)
+    //          + 现有脉络快照。不要注入 wiki/source/file 等外部来源信息。
     //   3. 输出:description / coreQuestion / mainline / relations /
     //          gaps / nextSuggestions + diff 三段
     //   4. 增量稳定性:不重写整个脉络,只描述本次改了什么
@@ -608,14 +608,6 @@ ${languageDirective(language)}
         val content: String,
     )
 
-    /** 拉过来的关联知识条目,用于"灵感撞到既有知识"的发现 */
-    data class RelatedWikiPage(
-        val title: String,
-        val type: String,            // entity / concept / source
-        val summary: String,
-        val sourceKbName: String,
-    )
-
     /** 现有脉络的快照,作为增量起点 */
     data class ExistingThreadSnapshot(
         val description: String,
@@ -629,7 +621,6 @@ ${languageDirective(language)}
         kbName: String,
         newInspiration: NewInspiration,
         historicalInspirationDigest: List<InspirationDigest>,
-        relatedWikiPages: List<RelatedWikiPage>,
         existingThread: ExistingThreadSnapshot?,
         language: String = "中文",
     ): String = buildString {
@@ -664,14 +655,6 @@ ${languageDirective(language)}
         appendLine("```")
         appendLine(newInspiration.content.take(4_000))
         appendLine("```")
-
-        if (relatedWikiPages.isNotEmpty()) {
-            appendLine()
-            appendLine("### 关联到的知识条目(用户希望「灵感撞到既有知识」被识别出来)")
-            relatedWikiPages.take(20).forEach { wp ->
-                appendLine("- [${wp.type}] 「${wp.title}」 — ${wp.summary.take(120).ifBlank { "(无摘要)" }}  [来源:${wp.sourceKbName}]")
-            }
-        }
 
         if (historicalInspirationDigest.isNotEmpty()) {
             appendLine()
@@ -739,9 +722,9 @@ ${languageDirective(language)}
         appendLine("2. mainline 1-5 条;relations 0-8 条;gaps 0-5 条;nextSuggestions 1-5 条。")
         appendLine("3. mainline 每条 60-100 字,relation 严格 1 句话,nextSuggestions 每条 1 句话并以动词开头。")
         appendLine("4. 第一个字符必须是 `{`,最后一个字符必须是 `}`。")
-        appendLine("5. 所有灵感标题 / 实体名用「关联到的知识条目」段中**完全相同的字面量**;不要改大小写、不要加「灵感」后缀。")
+        appendLine("5. 只能基于输入中的灵感标题、标签、摘要、完整内容、历史灵感摘要和现有脉络生成;不要引入文件名、wiki 页面、来源路径、知识库外部条目或其他未出现在灵感内容里的信息。")
         appendLine("6. 不要把 tag 当成主线——主线是灵感之间的**叙事递进**,不是 tag 共现。")
-        appendLine("7. 关联到的 wiki 实体/概念,只引用其 title 字面量作为「撞点」,不要臆测其内容。")
+        appendLine("7. relations 的 from/to 优先使用输入里的灵感标题;如果内容没有清晰标题,用内容中的短语概括,但不要捏造外部实体。")
         appendLine("8. diff.newMainlineSegments / evolvedSegments / obsoleteSegments 必填,即使本次没变化也要写空数组 `[]`,让前端能可靠检测「无 diff」。")
         appendLine("9. 整体输出 ≤ 2,000 字符——灵感脉络是要在卡片上读的,不能写论文。")
         appendLine()

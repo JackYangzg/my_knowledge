@@ -2,6 +2,7 @@ package com.my.knowledge.ui.component
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
@@ -85,34 +86,56 @@ fun DigestCard(
 ) {
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(16.dp),
         color = Color.White,
-        border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
-        shadowElevation = 1.dp,
-        modifier = modifier
+        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+        shadowElevation = 2.dp,
+        modifier = modifier.height(156.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
             Box(
                 modifier = Modifier
                     .size(36.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFFF5F5F5)),
+                    .background(Color(0xFFEFF7FF))
+                    .border(1.dp, Color(0xFFCBE8FF), RoundedCornerShape(12.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(iconText, fontSize = 18.sp, color = Color(0xFF525252))
+                Text(iconText, fontSize = 18.sp, color = Color(0xFF147EC5), fontWeight = FontWeight.Bold)
             }
             Spacer(modifier = Modifier.height(12.dp))
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(desc, fontSize = 12.sp, lineHeight = 20.sp, color = Color(0xFF737373), maxLines = 2)
-            Spacer(modifier = Modifier.height(12.dp))
+            Text(
+                title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color(0xFF0F172A),
+                maxLines = 2,
+                lineHeight = 18.sp,
+                overflow = TextOverflow.Clip
+            )
+            Spacer(modifier = Modifier.height(6.dp))
+            Text(desc, fontSize = 12.sp, lineHeight = 18.sp, color = Color(0xFF5F87A3), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(modifier = Modifier.weight(1f))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(bottomText, fontSize = 12.sp, color = Color(0xFFA3A3A3))
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFA3A3A3))
+                Text(
+                    bottomText,
+                    fontSize = 12.sp,
+                    color = Color(0xFF147EC5),
+                    maxLines = 2,
+                    lineHeight = 15.sp,
+                    overflow = TextOverflow.Clip,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
             }
         }
     }

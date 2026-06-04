@@ -119,6 +119,23 @@ interface KnowledgeItemDao {
     @Query("UPDATE knowledge_item SET status = :status, updatedAt = :updatedAt WHERE sourceId = :sourceId AND deletedAt IS NULL")
     suspend fun updateStatusBySourceId(sourceId: String, status: String, updatedAt: Long)
 
+    @Query("""
+        UPDATE knowledge_item
+        SET contentMarkdown = :contentMarkdown,
+            excerpt = :excerpt,
+            status = 'processing',
+            updatedAt = :updatedAt
+        WHERE sourceId = :sourceId
+          AND deletedAt IS NULL
+          AND sourceType NOT LIKE 'wiki_%'
+    """)
+    suspend fun updateVisibleParsedContentBySourceId(
+        sourceId: String,
+        contentMarkdown: String,
+        excerpt: String,
+        updatedAt: Long
+    )
+
     @Query("UPDATE knowledge_item SET status = 'failed', excerpt = :errorMessage, updatedAt = :updatedAt WHERE sourceId = :sourceId AND deletedAt IS NULL")
     suspend fun updateFailureBySourceId(sourceId: String, errorMessage: String?, updatedAt: Long)
 

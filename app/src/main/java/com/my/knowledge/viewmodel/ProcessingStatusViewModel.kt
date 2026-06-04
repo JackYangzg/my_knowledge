@@ -67,7 +67,15 @@ class ProcessingStatusViewModel(
 
     fun cancelTask(taskId: String) {
         viewModelScope.launch {
+            val task = knowledgeRepository.getProcessingTask(taskId)
+            val shouldStopIngest = task?.status == "running" &&
+                (task.sourceId != null || task.targetType == "source_document")
+            if (shouldStopIngest) processingTaskScheduler.cancelIngestQueue()
             knowledgeRepository.cancelTask(taskId)
+            if (shouldStopIngest) {
+                knowledgeRepository.resetInterruptedRunningTasks(taskId)
+                processingTaskScheduler.scheduleIngestQueue()
+            }
         }
     }
 

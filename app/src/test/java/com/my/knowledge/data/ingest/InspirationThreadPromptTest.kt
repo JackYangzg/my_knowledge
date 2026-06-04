@@ -36,7 +36,6 @@ class InspirationThreadPromptTest {
                 content = "碎片太多,找不回当时为什么这样想",
             ),
             historicalInspirationDigest = emptyList(),
-            relatedWikiPages = emptyList(),
             existingThread = null,
         )
         assertTrue("Prompt must include the new inspiration's title",
@@ -50,29 +49,27 @@ class InspirationThreadPromptTest {
     }
 
     @Test
-    fun `inspirationThreadPrompt injects related wiki pages as collision hints`() {
+    fun `inspirationThreadPrompt does not inject external wiki or source hints`() {
         val prompt = AiPromptTemplates.inspirationThreadPrompt(
             kbName = "灵感空间",
             newInspiration = AiPromptTemplates.NewInspiration(
-                id = "new-2", title = "x", tags = emptyList(), summary = "", content = "c",
+                id = "new-2",
+                title = "只分析这条灵感",
+                tags = emptyList(),
+                summary = "",
+                content = "我想把碎片想法整理成可推进的主线。",
             ),
             historicalInspirationDigest = emptyList(),
-            relatedWikiPages = listOf(
-                AiPromptTemplates.RelatedWikiPage(
-                    title = "Raft 共识算法",
-                    type = "concept",
-                    summary = "一种为可理解性设计的分布式共识算法",
-                    sourceKbName = "分布式系统",
-                ),
-            ),
             existingThread = null,
         )
-        assertTrue("Prompt must surface the related wiki page title verbatim",
-            prompt.contains("Raft 共识算法"))
-        assertTrue("Prompt must show its source KB so the LLM knows provenance",
-            prompt.contains("分布式系统"))
-        assertTrue("Prompt must classify the related page by semantic type",
-            prompt.contains("[concept]"))
+        assertTrue("Prompt must include the inspiration content",
+            prompt.contains("我想把碎片想法整理成可推进的主线。"))
+        assertFalse("Prompt must not include a related wiki section",
+            prompt.contains("关联到的知识条目"))
+        assertFalse("Prompt must not instruct the model to use wiki entities",
+            prompt.contains("wiki 实体"))
+        assertFalse("Prompt must not introduce source/file provenance",
+            prompt.contains("[来源:"))
     }
 
     @Test
@@ -83,7 +80,6 @@ class InspirationThreadPromptTest {
                 id = "new-3", title = "x", tags = emptyList(), summary = "", content = "c",
             ),
             historicalInspirationDigest = emptyList(),
-            relatedWikiPages = emptyList(),
             existingThread = AiPromptTemplates.ExistingThreadSnapshot(
                 description = "灵感库在追踪分布式系统主题。",
                 coreQuestion = "如何理解共识?",
@@ -110,7 +106,6 @@ class InspirationThreadPromptTest {
                 id = "new-4", title = "x", tags = emptyList(), summary = "", content = "c",
             ),
             historicalInspirationDigest = emptyList(),
-            relatedWikiPages = emptyList(),
             existingThread = null,
             language = "中文",
         )

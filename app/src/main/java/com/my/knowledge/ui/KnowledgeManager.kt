@@ -8,6 +8,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
+import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.my.knowledge.data.file.LocalFileStore
@@ -104,6 +105,7 @@ object KnowledgeManager {
             voiceClusterId = preferences.getString(KEY_VOICE_CLUSTER_ID, "volc_ent_asr_streaming") ?: "volc_ent_asr_streaming",
             debugPromptEnabled = preferences.getBoolean(KEY_DEBUG_PROMPT_ENABLED, false)
         )
+        scheduler?.scheduleIngestQueue()
     }
 
     fun updateModelConfig(newConfig: ModelConfig) {
@@ -209,9 +211,10 @@ object KnowledgeManager {
             database.knowledgeItemDao().updateItemCount(kbId)
 
             // 3. Create initial parse task for the Ingest Pipeline
+            val taskId = UUID.randomUUID().toString()
             database.processingTaskDao().insert(
                 ProcessingTaskEntity(
-                    id = UUID.randomUUID().toString(),
+                    id = taskId,
                     targetType = "source_document",
                     targetId = sourceId,
                     taskType = "parse",
@@ -229,6 +232,18 @@ object KnowledgeManager {
                     progress = 0,
                     currentStep = "等待解析",
                     inputJson = """{"sourceId":"$sourceId"}"""
+                )
+            )
+            database.processingTaskLogDao().insert(
+                ProcessingTaskLogEntity(
+                    id = UUID.randomUUID().toString(),
+                    taskId = taskId,
+                    targetType = "source_document",
+                    targetId = sourceId,
+                    stage = "parse",
+                    status = "pending",
+                    message = "已入库并排队，等待解析",
+                    createdAt = now
                 )
             )
             

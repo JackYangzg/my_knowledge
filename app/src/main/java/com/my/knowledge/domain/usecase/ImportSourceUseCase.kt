@@ -3,9 +3,11 @@ package com.my.knowledge.domain.usecase
 import android.net.Uri
 import com.my.knowledge.data.db.dao.KnowledgeItemDao
 import com.my.knowledge.data.db.dao.ProcessingTaskDao
+import com.my.knowledge.data.db.dao.ProcessingTaskLogDao
 import com.my.knowledge.data.db.dao.SourceDocumentDao
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
+import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
 import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
@@ -17,6 +19,7 @@ class ImportSourceUseCase(
     private val sourceDao: SourceDocumentDao,
     private val itemDao: KnowledgeItemDao,
     private val taskDao: ProcessingTaskDao,
+    private val taskLogDao: ProcessingTaskLogDao,
     private val scheduler: ProcessingTaskScheduler
 ) {
     suspend fun importText(
@@ -82,6 +85,7 @@ class ImportSourceUseCase(
         val sha256 = fileStore.sha256(file)
         val existing = sourceDao.findBySha256(sha256)
         if (existing != null) {
+            val now = System.currentTimeMillis()
             ensureVisibleKnowledgeItem(
                 sourceId = existing.id,
                 sourceType = existing.sourceType,
@@ -91,6 +95,18 @@ class ImportSourceUseCase(
                 sha256 = existing.sha256,
                 targetKbId = targetKbId ?: existing.targetKnowledgeBaseId,
                 linkedNoteId = linkedNoteId
+            )
+            taskLogDao.insert(
+                ProcessingTaskLogEntity(
+                    id = UUID.randomUUID().toString(),
+                    taskId = null,
+                    targetType = "source_document",
+                    targetId = existing.id,
+                    stage = "import",
+                    status = existing.status,
+                    message = "导入命中已有来源，已关联到目标知识库",
+                    createdAt = now
+                )
             )
             return existing.id
         }
@@ -120,9 +136,10 @@ class ImportSourceUseCase(
             sourceId,
             """{"id":"$sourceId","title":"${title.escapeJson()}","sha256":"$sha256","mimeType":"${mimeType.orEmpty().escapeJson()}"}"""
         )
+        val taskId = UUID.randomUUID().toString()
         taskDao.insert(
             ProcessingTaskEntity(
-                id = UUID.randomUUID().toString(),
+                id = taskId,
                 targetType = "source_document",
                 targetId = sourceId,
                 taskType = "parse",
@@ -140,6 +157,18 @@ class ImportSourceUseCase(
                 progress = 0,
                 currentStep = "等待解析",
                 inputJson = """{"sourceId":"$sourceId"}"""
+            )
+        )
+        taskLogDao.insert(
+            ProcessingTaskLogEntity(
+                id = UUID.randomUUID().toString(),
+                taskId = taskId,
+                targetType = "source_document",
+                targetId = sourceId,
+                stage = "parse",
+                status = "pending",
+                message = "已入库并排队，等待解析",
+                createdAt = now
             )
         )
         scheduler.scheduleIngestQueue()

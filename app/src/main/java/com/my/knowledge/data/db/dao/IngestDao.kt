@@ -25,6 +25,23 @@ interface SourceDocumentDao {
     @Query("SELECT * FROM source_document WHERE targetKnowledgeBaseId = :kbId AND status != 'deleted' ORDER BY updatedAt DESC")
     fun observeByKnowledgeBase(kbId: String): Flow<List<SourceDocumentEntity>>
 
+    @Query("""
+        SELECT * FROM source_document AS s
+        WHERE s.status IN (:statuses)
+          AND s.status != 'deleted'
+          AND NOT EXISTS (
+              SELECT 1 FROM processing_task AS t
+              WHERE (t.sourceId = s.id OR (t.targetType = 'source_document' AND t.targetId = s.id))
+                AND t.status IN ('pending', 'running', 'pending_network', 'pending_config')
+          )
+        ORDER BY s.updatedAt ASC
+        LIMIT :limit
+    """)
+    suspend fun getRunnableSourcesWithoutActiveTask(
+        statuses: List<String>,
+        limit: Int = 50
+    ): List<SourceDocumentEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(source: SourceDocumentEntity)
 

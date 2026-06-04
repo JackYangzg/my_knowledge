@@ -998,18 +998,36 @@ class KnowledgeRepositoryImpl(
 
     override suspend fun getActiveTasks(): Flow<List<ProcessingTaskEntity>> = taskDao.observeActiveTasks()
 
-    // In-flight count = pending + running + pending_network. We fold the list down to a
-    // count via `map` + `distinctUntilChanged` so the ProfileScreen
-    // doesn't re-render on every task-status tick that leaves the
-    // total unchanged.
+    // Keep ProfileScreen's "日志中心" description aligned with
+    // KnowledgeLogScreen's summary cards: the log center is source-row
+    // based, not raw-task based. A single source can have old retry /
+    // canceled / superseded tasks, so counting all task rows can show
+    // "4 条处理中" while the log center only has 3 source cards in that
+    // state. Always group by source and inspect the latest task per source.
     override fun observeActiveTaskCount(): Flow<Int> =
-        taskDao.observeActiveTasks()
-            .map { list -> list.count { it.status == "pending" || it.status == "running" || it.status == "pending_network" } }
+        combine(sourceDocumentDao.observeAll(), taskDao.observeAllTasks()) { sources, tasks ->
+            val tasksBySource = tasks.groupBy { task ->
+                task.sourceId ?: task.targetId.takeIf { task.targetType == "source_document" }
+            }
+            sources.count { source ->
+                val latest = tasksBySource[source.id].orEmpty().maxByOrNull { it.createdAt }
+                latest?.status == "pending" ||
+                    latest?.status == "running" ||
+                    latest?.status == "pending_network"
+            }
+        }
             .distinctUntilChanged()
 
     override fun observeFailedTaskCount(): Flow<Int> =
-        taskDao.observeActiveTasks()
-            .map { list -> list.count { it.status == "failed" } }
+        combine(sourceDocumentDao.observeAll(), taskDao.observeAllTasks()) { sources, tasks ->
+            val tasksBySource = tasks.groupBy { task ->
+                task.sourceId ?: task.targetId.takeIf { task.targetType == "source_document" }
+            }
+            sources.count { source ->
+                val latest = tasksBySource[source.id].orEmpty().maxByOrNull { it.createdAt }
+                latest?.status == "failed" || source.status == SourceDocumentEntity.STATUS_FAILED
+            }
+        }
             .distinctUntilChanged()
 
     override suspend fun retryTask(taskId: String) {
@@ -1021,6 +1039,7 @@ class KnowledgeRepositoryImpl(
         val now = System.currentTimeMillis()
         item.sourceId?.let { sourceId ->
             taskDao.retryBySource(sourceId, now)
+            sourceDocumentDao.updateStatus(sourceId, SourceDocumentEntity.STATUS_IMPORTED, null, now)
             itemDao.updateStatusBySourceId(sourceId, KnowledgeItemEntity.STATUS_PROCESSING, now)
         }
     }
@@ -1142,6 +1161,10 @@ class KnowledgeRepositoryImpl(
 
     override suspend fun cancelTask(taskId: String) {
         taskDao.cancelTask(taskId, System.currentTimeMillis())
+    }
+
+    override suspend fun resetInterruptedRunningTasks(excludedTaskId: String?) {
+        taskDao.resetInterruptedRunningTasks(excludedTaskId, System.currentTimeMillis())
     }
 
     override suspend fun appendProcessingLog(log: ProcessingTaskLogEntity) {
@@ -1545,9 +1568,9 @@ class KnowledgeRepositoryImpl(
 
     // === Inspiration thread context (LLM input) ========================
     //
-    // 一次性把 LLM 脉络生成需要的所有原料拼好,worker 拿到这个 context
-    // 就能直接调大模型。关联 wiki 实体由 worker 自己用 DAO 拉(逻辑
-    // 跟 graph rebuild 共享,放在 worker 里更顺手)。
+    // 一次性把 LLM 脉络生成需要的所有灵感原料拼好,worker 拿到这个
+    // context 就能直接调大模型。不要把 wiki/source/file 等外部来源
+    // 信息注入灵感脉络 prompt。
     override suspend fun getInspirationContext(
         kbId: String,
         newItemId: String,

@@ -18,6 +18,7 @@ import com.my.knowledge.data.search.SearchEngine
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.util.*
@@ -55,6 +56,8 @@ class AskViewModel(
 
     private val _conversations = MutableStateFlow<List<AiConversationEntity>>(emptyList())
     val conversations: StateFlow<List<AiConversationEntity>> = _conversations.asStateFlow()
+    private var conversationsJob: Job? = null
+    private var messagesJob: Job? = null
 
     /**
      * Same scope as [conversations] but each row also carries the live
@@ -79,14 +82,24 @@ class AskViewModel(
     val debugPrompts: StateFlow<Map<String, String>> = _debugPrompts.asStateFlow()
 
     fun setScope(scopeType: String, scopeId: String) {
-        _currentScopeType.value = when (scopeType) {
+        val normalizedType = when (scopeType) {
             ScopeType.KNOWLEDGE_ITEM,
             ScopeType.KNOWLEDGE_BASE,
             ScopeType.THREAD,
             ScopeType.GLOBAL -> scopeType
             else -> ScopeType.GLOBAL
         }
+        val scopeChanged = _currentScopeType.value != normalizedType || _currentScopeId.value != scopeId
+        _currentScopeType.value = normalizedType
         _currentScopeId.value = scopeId
+        if (scopeChanged) {
+            messagesJob?.cancel()
+            _activeConversationId.value = null
+            _messages.value = emptyList()
+            _lastCitations.value = emptyList()
+            _debugPrompts.value = emptyMap()
+            pendingConversationTitle = "新对话"
+        }
         loadConversations()
     }
 
@@ -95,7 +108,8 @@ class AskViewModel(
     }
 
     private fun loadConversations() {
-        viewModelScope.launch {
+        conversationsJob?.cancel()
+        conversationsJob = viewModelScope.launch {
             knowledgeRepository.observeConversations(
                 _currentScopeType.value, _currentScopeId.value
             ).collect { _conversations.value = it }
@@ -104,6 +118,7 @@ class AskViewModel(
 
     fun startNewConversation(title: String = "新对话") {
         pendingConversationTitle = title.ifBlank { "新对话" }
+        messagesJob?.cancel()
         _activeConversationId.value = null
         _messages.value = emptyList()
         _lastCitations.value = emptyList()
@@ -111,7 +126,19 @@ class AskViewModel(
     }
 
     fun selectConversation(conversationId: String) {
-        viewModelScope.launch {
+        messagesJob?.cancel()
+        messagesJob = viewModelScope.launch {
+            val conversation = knowledgeRepository.getConversation(conversationId)
+            if (
+                conversation == null ||
+                conversation.scopeType != _currentScopeType.value ||
+                conversation.scopeId != _currentScopeId.value
+            ) {
+                _activeConversationId.value = null
+                _messages.value = emptyList()
+                _lastCitations.value = emptyList()
+                return@launch
+            }
             pendingConversationTitle = "新对话"
             _activeConversationId.value = conversationId
             knowledgeRepository.observeMessages(conversationId).collect { list ->
@@ -231,7 +258,20 @@ class AskViewModel(
     }
 
     private suspend fun ensureActiveConversation(): String {
-        _activeConversationId.value?.let { return it }
+        _activeConversationId.value?.let { id ->
+            val existing = knowledgeRepository.getConversation(id)
+            if (
+                existing != null &&
+                existing.scopeType == _currentScopeType.value &&
+                existing.scopeId == _currentScopeId.value
+            ) {
+                return id
+            }
+            messagesJob?.cancel()
+            _activeConversationId.value = null
+            _messages.value = emptyList()
+            _lastCitations.value = emptyList()
+        }
         val conversation = AiConversationEntity(
             id = UUID.randomUUID().toString(),
             scopeType = _currentScopeType.value,

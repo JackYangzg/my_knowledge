@@ -153,10 +153,10 @@ fun KnowledgeLogScreen(
         AlertDialog(
             onDismissRequest = { deleteSourceId = null },
             title = { Text("删除来源") },
-            text = { Text("会取消相关任务、清理解析结果和本地来源文件，并将关联知识移入回收站。") },
+            text = { Text("仅删除日志中心中的记录和处理任务，不会删除知识条目、解析结果、中间数据或本地来源文件。") },
             confirmButton = {
                 Button(onClick = {
-                    deleteSourceId?.let(importViewModel::deleteSource)
+                    deleteSourceId?.let(importViewModel::deleteSourceLog)
                     deleteSourceId = null
                 }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))) { Text("删除") }
             },
@@ -222,11 +222,12 @@ fun KnowledgeLogScreen(
                         )
                         recentLogs.forEach { log ->
                             Text(
-                                "[${formatLogTime(log.createdAt)}][${log.stage}] ${log.message}",
+                                "[${formatLogTime(log.createdAt)}][${log.stage}] ${displayLogMessage(log.message)}",
                                 fontSize = 11.sp,
                                 color = when (log.status) {
                                     "success" -> Color(0xFF16A34A)
-                                    "pending_config", "pending_network", "failed" -> Color(0xFFDC2626)
+                                    "pending_config", "failed" -> Color(0xFFDC2626)
+                                    "pending_network" -> Color(0xFFF59E0B)
                                     else -> Color(0xFF5F87A3)
                                 }
                             )
@@ -416,7 +417,7 @@ private fun logStatusColor(status: String): Color = when (status) {
 
 private fun logStatusLabel(status: String): String = when (status) {
     "pending_config" -> "待配置"
-    "pending_network" -> "待联网"
+    "pending_network" -> "等待重试"
     "pending" -> "待处理"
     "running" -> "处理中"
     "success" -> "成功"
@@ -425,6 +426,11 @@ private fun logStatusLabel(status: String): String = when (status) {
     "generated" -> "已生成"
     else -> status
 }
+
+private fun displayLogMessage(message: String): String =
+    message
+        .replace("网络波动，已暂停", "远端调用失败，已进入重试")
+        .replace("联网后继续", "稍后继续")
 
 private fun formatLogTime(time: Long): String =
     SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(time))

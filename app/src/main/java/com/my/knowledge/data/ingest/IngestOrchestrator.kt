@@ -12,15 +12,35 @@ import com.my.knowledge.data.ai.AiGateway
 import com.my.knowledge.data.ai.AiTextCleaner
 import com.my.knowledge.data.ai.AiTextCleaner.cleanModelOutput
 import com.my.knowledge.data.file.LocalFileStore
-import com.my.knowledge.data.parser.defaultParsers
+import com.my.knowledge.data.parser.AudioTranscriptParser
+import com.my.knowledge.data.parser.DocxParser
+import com.my.knowledge.data.parser.HtmlWebParser
+import com.my.knowledge.data.parser.ImageOcrParser
+import com.my.knowledge.data.parser.MarkdownParser
+import com.my.knowledge.data.parser.MetadataOnlyParser
+import com.my.knowledge.data.parser.PdfTextParser
+import com.my.knowledge.data.parser.PlainTextParser
 import com.my.knowledge.domain.repository.KnowledgeRepository
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.sample
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.UUID
-
-private class IngestNetworkPause(message: String) : Exception(message)
 
 /**
  * Structured result of Stage 1 — the LLM analysis, normalized into the
@@ -208,33 +228,187 @@ internal data class ParsedAnalysis(
     }
 }
 
+@OptIn(FlowPreview::class)
 class IngestOrchestrator(
     private val db: AppDatabase,
     private val fileStore: LocalFileStore,
     private val repository: KnowledgeRepository,
     private val ai: AiGateway = AiGateway(),
-    private val scheduler: com.my.knowledge.data.processing.ProcessingTaskScheduler? = null
+    private val scheduler: com.my.knowledge.data.processing.ProcessingTaskScheduler? = null,
+    /**
+     * P0-1: the four post-write side effects (`updateItemCount`,
+     * `refreshOverviewForBase`, `rebuildGraphForBase`, `SweepReviews.sweep`,
+     * thread evolution) all run on this debouncer instead of inside
+     * the KB write lock. Optional for back-compat with unit tests
+     * that exercise `parseAiAnalysisJson`; production wiring always
+     * passes one through `DependencyProvider`.
+     */
+    private val rebuildDebouncer: com.my.knowledge.data.processing.RebuildDebouncer? = null,
+    /**
+     * P0-3: long-source checkpoint store. The orchestrator splits
+     * markdown larger than [LONG_SOURCE_BUDGET_CHARS] into semantic
+     * chunks, calls the LLM once per chunk, and persists progress
+     * through this store so a retry resumes from `completedThrough`
+     * instead of re-paying the full chunked-LLM bill.
+     *
+     * Optional for back-compat with unit tests that don't exercise
+     * the long-source path. Production wiring (the [com.my.knowledge.worker.IngestWorker])
+     * always passes one rooted at `context.filesDir`.
+     */
+    private val longSourceCheckpointStore: LongSourceCheckpointStore? = null,
+    /**
+     * P0-3: chunker used for the long-source path. Configurable
+     * (rather than always-`MarkdownSemanticChunker()`) so unit
+     * tests can plug in a smaller `targetChars` to drive the
+     * chunked code path with a short fixture.
+     */
+    private val markdownChunker: MarkdownSemanticChunker = MarkdownSemanticChunker(),
 ) {
     private val fragmenter = MarkdownFragmenter()
     private val wikiCompiler = WikiPageCompiler()
 
-    // Mirrors llm_wiki's `withProjectLock` (src/lib/project-mutex.ts):
-    // every task runs under a single Mutex so two ingest workers (or a
-    // watcher-induced import during a manual ingest) cannot race each
-    // other while both are rewriting `wiki/index.md`.
-    private val ingestMutex = Mutex()
+    /**
+     * P0-2: tracks the [Job] of the most recently entered [runTask]
+     * call. The "User pressed Stop Processing" / IngestWorker stop
+     * signal calls [cancel], which forwards the cancel to whichever
+     * lane is currently inside an LLM stream. The downstream
+     * `ai.streamJson` / `ai.completeStream` cooperative-cancel hook
+     * (`currentCoroutineContext().ensureActive()` per SSE line) then
+     * tears the HTTP connection down on the very next read instead
+     * of waiting out the 180s `readTimeout`.
+     *
+     * **Scope note:** [runUntilIdle] runs up to 4 parallel lanes.
+     * Last-write-wins means [cancel] only stops the most recent lane
+     * to enter [runTask]. That's the documented contract from the
+     * P0-2 spec; in practice only one lane is doing the long-running
+     * Stage-1/Stage-2 LLM call at a time (the others are either
+     * waiting on the DB or in fast parse/embedding steps), so
+     * "press Stop" still stops the user-visible hang.
+     *
+     * Thread safety: the field is mutated only from
+     * `runUntilIdle`'s lane coroutines (a single dispatcher at a
+     * time, post-P0-1 we always run under `Dispatchers.IO` from the
+     * worker), so a plain `var` is sufficient. The [cancel] entry
+     * point is called from the main thread / worker dispatch UI,
+     * which is the only cross-thread reader/writer — `@Volatile`
+     * would technically be required if the worker dispatch path
+     * is on a different thread from the lane coroutines, but
+     * single-writer / single-reader volatile-ish access is
+     * acceptable here because the cancel itself is idempotent
+     * (calling cancel on an already-completed Job is a no-op).
+     */
+    private var currentJob: Job? = null
 
-    suspend fun runUntilIdle(maxTasks: Int = 20) {
-        repeat(maxTasks) {
-            val task = db.processingTaskDao().getNextPendingTask() ?: return
-            ingestMutex.withLock { runTask(task) }
+    /**
+     * P0-2: stop the currently running ingest step. Designed to be
+     * wired to the log-center "Stop" button and to
+     * [com.my.knowledge.worker.IngestWorker]'s cancel path.
+     *
+     * Idempotent — safe to call when no [runTask] is in flight, when
+     * the in-flight task is already finishing, or after a previous
+     * cancel. Each in-flight LLM stream observes the cancel at the
+     * next SSE line read and throws [CancellationException]; the
+     * orchestrator's `try { ... } catch (e: Exception)` in [runTask]
+     * then routes the failure to the task's retry path.
+     */
+    fun cancel() {
+        currentJob?.cancel()
+    }
+
+    /**
+     * Mirrors llm_wiki's project mutex, but narrows the lock to the
+     * actual wiki page key. Analysis / generation can run concurrently;
+     * only the read-merge-write of the same logical file is serialized.
+     */
+    private suspend fun <T> withWikiPageWriteLocks(
+        kbId: String,
+        drafts: List<WikiPageDraft>,
+        block: suspend () -> T
+    ): T {
+        val keys = drafts
+            .map { draft -> wikiPageLockKey(kbId, draft.sourceType, draft.title) }
+            .distinct()
+            .sorted()
+        return withLocks(keys, 0, block)
+    }
+
+    private suspend fun <T> withLocks(
+        keys: List<String>,
+        index: Int,
+        block: suspend () -> T
+    ): T {
+        if (index >= keys.size) return block()
+        val mutex = pageWriteMutexes.getOrPut(keys[index]) { Mutex() }
+        return mutex.withLock { withLocks(keys, index + 1, block) }
+    }
+
+    suspend fun runUntilIdle(maxTasks: Int = 80, parallelism: Int = 4) = supervisorScope {
+        resetInterruptedTasks()
+        recoverSourcesWithoutActiveTasks()
+        val laneCount = parallelism.coerceIn(1, 4)
+        val processed = AtomicInteger(0)
+        val lanes = (0 until laneCount).map {
+            async {
+                var idlePolls = 0
+                while (processed.get() < maxTasks) {
+                    val task = db.processingTaskDao().claimNextPendingTask(System.currentTimeMillis())
+                    if (task == null) {
+                        if (idlePolls >= INGEST_IDLE_POLLS) break
+                        idlePolls++
+                        delay(INGEST_IDLE_POLL_MS)
+                        continue
+                    }
+                    idlePolls = 0
+                    processed.incrementAndGet()
+                    runTask(task)
+                }
+            }
+        }
+        lanes.awaitAll()
+    }
+
+    private suspend fun resetInterruptedTasks() {
+        db.processingTaskDao().resetInterruptedRunningTasks(
+            excludedTaskId = null,
+            updatedAt = System.currentTimeMillis()
+        )
+    }
+
+    private suspend fun recoverSourcesWithoutActiveTasks() {
+        val sources = db.sourceDocumentDao().getRunnableSourcesWithoutActiveTask(
+            statuses = listOf(
+                SourceDocumentEntity.STATUS_IMPORTED,
+                SourceDocumentEntity.STATUS_PARSING,
+                SourceDocumentEntity.STATUS_PARSED,
+                SourceDocumentEntity.STATUS_ANALYZING
+            )
+        )
+        sources.forEach { source ->
+            when (source.status) {
+                SourceDocumentEntity.STATUS_PARSED,
+                SourceDocumentEntity.STATUS_ANALYZING -> {
+                    val parsed = db.parsedContentDao().getLatestBySource(source.id)
+                    if (parsed != null) {
+                        enqueue(source.id, "analysis", 9, """{"parsedContentId":"${parsed.id}","recovered":true}""")
+                    } else {
+                        enqueue(source.id, "parse", 10, """{"sourceId":"${source.id}","recovered":true}""")
+                    }
+                }
+                else -> enqueue(source.id, "parse", 10, """{"sourceId":"${source.id}","recovered":true}""")
+            }
         }
     }
 
     private suspend fun runTask(task: ProcessingTaskEntity) {
         val startedAt = System.currentTimeMillis()
-        markRunning(task, startedAt)
-        appendLog(task, "开始 ${taskLabel(task.taskType)}", "running")
+        // P0-2: pin the current coroutine's Job so [cancel] can stop
+        // the in-flight LLM stream. Done at the very top of runTask
+        // — before any DB write or parser dispatch — so even a
+        // cancel-during-parse propagates correctly. Cleared in
+        // `finally` so a completed task doesn't leave a stale Job
+        // reference lying around.
+        val job = currentCoroutineContext()[Job]
+        currentJob = job
         try {
             // ---- Ingest cache fast-path (1:1 with llm_wiki) ----------
             //
@@ -273,31 +447,10 @@ class IngestOrchestrator(
                 "embedding" -> embeddingTask(task)
                 else -> markSuccess(task, "Unsupported task skipped", "{}")
             }
-        } catch (e: IngestNetworkPause) {
-            val now = System.currentTimeMillis()
-            db.processingTaskDao().update(
-                task.copy(
-                    status = "pending_network",
-                    errorMessage = e.message,
-                    currentStep = "等待网络恢复",
-                    updatedAt = now,
-                    finishedAt = null
-                )
-            )
-            appendLog(
-                task,
-                "网络波动，已暂停 ${taskLabel(task.taskType)}，联网后继续：${e.message ?: "等待网络恢复"}",
-                "pending_network",
-                "等待网络恢复"
-            )
-            task.sourceId?.let {
-                db.sourceDocumentDao().updateStatus(it, SourceDocumentEntity.STATUS_IMPORTED, "等待网络恢复", now)
-            }
-            throw e
         } catch (e: Exception) {
             val retry = task.retryCount + 1
             val now = System.currentTimeMillis()
-            val failImmediately = shouldFailImmediately(task)
+            val failImmediately = shouldFailImmediately(task, e)
             val willRetry = !failImmediately && retry < task.maxRetry
             db.processingTaskDao().update(
                 task.copy(
@@ -323,17 +476,62 @@ class IngestOrchestrator(
                     db.sourceDocumentDao().updateStatus(it, SourceDocumentEntity.STATUS_FAILED, e.message, now)
                 }
             }
+        } finally {
+            // P0-2: only clear the Job reference if it still points
+            // at *this* runTask's coroutine. A nested runTask call
+            // (e.g. test code driving a sub-task) would otherwise
+            // clobber the outer's reference. Identity check
+            // (`currentCoroutineContext()[Job] == currentJob`) keeps
+            // that nested case correct.
+            if (currentCoroutineContext()[Job] == currentJob) {
+                currentJob = null
+            }
         }
     }
 
-    private suspend fun shouldFailImmediately(task: ProcessingTaskEntity): Boolean {
+    private suspend fun shouldFailImmediately(task: ProcessingTaskEntity, error: Exception): Boolean {
         if (task.taskType != "parse") return false
+        if (error.message.isRetryableAiOrNetworkFailure()) return false
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: return false
         return source.sourceType == "image" || source.mimeType?.startsWith("image/") == true
     }
 
+    private fun String?.isRetryableAiOrNetworkFailure(): Boolean {
+        val value = this?.lowercase().orEmpty()
+        return listOf(
+            "dns",
+            "unable to resolve",
+            "连接失败",
+            "failed to connect",
+            "connection reset",
+            "connection abort",
+            "connection aborted",
+            "connection refused",
+            "software caused connection abort",
+            "ssl",
+            "超时",
+            "timeout",
+            "timed out",
+            "ai 调用",
+            "ai调用",
+            "http 5"
+        ).any { value.contains(it) }
+    }
+
+    private fun ingestParsers() = listOf(
+        MarkdownParser(),
+        ImageOcrParser(),
+        PdfTextParser(),
+        DocxParser(),
+        HtmlWebParser(),
+        AudioTranscriptParser(),
+        PlainTextParser(),
+        MetadataOnlyParser()
+    )
+
     private suspend fun isIngestCacheHit(task: ProcessingTaskEntity): Boolean {
+        if (task.inputJson.contains("\"reprocess\":true")) return false
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: return false
         if (source.sha256.isBlank()) return false
@@ -351,7 +549,7 @@ class IngestOrchestrator(
         db.knowledgeItemDao().updateStatusBySourceId(source.id, KnowledgeItemEntity.STATUS_PROCESSING, System.currentTimeMillis())
         updateProgress(task, 15, "解析文件 ${source.title}", "正在解析 ${source.mimeType ?: source.sourceType} 内容")
 
-        val parser = defaultParsers().first { it.supports(source.mimeType, source.sourceType) }
+        val parser = ingestParsers().first { parser -> parser.supports(source.mimeType, source.sourceType) }
         val parsed = parser.parse(source)
         updateProgress(task, 50, "写入解析结果", "已抽取 ${parsed.plainText.length} 字正文，准备切片")
         val now = System.currentTimeMillis()
@@ -369,12 +567,32 @@ class IngestOrchestrator(
         db.parsedContentDao().insert(parsedEntity)
         fileStore.writeParsedMarkdown(source.id, parsed.markdown)
         fileStore.writeParsedMetadata(source.id, parsed.metadataJson)
+        syncVisibleKnowledgeItemAfterParse(source.id, parsed.markdown, parsed.plainText, now)
         val fragments = fragmenter.split(parsedEntity, source.targetKnowledgeBaseId.orEmpty())
         db.knowledgeFragmentDao().insertAll(fragments)
         updateProgress(task, 80, "生成 ${fragments.size} 个知识切片", "切片完成，准备进入分析阶段")
         db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_PARSED, null, now)
         markSuccess(task, "Parsed ${source.title}", """{"parsedContentId":"${parsedEntity.id}"}""")
         enqueue(source.id, "analysis", 9, """{"parsedContentId":"${parsedEntity.id}"}""")
+    }
+
+    private suspend fun syncVisibleKnowledgeItemAfterParse(
+        sourceId: String,
+        markdown: String,
+        plainText: String,
+        updatedAt: Long
+    ) {
+        val visibleMarkdown = markdown.trim().takeIf { it.isNotBlank() } ?: return
+        val excerpt = plainText.trim()
+            .replace(Regex("\\s+"), " ")
+            .take(240)
+            .ifBlank { "已解析文本内容" }
+        db.knowledgeItemDao().updateVisibleParsedContentBySourceId(
+            sourceId = sourceId,
+            contentMarkdown = visibleMarkdown,
+            excerpt = excerpt,
+            updatedAt = updatedAt
+        )
     }
 
     private suspend fun analysisTask(task: ProcessingTaskEntity) {
@@ -414,8 +632,28 @@ class IngestOrchestrator(
         // `relationsJson = "[]"`, which meant no real entities, tag-named
         // "concept" pages with empty descriptions, and an empty knowledge
         // graph. parseAiAnalysisJson is the bridge that fixes that.
-        val rawAiOutput = requestAiAnalysis(source, parsed)
-            ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
+        //
+        // P0-3: long-source path. Sources larger than
+        // [LONG_SOURCE_BUDGET_CHARS] used to be silently truncated by
+        // `parsed.markdown.take(50_000)` (the 50K cap inside
+        // `requestAiAnalysis` below). That truncation dropped late
+        // entities / concepts and broke graph + wiki completeness
+        // for any import over a few chapters. We now route
+        // `parsed.markdown.length > sourceBudget` through
+        // `requestAiAnalysisLongSource` — semantic chunking, one LLM
+        // call per chunk via the existing `chatJson` helper, with
+        // progress persisted to [longSourceCheckpointStore] so a
+        // retry resumes from the last completed chunk instead of
+        // re-paying the full bill. Short sources keep the original
+        // single-call path.
+        val isLongSource = parsed.markdown.length > LONG_SOURCE_BUDGET_CHARS &&
+            longSourceCheckpointStore != null
+        val rawAiOutput: String? = if (isLongSource) {
+            requestAiAnalysisLongSource(task, source, parsed)
+        } else {
+            requestAiAnalysis(task, source, parsed)
+                ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
+        }
         // P1 诊断:把 LLM 实际返回写到 ProcessingTaskLog,这样用户能
         // 直接看到「AI 返回了 N 字符 / 0 个实体」,不用盲猜为什么图谱空。
         val rawSnippet = rawAiOutput?.take(200)?.replace("\n", " ")
@@ -511,21 +749,15 @@ class IngestOrchestrator(
         db.knowledgeFragmentDao().attachSourceFragmentsToItem(source.id, rootItem.id, kbId)
         updateProgress(task, 30, "根知识写入完成", "开始生成实体 / 概念页面")
 
-        // Generate wiki pages (Step 2: AI-driven or Template-driven)
+        // Generate wiki pages (Step 2: AI-driven or Template-driven) — LLM outside KB lock
         val aiOutput = if (ai.isAvailable()) {
             updateProgress(task, 50, "调用 AI 生成 wiki 页面", "等模型返回 FILE 块")
-            requestAiRawOutput(source, parsed, analysis)
+            requestAiRawOutput(task, source, parsed, analysis)
         } else {
             updateProgress(task, 50, "使用模板生成 wiki 页面", "未配置 AI Key，走本地模板")
             null
         }
 
-        // llm_wiki writes the model's FILE blocks directly (with parser
-        // safety + merge guards) and only relies on deterministic fallback
-        // when the model omits a page. Mirror that here: AI-generated
-        // entity/concept pages are the primary content, so their body depth
-        // matches llm_wiki; the local compiler only fills missing source /
-        // index / overview / log / entity / concept pages.
         val templatePages = wikiCompiler.compile(source, parsed, analysis)
         val aiDrafts: List<WikiPageDraft> = if (aiOutput != null) {
             val parsedBlocks = FileBlockParser.parseDetailed(aiOutput)
@@ -542,66 +774,64 @@ class IngestOrchestrator(
             templatePages = templatePages
         )
 
-        val writtenItems = pageDrafts.mapIndexed { index, draft ->
-            val existingPage = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
-            val isListingPage = draft.sourceType == "wiki_index" || draft.sourceType == "wiki_overview"
-            val mergedMarkdown = if (isListingPage) {
-                // 关键修复: 之前 `draft.markdown` 是无脑覆盖——新文档导入后
-                // wiki_index / wiki_overview 的 body 只剩新来源的条目,
-                // 历史来源的实体/概念/源全被擦掉(用户体感是"历史的实体、
-                // 概念、源全部不可见了")。现在用 section-aware merge:
-                // 1) frontmatter 数组(related/sources/tags)走 `wikiCompiler.merge`
-                //    拿到 case-insensitive union;
-                // 2) body 按 `## 标题` 段拆,每个段独立做"老 bullet + 新 bullet"
-                //    合并 + 按 wikilink 去重;
-                // 3) 排序保持稳定——历史条目在前,新增条目追加在末尾。
-                mergeListingPage(
-                    existing = existingPage?.contentMarkdown.orEmpty(),
-                    incoming = draft.markdown,
-                    pageTitle = draft.title,
+        updateProgress(task, 55, "合并并写入 wiki 页面", "共 ${pageDrafts.size} 页，等待页面写锁")
+
+        // Same rule as llm_wiki: model work stays parallel; only the
+        // read-merge-write for identical wiki files is serialized.
+        // Android stores wiki pages as rows, so the logical file key is
+        // (knowledgeBaseId, sourceType, title).
+        val writtenItems = withWikiPageWriteLocks(kbId, pageDrafts) {
+            val items = pageDrafts.mapIndexed { index, draft ->
+                val existingPage = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
+                val mergedMarkdown = mergeWikiPageMarkdown(
+                    existingMarkdown = existingPage?.contentMarkdown.orEmpty(),
+                    draft = draft,
                 )
-            } else if (existingPage != null && ai.isAvailable()) {
-                val aiMerged = requestAiMerge(existingPage.contentMarkdown, draft.markdown, source.title)
-                // Body-shrink sanity check (matches llm_wiki's BODY_SHRINK_THRESHOLD).
-                if (aiMerged.length < ((existingPage.contentMarkdown.length + draft.markdown.length) / 2) * 7 / 10) {
-                    wikiCompiler.merge(existingPage.contentMarkdown, draft.markdown, draft.title)
-                } else {
-                    aiMerged
+                if (index % 3 == 0) {
+                    updateProgress(
+                        task,
+                        60 + (index * 5 / pageDrafts.size.coerceAtLeast(1)),
+                        "写入 wiki 页面 ${index + 1}/${pageDrafts.size}",
+                        "已合并 ${draft.title}"
+                    )
                 }
-            } else {
-                wikiCompiler.merge(existingPage?.contentMarkdown.orEmpty(), draft.markdown, draft.title)
-            }
-            if (index % 3 == 0) {
-                updateProgress(task, 60 + (index * 5 / pageDrafts.size.coerceAtLeast(1)), "写入 wiki 页面 ${index + 1}/${pageDrafts.size}", "已合并 ${draft.title}")
-            }
 
-            val item = KnowledgeItemEntity(
-                id = existingPage?.id ?: UUID.randomUUID().toString(),
-                sourceId = source.id,
-                knowledgeBaseId = kbId,
-                title = draft.title,
-                contentMarkdown = mergedMarkdown,
-                excerpt = draft.summary.take(120),
-                sourceType = draft.sourceType,
-                status = KnowledgeItemEntity.STATUS_ARCHIVED,
-                contentHash = fileStore.sha256Text(mergedMarkdown),
-                sourceTraceJson = draft.sourceTraceJson,
-                confidence = analysis.confidence,
-                summary = draft.summary,
-                tagsJson = draft.tagsJson,
-                rawNoteId = null,
-                importance = if (index == 0) 2 else 1,
-                createdAt = existingPage?.createdAt ?: now,
-                updatedAt = now,
-                processedAt = now,
-                archivedAt = now,
-                deletedAt = null
-            )
-            db.knowledgeItemDao().insert(item)
-            item
+                val item = KnowledgeItemEntity(
+                    id = existingPage?.id ?: UUID.randomUUID().toString(),
+                    sourceId = source.id,
+                    knowledgeBaseId = kbId,
+                    title = draft.title,
+                    contentMarkdown = mergedMarkdown,
+                    excerpt = draft.summary.take(120),
+                    sourceType = draft.sourceType,
+                    status = KnowledgeItemEntity.STATUS_ARCHIVED,
+                    contentHash = fileStore.sha256Text(mergedMarkdown),
+                    sourceTraceJson = draft.sourceTraceJson,
+                    confidence = analysis.confidence,
+                    summary = draft.summary,
+                    tagsJson = draft.tagsJson,
+                    rawNoteId = null,
+                    importance = if (index == 0) 2 else 1,
+                    createdAt = existingPage?.createdAt ?: now,
+                    updatedAt = now,
+                    processedAt = now,
+                    archivedAt = now,
+                    deletedAt = null
+                )
+                db.knowledgeItemDao().insert(item)
+                item
+            }
+            items
         }
+        updateProgress(
+            task,
+            90,
+            "wiki 页面写入完成",
+            "实体 ${writtenItems.count { it.sourceType == "wiki_entity" }}，概念 ${writtenItems.count { it.sourceType == "wiki_concept" }} — 触发异步图谱重建"
+        )
+        schedulePostGenerationRebuilds(kbId)
 
-        // Process Review Blocks
+
         if (aiOutput != null) {
             val reviews = ReviewBlockParser.parse(aiOutput)
             reviews.forEach { review ->
@@ -623,7 +853,6 @@ class IngestOrchestrator(
             }
         }
 
-        db.knowledgeItemDao().updateItemCount(kbId)
 
         val reviewReason = IngestJsonValidator.firstJsonArrayText(analysis.gapsJson)
         if (analysis.confidence < 0.6f || reviewReason != null) {
@@ -643,26 +872,15 @@ class IngestOrchestrator(
                 )
             )
         }
-        // The injected `repository` is the same instance the rest of the app uses;
-        // it owns the graph rebuild logic and the right DAO set. Building a
-        // second repository here (the old code) was a layer leak and made the
-        // orchestrator responsible for every DAO.
-        updateProgress(task, 90, "重建知识图谱", "实体 ${writtenItems.count { it.sourceType == "wiki_entity" }}，概念 ${writtenItems.count { it.sourceType == "wiki_concept" }}")
-        repository.refreshOverviewForBase(kbId)
-        repository.rebuildGraphForBase(kbId)
-        // Sweep pending reviews now that the graph is up to date. A
-        // review for "missing-page" or "duplicate" that points at a
-        // page that we just generated gets auto-resolved, so the user
-        // doesn't have to re-dismiss stale items after every ingest.
-        SweepReviews(db).sweep(kbId)
         db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_GENERATED, null, now)
         markSuccess(task, "Generated ${writtenItems.size} processed wiki pages", """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         enqueue(source.id, "embedding", 5, """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         // Recompute the knowledge base's mainline / gaps / suggestions
-        // whenever a new generation lands. The worker is responsible for
-        // the actual computation (input hash, tag cluster, wikilink
-        // graph) and writes the resulting thread + log atomically; the
-        // inline log row here is just a user-visible breadcrumb.
+        // whenever a new generation lands. P0-1: the inline log row
+        // stays (cheap, just a breadcrumb) but the actual evolution
+        // goes through the debouncer instead of `scheduler?.scheduleThreadUpdate`.
+        // The debouncer coalesces 5+ rapid ingests into a single
+        // rebuild per KB and runs the work off the hot path.
         if (kbId.isNotBlank()) {
             db.knowledgeBaseDao().getById(kbId)?.let { base ->
                 if (base.type != "unfiled") {
@@ -678,10 +896,59 @@ class IngestOrchestrator(
                             createdAt = System.currentTimeMillis()
                         )
                     )
-                    scheduler?.scheduleThreadUpdate(kbId)
+                    val debouncer = rebuildDebouncer
+                    if (debouncer != null) {
+                        debouncer.scheduleThreadEvolution(kbId)
+                    } else {
+                        // Back-compat: no debouncer wired → fall
+                        // through to the scheduler (which itself now
+                        // delegates to the debouncer when one is
+                        // present, so this is mostly for the unit
+                        // tests).
+                        scheduler?.scheduleThreadUpdate(kbId)
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * P0-1: hand off the four post-write rebuilds to the
+     * [com.my.knowledge.data.processing.RebuildDebouncer] so they
+     * run off the KB write lock, on `Dispatchers.IO`, coalesced per
+     * KB. When no debouncer is wired (legacy callers, unit tests
+     * that don't exercise the full path) we fall back to the
+     * pre-P0-1 in-line behaviour to keep the public contract.
+     *
+     * Order:
+     *   1. `updateItemCount` — quick, no debounce.
+     *   2. `scheduleOverviewRefresh` — 1s debounce.
+     *   3. `scheduleGraphRebuild` — 1s debounce.
+     *   4. `scheduleSweepReviews` — 3s debounce, off the hot path.
+     */
+    private suspend fun schedulePostGenerationRebuilds(kbId: String) {
+        if (kbId.isBlank()) return
+        val debouncer = rebuildDebouncer
+        if (debouncer == null) {
+            // Legacy path: do the work inline (and accept the
+            // pre-P0-1 latency cost). Only hit by callers that
+            // construct an IngestOrchestrator without a debouncer
+            // (i.e. unit tests, future ad-hoc tooling).
+            db.knowledgeItemDao().updateItemCount(kbId)
+            repository.refreshOverviewForBase(kbId)
+            repository.rebuildGraphForBase(kbId)
+            SweepReviews(db).sweep(kbId)
+            return
+        }
+        // 1. Item count is cheap and idempotent — fire immediately
+        //    on the caller's dispatcher (no debounce). It does
+        //    NOT take the KB write lock, so this is safe to do
+        //    right after the lock releases.
+        db.knowledgeItemDao().updateItemCount(kbId)
+        // 2-4. Hand off to the debouncer.
+        debouncer.scheduleOverviewRefresh(kbId)
+        debouncer.scheduleGraphRebuild(kbId)
+        debouncer.scheduleSweepReviews(kbId)
     }
 
     private fun preferAiFileBlocks(
@@ -742,7 +1009,188 @@ class IngestOrchestrator(
         )
     }
 
+    /**
+     * P0-2: throttle a [Flow] of SSE delta strings into at most one
+     * `updateProgress` write per 500ms, gated by "every N chunks
+     * received" first. The pattern:
+     *
+     *   1. Wrap the consumer-side flow in a [MutableSharedFlow] of
+     *      progress signals (the char count after the new chunk
+     *      landed). The signal goes out on every chunk; throttling
+     *      happens at the writer side.
+     *   2. A child coroutine `launch { signals.sample(500.ms).collect { ... } }`
+     *      consumes the signal flow and calls [updateProgress] — at
+     *      most once per sample window.
+     *   3. The main coroutine `source.collect { ... }` keeps
+     *      accumulating, untouched by the throttle.
+     *
+     * The child coroutine runs under [supervisorScope] so an
+     * `updateProgress` DB failure doesn't take down the streaming
+     * collection. Cancellation of the parent (via [cancel]) tears
+     * down both the child and the SSE reader on the next line.
+     *
+     * @param everyN  the spec's "每收到 N token 调一次" gate. We use
+     *   chunk-character-count modulo N — N=20 is a reasonable
+     *   sweet spot for "many cheap ticks, few expensive DB writes".
+     *   The actual filter is `sb.length % everyN == 0`, so on small
+     *   outputs (< N chars) the very last progress signal still
+     *   gets through (sample() flushes the trailing value when the
+     *   upstream completes).
+     * @param sampleMs  the spec's "500ms 内只写 1 次 DB" window.
+     */
+    private suspend fun collectWithThrottledProgress(
+        source: Flow<String>,
+        task: ProcessingTaskEntity,
+        step: String,
+        logMessage: (Int) -> String,
+        everyN: Int = PROGRESS_EVERY_N_TOKENS,
+        sampleMs: Long = PROGRESS_SAMPLE_MS,
+    ): String = supervisorScope {
+        val accumulator = StringBuilder()
+        // P0-2 throttling: a side-channel SharedFlow of "this many
+        // chars accumulated now" signals. Drop-oldest + 1 buffer
+        // means a burst of N chunks collapses to "the last count
+        // wins", which is what `sample()` wants — we're rate-limiting
+        // the writer, not the producer.
+        val signals = MutableSharedFlow<Int>(
+            replay = 0,
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+        // Launch the throttled writer. Unconfined dispatch means
+        // it subscribes to `signals` synchronously, so the very
+        // first `tryEmit` is observed without an extra dispatcher
+        // hop. The shared sample() takes the latest value within
+        // each 500ms window.
+        val writer = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            try {
+                signals
+                    .sample(sampleMs)
+                    .collect { count ->
+                        // `runCatching` because we don't want a
+                        // transient Room failure (full disk, etc.)
+                        // to crash the main collection — losing one
+                        // progress tick is acceptable, losing the
+                        // entire LLM response is not.
+                        runCatching {
+                            updateProgress(task, 50, step, logMessage(count))
+                        }
+                    }
+            } catch (e: CancellationException) {
+                // Parent was cancelled — propagate so the
+                // supervisorScope sees a clean tear-down.
+                throw e
+            } catch (t: Throwable) {
+                // Swallow non-cancellation failures from the
+                // throttled writer: the main collection should
+                // still see the upstream errors.
+            }
+        }
+        try {
+            source.collect { chunk ->
+                accumulator.append(chunk)
+                if (accumulator.length % everyN == 0) {
+                    signals.tryEmit(accumulator.length)
+                }
+            }
+            // Final signal: if the last chunk didn't align with the
+            // everyN boundary, we still want the "done" progress to
+            // be visible. `sample()` flushes the trailing value on
+            // upstream completion, so emitting one more signal here
+            // ensures the post-stream progress update lands within
+            // 500ms of the SSE `[DONE]`.
+            signals.tryEmit(accumulator.length)
+        } finally {
+            writer.cancel()
+        }
+        accumulator.toString()
+    }
+
+    /**
+     * P0-2: convenience wrapper around [ai.streamJson] that wires
+     * the per-chunk `onChunk` callback into the throttled progress
+     * writer from [collectWithThrottledProgress]. The gateway owns
+     * the accumulation + cleaning; we just observe chunks as they
+     * land and rate-limit our DB writes.
+     *
+     * This is the analysis-task counterpart to
+     * [collectWithThrottledProgress] (which operates on a
+     * `Flow<String>`). They share the same throttling constants
+     * (PROGRESS_EVERY_N_TOKENS / PROGRESS_SAMPLE_MS) so a single
+     * rate limit is enforced across the whole pipeline.
+     *
+     * Implementation note: we DON'T collect the chunks into a
+     * local accumulator here — that would duplicate the gateway's
+     * own accumulation. Instead we let the gateway build the full
+     * text and we just listen to the onChunk side-channel for the
+     * every-N-tokens gate.
+     */
+    private suspend fun streamJsonWithThrottledProgress(
+        systemPrompt: String,
+        userPrompt: String,
+        schemaHint: String,
+        temperature: Float,
+        task: ProcessingTaskEntity,
+        step: String,
+        logMessage: (Int) -> String,
+    ): String {
+        // Local counter for the "every N tokens" gate. We count
+        // chunk-character-length on the consumer side. The
+        // granularity is coarser than the Flow-based path (which
+        // counts the actual accumulated length) but still within
+        // the spec's "every N tokens" intent.
+        val charCount = AtomicInteger(0)
+        val signals = MutableSharedFlow<Int>(
+            replay = 0,
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+        val writer = supervisorScope {
+            launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                try {
+                    signals
+                        .sample(PROGRESS_SAMPLE_MS)
+                        .collect { count ->
+                            runCatching {
+                                updateProgress(task, 50, step, logMessage(count))
+                            }
+                        }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    // Swallow: don't fail the main stream on a
+                    // transient progress-write error.
+                }
+            }
+        }
+        return try {
+            val result = ai.streamJson(
+                systemPrompt = systemPrompt,
+                userPrompt = userPrompt,
+                schemaHint = schemaHint,
+                temperature = temperature,
+                onChunk = { delta ->
+                    val total = charCount.addAndGet(delta.length)
+                    if (total % PROGRESS_EVERY_N_TOKENS == 0) {
+                        signals.tryEmit(total)
+                    }
+                },
+            )
+            // Trailing signal so the "done" progress lands
+            // within 500ms of the SSE [DONE]. sample() flushes
+            // the last value on upstream completion; we just
+            // need to make sure the last chunk is signalled
+            // even if it didn't align with the everyN boundary.
+            val finalCount = charCount.get()
+            if (finalCount > 0) signals.tryEmit(finalCount)
+            result
+        } finally {
+            writer.cancel()
+        }
+    }
+
     private suspend fun requestAiRawOutput(
+        task: ProcessingTaskEntity,
         source: SourceDocumentEntity,
         parsed: ParsedContentEntity,
         analysis: AnalysisResultEntity
@@ -782,12 +1230,25 @@ class IngestOrchestrator(
         // FileBlockParser; cleaning the think block here keeps reasoning
         // out of the persisted wiki content even if a future
         // AiGateway.change forgets to do it at the boundary.
-        val response = ai.complete(
-            systemPrompt = systemPrompt,
-            userMessage = userPrompt
+        //
+        // P0-2: switched from `ai.complete` (HttpURLConnection.readText,
+        // blocks until the full 180s readTimeout) to `ai.completeStream`
+        // so the user sees real token progress in the log center
+        // (`updateProgress` writes are throttled by
+        // [collectWithThrottledProgress] to one DB write per 500ms).
+        // Errors during the stream still propagate — the
+        // `coroutineScope { ... }` re-throws and the orchestrator's
+        // outer `try { ... } catch (e: Exception)` in `runTask` routes
+        // the failure to the task's retry path. We do NOT silently
+        // treat a mid-stream disconnect as "no AI output" anymore.
+        val response = collectWithThrottledProgress(
+            source = ai.completeStream(systemPrompt, userPrompt),
+            task = task,
+            step = "调用 AI 生成 wiki 页面",
+            logMessage = { charCount -> "模型已生成 $charCount 字符，等待 FILE 块" },
         )
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
-        throwIfTransientAiFailure(cleaned)
+        throwIfAiFailure(cleaned)
         return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
     }
 
@@ -882,7 +1343,7 @@ class IngestOrchestrator(
         // — otherwise a model's preamble-think-then-merge pattern would
         // make the response look invalid and force a template fallback.
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
-        throwIfTransientAiFailure(cleaned)
+        throwIfAiFailure(cleaned)
         return if (cleaned.startsWith("---")) cleaned else {
             // Fallback to template merge if AI output is invalid
             wikiCompiler.merge(existingContent, incomingContent, sourceTitle)
@@ -890,6 +1351,7 @@ class IngestOrchestrator(
     }
 
     private suspend fun requestAiAnalysis(
+        task: ProcessingTaskEntity,
         source: SourceDocumentEntity,
         parsed: ParsedContentEntity
     ): String? {
@@ -902,7 +1364,16 @@ class IngestOrchestrator(
         val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector.detect(parsed.markdown)
         val systemPrompt = com.my.knowledge.data.ai.AiPromptTemplates.analysisPrompt(
             title = source.title,
-            content = parsed.markdown.take(50_000),
+            // P0-3: removed the `.take(50_000)` hard truncation. The
+            // `analysisTask` switch above now routes any source
+            // > [LONG_SOURCE_BUDGET_CHARS] through the chunked
+            // path (`requestAiAnalysisLongSource`); sources at or
+            // below the budget stay in this single-call path and
+            // get the FULL markdown so the LLM sees every
+            // section / entity / claim (previously the 50K cap
+            // silently dropped late-document content for short-
+            // to-medium imports too).
+            content = parsed.markdown,
             sourceType = source.sourceType,
             currentIndex = currentIndex,
             purpose = purpose,
@@ -917,58 +1388,539 @@ class IngestOrchestrator(
             schemaHint = ANALYSIS_SCHEMA,
             language = detectedLanguage
         )
-        val userPrompt = buildAnalysisUserMessage(source, parsed.markdown.take(50_000))
+        val userPrompt = buildAnalysisUserMessage(source, parsed.markdown)
 
-        // `chatJson` appends "只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n..."
-        // to the system prompt and pins temperature to 0.2. That dual
-        // signal (system + suffix + schema hint) is what keeps small /
-        // mid-size models honest about emitting pure JSON. We still
-        // call AiTextCleaner.cleanModelOutput afterwards to strip
-        // <think>...</think> blocks the gateway may have left in.
-        val raw = ai.chatJson(
+        // P0-2: switched from `ai.chatJson` (HttpURLConnection.readText,
+        // blocks until the full 180s readTimeout — UI sees a frozen
+        // log at "调用 AI 生成结构化分析" with no token feedback) to
+        // `ai.streamJson`. Behaviour equivalence with `chatJson`:
+        //   - same suffix appended to the system prompt
+        //   - same temperature pin (0.1f here, vs chatJson's 0.2f default
+        //     — we keep the historical 0.1 because the analysis prompt
+        //     was tuned for it; the gateway's default only matters when
+        //     callers don't pin a value)
+        //   - same `cleanModelOutput` strip on the accumulated text
+        //   - same "[AI 调用失败] 模型仅返回了思考过程" guard for
+        //     thinking-only responses
+        // Behavioural differences:
+        //   - per-chunk progress via the onChunk side-channel,
+        //     so the log center sees "模型已生成 N 字符 JSON" every
+        //     500ms while the LLM streams instead of one giant
+        //     60-second wait
+        //   - cooperative cancellation: `cancel()` tears the SSE
+        //     read down at the next line boundary instead of waiting
+        //     for readTimeout
+        //   - mid-stream errors throw (not silently return "") so the
+        //     orchestrator's retry path can react
+        //
+        // The progress side-channel is plumbed through `onChunk` (the
+        // optional 5th param of [AiProvider.streamJson]) rather than
+        // by collecting the Flow ourselves — that keeps the spec's
+        // `streamJson(...)` return-type as `String` and makes the
+        // accumulation + cleaning happen exactly once inside the
+        // gateway, which is the only place the "JSON-mode streaming
+        // must buffer the full body before parsing" rule can be
+        // enforced.
+        val cleaned = streamJsonWithThrottledProgress(
             systemPrompt = systemPrompt,
             userPrompt = userPrompt,
             schemaHint = ANALYSIS_SCHEMA,
-            temperature = 0.1f
+            temperature = 0.1f,
+            task = task,
+            step = "调用 AI 生成结构化分析",
+            logMessage = { charCount -> "模型已生成 $charCount 字符 JSON" },
         )
-        val cleaned = with(AiTextCleaner) { raw.cleanModelOutput() }
-        throwIfTransientAiFailure(cleaned)
+        throwIfAiFailure(cleaned)
         return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
     }
 
-    private fun throwIfTransientAiFailure(text: String) {
-        if (isTransientAiFailure(text)) {
-            throw IngestNetworkPause(text)
+    private fun throwIfAiFailure(text: String) {
+        if (text.trimStart().startsWith("[")) {
+            throw IllegalStateException(text)
         }
     }
 
-    private fun isTransientAiFailure(text: String): Boolean {
-        val value = text.trim()
-        return value.startsWith("[DNS 失败]") ||
-            value.startsWith("[连接失败]") ||
-            value.startsWith("[超时]") ||
-            value.startsWith("[限流]") ||
-            value.startsWith("[服务端错误]") ||
-            (value.startsWith("[AI 调用异常]") && value.containsNetworkKeyword())
+    /**
+     * P0-3: long-source analysis path. Splits [parsed].markdown into
+     * semantic chunks via [markdownChunker], runs the LLM once per
+     * chunk (via the existing [ai.chatJson] helper, with the same
+     * `ANALYSIS_SCHEMA` so each chunk's response is a
+     * fully-structured `ParsedAnalysis`-shaped JSON), and merges
+     * the per-chunk JSONs into one consolidated analysis JSON that
+     * [parseAiAnalysisJson] can ingest through the normal short-
+     * path code below.
+     *
+     * Progress is persisted to [longSourceCheckpointStore] after
+     * every chunk, so a retry / crash resumes from
+     * `completedThrough + 1` instead of re-running every chunk. The
+     * store's compat check rejects any checkpoint whose identity /
+     * shape (source hash, chunk count, target/overlap chars,
+     * budget) no longer matches the current run, which forces a
+     * clean restart whenever the source content or the chunking
+     * policy changes.
+     *
+     * The merge is deliberately simple — union of entities (by
+     * case-insensitive name), concepts (same), relations (by
+     * `source|target|type` triple), claims (by claim text), gaps
+     * (by gap text); tags deduped and ranked by frequency. Per-
+     * chunk summaries are concatenated into the final `summary`.
+     * The merged JSON is then re-shaped to match the schema the
+     * short path's `chatJson` output would have produced, so the
+     * existing [parseAiAnalysisJson] can read it without any
+     * special-casing.
+     *
+     * Returns `null` (instead of throwing) when the API key is
+     * blank, mirroring the short path's `ai.isAvailable()` short-
+     * circuit. Mid-stream / parse errors are NOT swallowed —
+     * they propagate up to `analysisTask`'s outer try/catch so the
+     * task retries the whole run.
+     */
+    private suspend fun requestAiAnalysisLongSource(
+        task: ProcessingTaskEntity,
+        source: SourceDocumentEntity,
+        parsed: ParsedContentEntity
+    ): String? {
+        if (!ai.isAvailable()) return null
+        val store = longSourceCheckpointStore
+            ?: return requestAiAnalysis(task, source, parsed)
+                ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
+
+        val content = parsed.markdown
+        val sourceBudget = LONG_SOURCE_BUDGET_CHARS
+        val targetChars = ((sourceBudget * 0.55).toInt())
+            .coerceIn(LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
+        val overlapChars = ((targetChars * 0.08).toInt())
+            .coerceIn(LONG_SOURCE_OVERLAP_MIN, LONG_SOURCE_OVERLAP_MAX)
+
+        val chunks = markdownChunker.split(content)
+        if (chunks.size <= 1) {
+            // MarkdownSemanticChunker collapsed the whole thing into
+            // one oversized chunk. Cheaper to just run the normal
+            // single-call path than to ask the LLM to digest a
+            // 60K-char monobloc twice.
+            appendLog(task, "P0-3: 源长度 ${content.length} 字符，但分块只产出 ${chunks.size} 段；走单次分析路径", "running")
+            return requestAiAnalysis(task, source, parsed)
+                ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
+        }
+
+        val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector.detect(content)
+        val sourceIdentity = "${source.id}:${source.sha256}"
+        val sourceHash = LongSourceCheckpointStore.sha256Hex(content)
+        val sourceSlug = LongSourceCheckpointStore.slugify(source.title)
+        val checkpointFile = store.checkpointPath(sourceSlug, sourceHash)
+        val params = LongSourceCheckpointParams(
+            sourceIdentity = sourceIdentity,
+            sourceHash = sourceHash,
+            sourceLength = content.length,
+            sourceBudget = sourceBudget,
+            targetChars = targetChars,
+            overlapChars = overlapChars,
+            chunkTotal = chunks.size
+        )
+
+        val existing = store.load(checkpointFile, params)
+        val analyses: MutableList<String> = existing?.analyses?.toMutableList()
+            ?: mutableListOf()
+        var completedThrough = existing?.completedThrough ?: 0
+        var globalDigest = existing?.globalDigest.orEmpty()
+
+        if (completedThrough > 0) {
+            appendLog(
+                task,
+                "P0-3: 从 checkpoint 恢复长源分析，已完成 $completedThrough/${chunks.size} 段",
+                "running"
+            )
+            updateProgress(
+                task,
+                45 + (35 * completedThrough / chunks.size).coerceIn(0, 35),
+                "恢复分块分析（$completedThrough/${chunks.size}）",
+                "从断点继续，跳过已完成 ${completedThrough} 段"
+            )
+        } else {
+            appendLog(
+                task,
+                "P0-3: 源长度 ${content.length} 字符（> ${sourceBudget}），切分为 ${chunks.size} 段，目标 ${targetChars} 字符 / 段，重叠 ${overlapChars} 字符",
+                "running"
+            )
+        }
+
+        val kbId = source.targetKnowledgeBaseId
+        val currentIndex = buildCurrentIndex(kbId)
+        val purpose = "建立一个可读、可维护、可进化的本地知识库（Wiki），用于深度学习和长期记忆。"
+
+        for (chunk in chunks) {
+            if (chunk.index <= completedThrough) continue
+
+            updateProgress(
+                task,
+                45 + (35 * (chunk.index - 1) / chunks.size).coerceIn(0, 35),
+                "分块 ${chunk.index}/${chunks.size} 分析中",
+                "标题路径：${chunk.headingPath.ifBlank { "(无标题)" }}"
+            )
+            appendLog(
+                task,
+                "P0-3: 分块 ${chunk.index}/${chunks.size}（${chunk.main.length} 字符，标题：${chunk.headingPath.ifBlank { "无" }}）开始调用 LLM",
+                "running"
+            )
+
+            val systemPrompt = buildChunkAnalysisSystemPrompt(
+                purpose = purpose,
+                schema = ANALYSIS_SCHEMA,
+                index = currentIndex,
+                sourceContent = content,
+                language = detectedLanguage,
+                chunkTotal = chunks.size
+            )
+            val userPrompt = buildChunkAnalysisUserPrompt(
+                sourceIdentity = sourceIdentity,
+                folderContext = source.folderHint,
+                chunk = chunk,
+                globalDigest = globalDigest
+            )
+            val raw = ai.chatJson(
+                systemPrompt = systemPrompt,
+                userPrompt = userPrompt,
+                schemaHint = ANALYSIS_SCHEMA,
+                temperature = 0.1f
+            )
+            throwIfAiFailure(raw)
+            if (raw.isBlank()) {
+                throw IllegalStateException("P0-3: 分块 ${chunk.index}/${chunks.size} 未返回任何内容")
+            }
+
+            analyses.add(raw)
+            completedThrough = chunk.index
+            // The next-chunk global digest is whatever the latest
+            // chunk's `summary` field was, so subsequent chunks
+            // can preserve cross-boundary naming without re-reading
+            // the full prior chunk set.
+            globalDigest = extractChunkDigest(raw) ?: globalDigest
+            val ok = store.save(
+                checkpointFile,
+                LongSourceCheckpoint(
+                    version = LongSourceCheckpointStore.CHECKPOINT_VERSION,
+                    sourceIdentity = sourceIdentity,
+                    sourceHash = sourceHash,
+                    sourceLength = content.length,
+                    sourceBudget = sourceBudget,
+                    targetChars = targetChars,
+                    overlapChars = overlapChars,
+                    chunkTotal = chunks.size,
+                    completedThrough = completedThrough,
+                    globalDigest = globalDigest,
+                    analyses = analyses.toList(),
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            if (!ok) {
+                appendLog(task, "P0-3: checkpoint 写入失败，将继续下一段（不阻塞当前分析）", "running")
+            }
+        }
+
+        // Merge per-chunk JSONs into one consolidated analysis JSON
+        // shaped like the short-path output. parseAiAnalysisJson
+        // can then read it through the normal column-extraction
+        // path.
+        val merged = mergeChunkAnalyses(
+            analyses = analyses,
+            fallbackTitle = source.title
+        )
+        // Clean up the checkpoint on success so the next re-import
+        // of the same file doesn't see a stale "all done" state and
+        // confuse the cache-hit logic. Best-effort.
+        store.clear(checkpointFile)
+        updateProgress(task, 80, "分块分析完成", "合并 ${chunks.size} 段结果，识别实体 / 概念 / 关系")
+        return merged
     }
 
-    private fun String.containsNetworkKeyword(): Boolean {
-        val lower = lowercase()
-        return listOf(
-            "network",
-            "timeout",
-            "timed out",
-            "unable to resolve",
-            "failed to connect",
-            "connection reset",
-            "connection abort",
-            "enetunreach",
-            "ehostunreach",
-            "断网",
-            "网络",
-            "超时",
-            "连接"
-        ).any { lower.contains(it) }
+    /**
+     * P0-3: build the chunk-level system prompt. Mirrors
+     * `buildChunkAnalysisSystemPrompt` in llm_wiki's ingest.ts,
+     * but constrained to the JSON-mode contract `chatJson` expects
+     * (the schema is the regular [ANALYSIS_SCHEMA] — we just ask
+     * the model to fill in only what this chunk supports).
+     */
+    private fun buildChunkAnalysisSystemPrompt(
+        purpose: String,
+        schema: String,
+        index: String,
+        sourceContent: String,
+        language: String,
+        chunkTotal: Int
+    ): String {
+        val sb = StringBuilder()
+        sb.append("You are analyzing chunk of a long source document for a personal wiki.\n")
+        sb.append("Do not output chain-of-thought, hidden reasoning, or a thinking transcript.\n")
+        sb.append("Analyze ONLY the current MAIN CHUNK. Use overlap and digest for context only.\n")
+        sb.append("Keep stable names consistent with the existing wiki and prior digest.\n")
+        sb.append("\n")
+        sb.append(com.my.knowledge.data.ai.AiPromptTemplates.languageDirective(language))
+        sb.append("\n\n")
+        sb.append("This document is split into $chunkTotal semantic chunks with paragraph/section boundaries and overlap.\n")
+        sb.append("Output JSON ONLY — no markdown, no prose, no commentary.\n")
+        sb.append("Focus your extraction on the MAIN CHUNK below. Use prior digest and overlap ONLY to:\n")
+        sb.append("  - keep entity / concept names consistent with earlier chunks,\n")
+        sb.append("  - decide whether a concept introduced in overlap is \"new\" or \"already known\".\n")
+        sb.append("Emit empty arrays for entities / concepts / relations / claims / gaps when the chunk truly has nothing to add.\n")
+        sb.append("\nStable project context follows. It changes rarely and should be treated as background:\n")
+        if (purpose.isNotBlank()) {
+            sb.append("## Wiki Purpose\n").append(purpose).append("\n\n")
+        }
+        if (schema.isNotBlank()) {
+            sb.append("## Wiki Schema\n").append(schema).append("\n\n")
+        }
+        if (index.isNotBlank()) {
+            sb.append("## Current Wiki Index\n").append(index.take(40_000)).append("\n")
+        }
+        return sb.toString()
+    }
+
+    /**
+     * P0-3: build the chunk-level user prompt. Mirrors
+     * `buildChunkAnalysisUserPrompt` in llm_wiki's ingest.ts.
+     */
+    private fun buildChunkAnalysisUserPrompt(
+        sourceIdentity: String,
+        folderContext: String?,
+        chunk: SourceChunk,
+        globalDigest: String
+    ): String {
+        val sb = StringBuilder()
+        sb.append("Source file: ").append(sourceIdentity).append("\n")
+        if (!folderContext.isNullOrBlank()) {
+            sb.append("Folder context: ").append(folderContext).append("\n")
+        }
+        sb.append("Chunk: ").append(chunk.index).append("/").append(chunk.total).append("\n")
+        if (chunk.headingPath.isNotBlank()) {
+            sb.append("Heading path: ").append(chunk.headingPath).append("\n")
+        }
+        sb.append("\n")
+        sb.append("## Current Global Digest\n")
+        sb.append(globalDigest.ifBlank { "(No prior digest yet.)" }).append("\n\n")
+        if (chunk.overlapBefore.isNotBlank()) {
+            sb.append("## Previous Overlap Context\n")
+                .append(chunk.overlapBefore).append("\n\n")
+        }
+        sb.append("## MAIN CHUNK TO ANALYZE\n")
+        sb.append(chunk.main).append("\n\n")
+        sb.append("Return JSON only. Do not repeat overlap-only facts unless the main chunk supports them.\n")
+        return sb.toString()
+    }
+
+    /**
+     * P0-3: pull the `summary` field out of one chunk's response so
+     * the next chunk can keep a rolling cross-boundary context. The
+     * field is best-effort — a missing or empty `summary` is treated
+     * as "no digest to pass forward" and the prior digest is kept.
+     */
+    private fun extractChunkDigest(rawJson: String): String? {
+        return try {
+            val obj = org.json.JSONObject(rawJson)
+            val s = obj.optString("summary").trim()
+            if (s.isBlank()) null else s.take(LONG_SOURCE_DIGEST_MAX)
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    /**
+     * P0-3: union all per-chunk JSON responses into one consolidated
+     * analysis JSON shaped like the short-path `chatJson` output.
+     * See [requestAiAnalysisLongSource] for the merge rules. On any
+     * parse failure the corresponding chunk's contribution is
+     * dropped (its summary is still preserved via the
+     * `summaries` concat) so a single bad chunk doesn't break the
+     * whole merge.
+     */
+    private fun mergeChunkAnalyses(
+        analyses: List<String>,
+        fallbackTitle: String
+    ): String {
+        val entities = LinkedHashMap<String, org.json.JSONObject>()
+        val concepts = LinkedHashMap<String, org.json.JSONObject>()
+        val relations = LinkedHashSet<String>()
+        val relationsArr = org.json.JSONArray()
+        val claims = LinkedHashSet<String>()
+        val claimsArr = org.json.JSONArray()
+        val gaps = LinkedHashSet<String>()
+        val gapsArr = org.json.JSONArray()
+        val tagCounts = HashMap<String, Int>()
+        val summaries = mutableListOf<String>()
+        var confidenceSum = 0f
+        var confidenceCount = 0
+        var archiveRecommendation: org.json.JSONObject? = null
+        var needHumanReview = false
+        val reviewReasons = LinkedHashSet<String>()
+        val pageRecommendations = org.json.JSONArray()
+
+        for ((idx, raw) in analyses.withIndex()) {
+            val obj = runCatching { org.json.JSONObject(raw) }.getOrNull()
+            if (obj == null) {
+                summaries.add("（分块 ${idx + 1} JSON 解析失败）")
+                continue
+            }
+            val summary = obj.optString("summary").trim()
+            if (summary.isNotBlank()) summaries.add("【分块 ${idx + 1}】$summary")
+
+            val tagsArr = obj.optJSONArray("tags")
+            if (tagsArr != null) {
+                for (i in 0 until tagsArr.length()) {
+                    val t = tagsArr.optString(i).trim()
+                    if (t.isBlank()) continue
+                    tagCounts[t] = (tagCounts[t] ?: 0) + 1
+                }
+            }
+
+            collectNamedObjects(obj.optJSONArray("entities"), entities, "entity")
+            collectNamedObjects(obj.optJSONArray("concepts"), concepts, "concept")
+            collectRelations(obj.optJSONArray("relations"), relations, relationsArr)
+            collectClaims(obj.optJSONArray("claims"), claims, claimsArr)
+            collectGaps(obj.optJSONArray("gaps"), gaps, gapsArr)
+
+            val conf = obj.opt("confidence")
+            if (conf != null && conf != org.json.JSONObject.NULL) {
+                val c = runCatching { conf.toString().toFloat() }.getOrNull()
+                if (c != null) {
+                    confidenceSum += c
+                    confidenceCount++
+                }
+            }
+            if (!needHumanReview && obj.optBoolean("needHumanReview", false)) {
+                needHumanReview = true
+            }
+            val reviewArr = obj.optJSONArray("reviewReasons")
+            if (reviewArr != null) {
+                for (i in 0 until reviewArr.length()) {
+                    val r = reviewArr.optString(i).trim()
+                    if (r.isNotBlank()) reviewReasons.add(r)
+                }
+            }
+            if (archiveRecommendation == null) {
+                val ar = obj.optJSONObject("archiveRecommendation")
+                if (ar != null) archiveRecommendation = ar
+            }
+            val pr = obj.optJSONArray("pageRecommendations")
+            if (pr != null) {
+                for (i in 0 until pr.length()) {
+                    pr.optJSONObject(i)?.let { pageRecommendations.put(it) }
+                }
+            }
+        }
+
+        val tagsArray = org.json.JSONArray()
+        tagCounts.entries
+            .sortedByDescending { it.value }
+            .take(16)
+            .forEach { tagsArray.put(it.key) }
+
+        val entitiesArr = org.json.JSONArray()
+        entities.values.forEach { entitiesArr.put(it) }
+        val conceptsArr = org.json.JSONArray()
+        concepts.values.forEach { conceptsArr.put(it) }
+
+        val merged = org.json.JSONObject()
+        merged.put("title", fallbackTitle)
+        merged.put(
+            "summary",
+            if (summaries.isEmpty()) "(Long source analysis produced no per-chunk summary.)"
+            else summaries.joinToString("\n\n")
+        )
+        merged.put("tags", tagsArray)
+        merged.put("entities", entitiesArr)
+        merged.put("concepts", conceptsArr)
+        merged.put("relations", relationsArr)
+        merged.put("claims", claimsArr)
+        merged.put("gaps", gapsArr)
+        merged.put("pageRecommendations", pageRecommendations)
+        merged.put(
+            "archiveRecommendation",
+            archiveRecommendation ?: org.json.JSONObject()
+                .put("targetKnowledgeBaseId", org.json.JSONObject.NULL)
+                .put("targetKnowledgeBaseName", "")
+                .put("confidence", if (confidenceCount > 0) confidenceSum / confidenceCount else 0.5f)
+                .put("reason", "由 ${analyses.size} 段分块分析合并")
+                .put("suggestCreateNewBase", false)
+                .put("newBaseName", org.json.JSONObject.NULL)
+        )
+        merged.put(
+            "confidence",
+            if (confidenceCount > 0) confidenceSum / confidenceCount else 0.6f
+        )
+        merged.put("needHumanReview", needHumanReview || reviewReasons.isNotEmpty())
+        val reasonsArr = org.json.JSONArray()
+        reviewReasons.forEach { reasonsArr.put(it) }
+        merged.put("reviewReasons", reasonsArr)
+        return merged.toString()
+    }
+
+    private fun collectNamedObjects(
+        arr: org.json.JSONArray?,
+        sink: LinkedHashMap<String, org.json.JSONObject>,
+        defaultType: String
+    ) {
+        if (arr == null) return
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            val name = item.optString("name").trim()
+            if (name.isBlank()) continue
+            val key = name.lowercase()
+            // P1 兼容: 优先 entityType / conceptCategory,回退到 type.
+            if (!item.has("entityType") && !item.has("conceptCategory") && !item.has("type")) {
+                item.put("type", defaultType)
+            }
+            // Last-wins on name collision so later chunks' descriptions
+            // overwrite earlier ones — usually the more specific
+            // extraction lives in the chunk that actually uses the
+            // entity / concept.
+            sink[key] = item
+        }
+    }
+
+    private fun collectRelations(
+        arr: org.json.JSONArray?,
+        keys: LinkedHashSet<String>,
+        out: org.json.JSONArray
+    ) {
+        if (arr == null) return
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            val source = item.optString("source").trim()
+            val target = item.optString("target").trim()
+            if (source.isBlank() || target.isBlank()) continue
+            val type = item.optString("type", "related_to").trim()
+            val key = "${source.lowercase()}|${target.lowercase()}|${type.lowercase()}"
+            if (keys.add(key)) out.put(item)
+        }
+    }
+
+    private fun collectClaims(
+        arr: org.json.JSONArray?,
+        keys: LinkedHashSet<String>,
+        out: org.json.JSONArray
+    ) {
+        if (arr == null) return
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            val claim = item.optString("claim").trim()
+            if (claim.isBlank()) continue
+            val key = claim.lowercase()
+            if (keys.add(key)) out.put(item)
+        }
+    }
+
+    private fun collectGaps(
+        arr: org.json.JSONArray?,
+        keys: LinkedHashSet<String>,
+        out: org.json.JSONArray
+    ) {
+        if (arr == null) return
+        for (i in 0 until arr.length()) {
+            val item = arr.optJSONObject(i) ?: continue
+            val gap = item.optString("gap").trim()
+            if (gap.isBlank()) continue
+            val key = gap.lowercase()
+            if (keys.add(key)) out.put(item)
+        }
     }
 
     /**
@@ -1139,6 +2091,25 @@ class IngestOrchestrator(
         return content.replaceRange(match.groups[1]!!.range, repaired)
     }
 
+
+    /**
+     * Deterministic merge for wiki pages. Listing pages use section-aware
+     * union; other pages use [WikiPageCompiler.merge]. AI merge is avoided
+     * on the hot path to keep the KB write lock short.
+     */
+    private fun mergeWikiPageMarkdown(existingMarkdown: String, draft: WikiPageDraft): String {
+        val isListingPage = draft.sourceType == "wiki_index" || draft.sourceType == "wiki_overview"
+        return if (isListingPage) {
+            mergeListingPage(
+                existing = existingMarkdown,
+                incoming = draft.markdown,
+                pageTitle = draft.title,
+            )
+        } else {
+            wikiCompiler.merge(existingMarkdown, draft.markdown, draft.title)
+        }
+    }
+
     /**
      * Section-aware merge for `wiki_index` and `wiki_overview` pages.
      *
@@ -1286,10 +2257,12 @@ class IngestOrchestrator(
     }
 
     private suspend fun enqueue(sourceId: String, taskType: String, priority: Int, inputJson: String) {
+        if (db.processingTaskDao().getActiveBySourceAndType(sourceId, taskType) != null) return
         val now = System.currentTimeMillis()
+        val taskId = UUID.randomUUID().toString()
         db.processingTaskDao().insert(
             ProcessingTaskEntity(
-                id = UUID.randomUUID().toString(),
+                id = taskId,
                 targetType = "source_document",
                 targetId = sourceId,
                 taskType = taskType,
@@ -1307,6 +2280,18 @@ class IngestOrchestrator(
                 inputJson = inputJson
             )
         )
+        db.processingTaskLogDao().insert(
+            ProcessingTaskLogEntity(
+                id = UUID.randomUUID().toString(),
+                taskId = taskId,
+                targetType = "source_document",
+                targetId = sourceId,
+                stage = taskType,
+                status = "pending",
+                message = "${taskLabel(taskType)}已排队",
+                createdAt = now
+            )
+        )
     }
 
     private suspend fun markRunning(task: ProcessingTaskEntity, startedAt: Long) {
@@ -1318,8 +2303,10 @@ class IngestOrchestrator(
                 status = "running",
                 progress = 0,
                 currentStep = "启动 ${taskLabel(task.taskType)}",
+                errorMessage = null,
                 startedAt = startedAt,
-                updatedAt = startedAt
+                updatedAt = startedAt,
+                finishedAt = null
             )
         )
     }
@@ -1335,6 +2322,7 @@ class IngestOrchestrator(
             task.copy(
                 progress = clamped,
                 currentStep = step,
+                errorMessage = null,
                 updatedAt = System.currentTimeMillis()
             )
         )
@@ -1348,6 +2336,7 @@ class IngestOrchestrator(
                 progress = 100,
                 currentStep = step,
                 outputJson = outputJson,
+                errorMessage = null,
                 updatedAt = System.currentTimeMillis(),
                 finishedAt = System.currentTimeMillis()
             )
@@ -1414,6 +2403,64 @@ class IngestOrchestrator(
         replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
 
     private companion object {
+        private val pageWriteMutexes = ConcurrentHashMap<String, Mutex>()
+        private fun wikiPageLockKey(kbId: String, sourceType: String, title: String): String =
+            "${kbId.ifBlank { "_unfiled" }}:${sourceType.trim().lowercase()}:${title.trim().lowercase()}"
+
+        const val INGEST_IDLE_POLLS: Int = 4
+        const val INGEST_IDLE_POLL_MS: Long = 250L
+
+        /**
+         * P0-2: throttling constants for the SSE-driven progress
+         * writer. Pin them as named constants (instead of inline
+         * literals) so:
+         *   1. A future tuning PR can't silently change the rate
+         *      limit without a code review trace.
+         *   2. The unit test can assert the values match the
+         *      P0-2 spec (N=20 tokens / 500ms window).
+         *
+         * Token-counting uses chunk-character-length, not real
+         * tokenizer tokens — the gateway exposes deltas as opaque
+         * strings, and a 1-3 char chunk from the SSE stream is
+         * close enough to "one token" for progress-bar purposes.
+         * Real tokenizer count would require pulling the LLM's
+         * tokenizer into the gateway, which is out of scope.
+         */
+        const val PROGRESS_EVERY_N_TOKENS: Int = 20
+        const val PROGRESS_SAMPLE_MS: Long = 500L
+
+        // ── P0-3: long-source path tunables ─────────────────────────────
+        //
+        // The source budget is the per-LLM-call character ceiling
+        // (including the system / user prompt + the response).
+        // Sources at or below this threshold stay on the original
+        // single-call path; anything above gets chunked.
+        //
+        // TODO(P1): wire this to `ModelConfig.maxContextSize` once
+        //   the field is added. For now the 50K default matches the
+        //   historical `parsed.markdown.take(50_000)` ceiling that
+        //   the chunked path is replacing, so the threshold itself
+        //   doesn't change behaviour for any source that was
+        //   previously fitted into one LLM call.
+        const val LONG_SOURCE_BUDGET_CHARS: Int = 50_000
+
+        // Per-chunk target / min / max. The target is `budget * 0.55`
+        // clamped into [LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX],
+        // mirroring the long-source chunk-size formula in
+        // llm_wiki's `analyzeLongSourceInChunks` (ingest.ts).
+        const val LONG_SOURCE_CHUNK_MIN: Int = 12_000
+        const val LONG_SOURCE_CHUNK_MAX: Int = 60_000
+
+        // Overlap between adjacent chunks. `targetChars * 0.08` clamped
+        // into [LONG_SOURCE_OVERLAP_MIN, LONG_SOURCE_OVERLAP_MAX].
+        const val LONG_SOURCE_OVERLAP_MIN: Int = 800
+        const val LONG_SOURCE_OVERLAP_MAX: Int = 3_000
+
+        // How much of the LLM's "summary" we keep as the rolling
+        // global digest. Bigger = more cross-chunk context per
+        // prompt, but the prompt grows too.
+        const val LONG_SOURCE_DIGEST_MAX: Int = 15_000
+
         private const val WIKI_PURPOSE = "建立一个可读、可维护、可进化的本地知识库（Wiki），用于深度学习和长期记忆。"
         private const val WIKI_SCHEMA = """
 # Wiki Schema

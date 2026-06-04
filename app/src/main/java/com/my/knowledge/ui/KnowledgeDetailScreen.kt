@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -155,6 +156,21 @@ fun KnowledgeDetailScreen(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (!currentKbId.isNullOrBlank()) {
+                        TextButton(
+                            onClick = { onOpenIntermediate(currentKbId) },
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Hub,
+                                contentDescription = null,
+                                tint = Color(0xFF147EC5),
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("本库图谱", fontSize = 12.sp, color = Color(0xFF147EC5))
+                        }
+                    }
                     // In-place import. Always visible (not gated on
                     // selection mode) because the user can be browsing
                     // an empty list and still want to add the first

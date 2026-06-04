@@ -7,12 +7,14 @@ import androidx.lifecycle.viewmodel.CreationExtras
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
+import com.my.knowledge.data.processing.RebuildDebouncer
 import com.my.knowledge.data.repository.KnowledgeRepositoryImpl
 import com.my.knowledge.data.repository.NoteRepositoryImpl
 import com.my.knowledge.data.search.FtsSearchEngine
 import com.my.knowledge.domain.usecase.AutoSaveNoteUseCase
 import com.my.knowledge.domain.usecase.CreateNoteUseCase
 import com.my.knowledge.domain.usecase.DeleteSourceUseCase
+import com.my.knowledge.domain.usecase.DeleteSourceLogUseCase
 import com.my.knowledge.domain.usecase.ImportSourceUseCase
 import com.my.knowledge.viewmodel.*
 
@@ -20,6 +22,7 @@ object DependencyProvider {
     private var database: AppDatabase? = null
     private var fileStore: LocalFileStore? = null
     private var scheduler: ProcessingTaskScheduler? = null
+    private var rebuildDebouncer: RebuildDebouncer? = null
 
     fun provideDatabase(context: Context): AppDatabase {
         return database ?: AppDatabase.getInstance(context).also { database = it }
@@ -30,7 +33,27 @@ object DependencyProvider {
     }
     
     fun provideScheduler(context: Context): ProcessingTaskScheduler {
-        return scheduler ?: ProcessingTaskScheduler(context.applicationContext).also { scheduler = it }
+        val existing = scheduler
+        if (existing != null) return existing
+        // P0-1: wire the debouncer into the scheduler so
+        // `scheduleThreadUpdate` no longer enqueues a second
+        // `rebuildGraphForBase` per ingest.
+        val debouncer = provideRebuildDebouncer(context)
+        return ProcessingTaskScheduler(
+            context.applicationContext,
+            rebuildDebouncer = debouncer,
+        ).also { scheduler = it }
+    }
+
+    fun provideRebuildDebouncer(context: Context): RebuildDebouncer {
+        val existing = rebuildDebouncer
+        if (existing != null) return existing
+        val appContext = context.applicationContext
+        val debouncer = RebuildDebouncer(
+            db = provideDatabase(appContext),
+            repository = provideKnowledgeRepository(appContext),
+        )
+        return debouncer.also { rebuildDebouncer = it }
     }
 
     fun provideNoteRepository(context: Context) = NoteRepositoryImpl(
@@ -67,6 +90,7 @@ object DependencyProvider {
         provideDatabase(context).sourceDocumentDao(),
         provideDatabase(context).knowledgeItemDao(),
         provideDatabase(context).processingTaskDao(),
+        provideDatabase(context).processingTaskLogDao(),
         provideScheduler(context)
     )
 
@@ -74,6 +98,9 @@ object DependencyProvider {
         provideDatabase(context),
         provideFileStore(context)
     )
+
+    fun provideDeleteSourceLogUseCase(context: Context) =
+        DeleteSourceLogUseCase.fromDatabase(provideDatabase(context))
 }
 
 val ViewModelFactory = object : ViewModelProvider.Factory {
@@ -140,7 +167,8 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                     DependencyProvider.provideDatabase(context).processingTaskDao(),
                     knowledgeRepo,
                     DependencyProvider.provideScheduler(context),
-                    DependencyProvider.provideDeleteSourceUseCase(context)
+                    DependencyProvider.provideDeleteSourceUseCase(context),
+                    DependencyProvider.provideDeleteSourceLogUseCase(context)
                 ) as T
             }
             modelClass.isAssignableFrom(KnowledgeItemDetailViewModel::class.java) -> {

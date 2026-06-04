@@ -445,11 +445,16 @@ private fun StageRow(label: String, status: String, message: String?) {
         Column {
             Text(label, fontSize = 12.sp, color = if (status == "pending") Color(0xFFA3A3A3) else Color(0xFF0F172A))
             if (!message.isNullOrBlank()) {
-                Text(message, fontSize = 11.sp, color = Color(0xFF5F87A3))
+                Text(displayTaskMessage(message), fontSize = 11.sp, color = Color(0xFF5F87A3))
             }
         }
     }
 }
+
+private fun displayTaskMessage(message: String): String =
+    message
+        .replace("网络波动，已暂停", "远端调用失败，已进入重试")
+        .replace("联网后继续", "稍后继续")
 
 @Composable
 private fun StatusDot(status: String) {

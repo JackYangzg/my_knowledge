@@ -18,7 +18,11 @@ class IngestWorker(
                 db = AppDatabase.getInstance(applicationContext),
                 fileStore = LocalFileStore(applicationContext),
                 repository = DependencyProvider.provideKnowledgeRepository(applicationContext),
-                scheduler = DependencyProvider.provideScheduler(applicationContext)
+                scheduler = DependencyProvider.provideScheduler(applicationContext),
+                // P0-1: the orchestrator hands the four post-write
+                // rebuilds to the debouncer (off the KB write lock,
+                // per-KB debounce, Dispatchers.IO).
+                rebuildDebouncer = DependencyProvider.provideRebuildDebouncer(applicationContext),
             ).runUntilIdle()
             Result.success()
         } catch (e: Exception) {

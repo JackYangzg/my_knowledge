@@ -9,6 +9,7 @@ import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
+import com.my.knowledge.domain.usecase.DeleteSourceLogUseCase
 import com.my.knowledge.domain.usecase.DeleteSourceUseCase
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +29,8 @@ class ImportCenterViewModel(
     private val taskDao: ProcessingTaskDao,
     private val knowledgeRepository: KnowledgeRepository,
     private val scheduler: ProcessingTaskScheduler,
-    private val deleteSourceUseCase: DeleteSourceUseCase
+    private val deleteSourceUseCase: DeleteSourceUseCase,
+    private val deleteSourceLogUseCase: DeleteSourceLogUseCase
 ) : ViewModel() {
     val rows: StateFlow<List<ImportCenterRow>> = combine(
         sourceDao.observeAll(),
@@ -79,7 +81,14 @@ class ImportCenterViewModel(
 
     fun cancelTask(taskId: String) {
         viewModelScope.launch {
+            val task = knowledgeRepository.getProcessingTask(taskId)
+            val shouldStopIngest = task?.status == "running" && task.isIngestTask()
+            if (shouldStopIngest) scheduler.cancelIngestQueue()
             knowledgeRepository.cancelTask(taskId)
+            if (shouldStopIngest) {
+                knowledgeRepository.resetInterruptedRunningTasks(taskId)
+                scheduler.scheduleIngestQueue()
+            }
         }
     }
 
@@ -91,4 +100,20 @@ class ImportCenterViewModel(
             }
         }
     }
+
+    fun deleteSourceLog(sourceId: String) {
+        viewModelScope.launch {
+            val shouldStopIngest = taskDao.getBySourceDocument(sourceId)
+                .any { it.status == "running" && it.isIngestTask() }
+            if (shouldStopIngest) scheduler.cancelIngestQueue()
+            deleteSourceLogUseCase.deleteSourceLog(sourceId)
+            if (shouldStopIngest) {
+                knowledgeRepository.resetInterruptedRunningTasks()
+                scheduler.scheduleIngestQueue()
+            }
+        }
+    }
 }
+
+private fun ProcessingTaskEntity.isIngestTask(): Boolean =
+    sourceId != null || targetType == "source_document"

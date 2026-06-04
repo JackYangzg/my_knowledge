@@ -1,6 +1,7 @@
 package com.my.knowledge.data.processing
 
 import android.content.Context
+import android.util.Log
 import androidx.work.*
 import com.my.knowledge.worker.ArchiveRecommendWorker
 import com.my.knowledge.worker.IngestWorker
@@ -8,8 +9,21 @@ import com.my.knowledge.worker.LlmInspirationThreadWorker
 import com.my.knowledge.worker.SummaryWorker
 import com.my.knowledge.worker.TagWorker
 import com.my.knowledge.worker.ThreadEvolutionWorker
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
-class ProcessingTaskScheduler(context: Context) {
+class ProcessingTaskScheduler(
+    context: Context,
+    /**
+     * Optional debouncer that the P0-1 thread-update path delegates
+     * to. When present, [scheduleThreadUpdate] becomes a fire-and-
+     * forget ping into the debouncer (no WorkManager unique work,
+     * no enqueue). When null, the method falls back to the legacy
+     * WorkManager enqueue so the public API still works for any
+     * host that hasn't wired a debouncer yet.
+     */
+    private val rebuildDebouncer: RebuildDebouncer? = null,
+) {
     private val appContext = context.applicationContext
 
     fun scheduleFullPipeline(itemId: String) {
@@ -46,7 +60,29 @@ class ProcessingTaskScheduler(context: Context) {
          .enqueue()
     }
 
+    /**
+     * P0-1: delegates to the [RebuildDebouncer] when one is wired
+     * up. Falls back to the legacy `OneTimeWorkRequest` enqueue if
+     * the host hasn't installed a debouncer (back-compat for tests
+     * and ad-hoc callers).
+     *
+     * The previous WorkManager enqueue fired a SECOND `rebuildGraphForBase`
+     * per ingest — once inside the orchestrator's KB write lock and
+     * once again from inside the [com.my.knowledge.worker.ThreadEvolutionWorker]
+     * it scheduled. Going through the debouncer collapses both
+     * rebuilds into one debounced run on `Dispatchers.IO`.
+     */
     fun scheduleThreadUpdate(kbId: String) {
+        val debouncer = rebuildDebouncer
+        if (debouncer != null) {
+            debouncer.scheduleThreadEvolution(kbId)
+            return
+        }
+        Log.d(
+            "ProcessingTaskScheduler",
+            "scheduleThreadUpdate($kbId) falling back to WorkManager (no debouncer wired). " +
+                "P0-1 path expects DependencyProvider to install a RebuildDebouncer."
+        )
         val workManager = WorkManager.getInstance(appContext)
         val request = OneTimeWorkRequestBuilder<ThreadEvolutionWorker>()
             .setInputData(workDataOf("knowledgeBaseId" to kbId))
@@ -66,7 +102,7 @@ class ProcessingTaskScheduler(context: Context) {
      *
      * @param kbId         灵感知识库 id(目前固定 type="inspiration")
      * @param newItemId    本次新增的 inspiration knowledge_item id,
-     *                     worker 拿它去拉「本条灵感全文 + 关联到的 wiki 实体」
+     *                     worker 拿它去拉本条灵感全文
      * @param triggerType  "inspiration_added" | "inspiration_edited"
      */
     fun scheduleLlmThreadUpdate(
@@ -96,7 +132,7 @@ class ProcessingTaskScheduler(context: Context) {
         val request = OneTimeWorkRequestBuilder<IngestWorker>()
             .setConstraints(
                 Constraints.Builder()
-                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                    .setRequiredNetworkType(NetworkType.NOT_REQUIRED)
                     .build()
             )
             .build()
@@ -106,5 +142,11 @@ class ProcessingTaskScheduler(context: Context) {
             ExistingWorkPolicy.KEEP,
             request
         )
+    }
+
+    suspend fun cancelIngestQueue() {
+        withContext(Dispatchers.IO) {
+            WorkManager.getInstance(appContext).cancelUniqueWork("ingest_queue").result.get()
+        }
     }
 }

@@ -81,6 +81,15 @@ dependencies {
     // throw RuntimeException("Stub!") the moment they call
     // JSONArray(string).
     testImplementation(libs.json)
+    // P0-1: RebuildDebouncerTest uses kotlinx.coroutines.test
+    // (TestScope + virtual time) to verify per-KB debounce + failure
+    // isolation without spinning up the Room / WorkManager stack.
+    testImplementation(libs.kotlinx.coroutines.test)
+    // P0-2: AiGatewayStreamTest uses okhttp3 MockWebServer to drive
+    // SSE streaming responses through the real AiGateway.streamJson
+    // path, asserting cancellation, chunk accumulation, and parity
+    // with chatJson.
+    testImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
