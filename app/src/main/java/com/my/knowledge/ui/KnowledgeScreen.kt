@@ -21,9 +21,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.my.knowledge.R
 import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.ui.component.KnowledgeDigestSection
 import com.my.knowledge.ui.component.AskSheet
@@ -68,8 +70,8 @@ fun KnowledgeScreen(
         ) {
             item {
                 PageHeader(
-                    title = "知识库",
-                    hint = "少打扰，多沉淀",
+                    title = stringResource(R.string.auto_1dda51f9),
+                    hint = stringResource(R.string.auto_1fba2a48),
                     action = {
                         TextButton(
                             onClick = {
@@ -85,7 +87,7 @@ fun KnowledgeScreen(
                         ) {
                             Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("导入", fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.auto_60e2bcad), fontWeight = FontWeight.Bold)
                         }
                     }
                 )
@@ -99,10 +101,10 @@ fun KnowledgeScreen(
             }
 
             item {
-                Section(title = "我的知识库", more = "管理", onMoreClick = onOpenKbManage) {
+                Section(title = stringResource(R.string.auto_89858b21), more = stringResource(R.string.auto_4989b5cf), onMoreClick = onOpenKbManage) {
                     if (knowledgeBases.isEmpty()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                            Text("暂无知识库", color = Color(0xFFA3A3A3), fontSize = 14.sp)
+                            Text(stringResource(R.string.auto_1674dc8d), color = Color(0xFFA3A3A3), fontSize = 14.sp)
                         }
                     } else {
                         knowledgeBases.forEachIndexed { index, item ->
