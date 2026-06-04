@@ -539,12 +539,18 @@ class KnowledgeRepositoryImpl(
         // Relation blacklists are keyed by (fromEntityName, toEntityName)
         // because every rebuild mints fresh UUIDs for the entity rows; the
         // names are the only stable handle we have to recognise the pair.
-        val manuallyDeletedEntityKeys = graphDao.getAllEntitiesByKb(kbId)
+        // PERF-12: getAllEntitiesByKb was called twice (once for the
+        // manual-delete filter, once for the by-id map). Both lookups
+        // consume the same row set (the DAO returns all rows, no
+        // filter on `deletedAt`) — derive both views from a single
+        // SELECT so we don't pay 2x table-scan cost on a 1K+ entity
+        // graph rebuild.
+        val allEntitiesInKb = graphDao.getAllEntitiesByKb(kbId)
+        val manuallyDeletedEntityKeys = allEntitiesInKb
             .filter { it.deletedAt != null }
             .map { it.name.lowercase(Locale.ROOT) to it.type }
             .toSet()
-        val allEntitiesInKbByName = graphDao.getAllEntitiesByKb(kbId)
-            .associateBy { it.id }
+        val allEntitiesInKbByName = allEntitiesInKb.associateBy { it.id }
         val manuallyDeletedRelationKeys: Set<Pair<String, String>> = graphDao.getAllRelationsByKb(kbId)
             .filter { it.deletedAt != null }
             .mapNotNull { rel ->
