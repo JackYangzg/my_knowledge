@@ -27,15 +27,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.ui.ComposeMarkdown
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 /**
  * Result of a confirmed import. Caller decides what to do with it — the
@@ -71,6 +72,8 @@ fun ImportSheet(
     lockedKb: KnowledgeBaseEntity? = null
 ) {
     val context = LocalContext.current
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     val fileName = remember(uri) { getFileName(context, uri) ?: "未知文档" }
     var selectedLibrary by remember { mutableStateOf(lockedKb?.name ?: "未归类") }
     var expanded by remember { mutableStateOf(false) }
@@ -90,38 +93,58 @@ fun ImportSheet(
 
     ModalBottomSheet(
         onDismissRequest = onClose,
-        containerColor = Color.White,
-        dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFEEEEEE)) }
+        containerColor = palette.bgCard,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = palette.borderDefault) }
     ) {
         Column(
             modifier = Modifier
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp)
+                .padding(horizontal = spacing.xl)
+                .padding(bottom = spacing.xxxl)
         ) {
-            Text(stringResource(R.string.auto_f4cd0bec), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = stringResource(R.string.auto_f4cd0bec),
+                style = MaterialTheme.typography.titleLarge,
+                color = palette.textPrimary
+            )
+            Spacer(modifier = Modifier.height(spacing.lg))
 
             Surface(
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFFF7FBFF),
-                border = BorderStroke(1.dp, Color(0xFFDBEEFF))
+                shape = RoundedCornerShape(spacing.md),
+                color = palette.bgPage,
+                border = BorderStroke(1.dp, palette.borderBrand)
             ) {
                 Row(
-                    modifier = Modifier.padding(16.dp),
+                    modifier = Modifier.padding(spacing.lg),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.AutoMirrored.Filled.InsertDriveFile, contentDescription = null, tint = Color(0xFF147EC5))
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.InsertDriveFile,
+                        contentDescription = null,
+                        tint = palette.brand
+                    )
+                    Spacer(modifier = Modifier.width(spacing.md))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(fileName, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                        Text(stringResource(R.string.auto_36872c93), fontSize = 12.sp, color = Color(0xFF5F87A3))
+                        Text(
+                            text = fileName,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = palette.textPrimary
+                        )
+                        Text(
+                            text = stringResource(R.string.auto_36872c93),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = palette.textSecondary
+                        )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(20.dp))
-            Text(stringResource(R.string.auto_442d21cc), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF737373))
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(spacing.xl))
+            Text(
+                text = stringResource(R.string.auto_442d21cc),
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.textSecondary
+            )
+            Spacer(modifier = Modifier.height(spacing.sm))
 
             if (lockedKb != null) {
                 // Locked mode: render the destination as a non-interactive
@@ -130,25 +153,24 @@ fun ImportSheet(
                 // of being inside a KB is the import lands HERE.
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = Color(0xFFEFF7FF),
-                    border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+                    color = palette.brandSubtle,
+                    border = BorderStroke(1.dp, palette.borderBrand),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = spacing.md),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
                             text = lockedKb.name,
-                            fontSize = 14.sp,
-                            color = Color(0xFF0F172A),
-                            fontWeight = FontWeight.SemiBold,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = palette.textPrimary,
                             modifier = Modifier.weight(1f)
                         )
                         Text(
                             text = stringResource(R.string.auto_7edce8dc),
-                            fontSize = 11.sp,
-                            color = Color(0xFF147EC5)
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.brand
                         )
                     }
                 }
@@ -157,24 +179,32 @@ fun ImportSheet(
                     Surface(
                         onClick = { expanded = true },
                         shape = RoundedCornerShape(10.dp),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
+                        color = palette.bgCard,
+                        border = BorderStroke(1.dp, palette.borderDefault),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = spacing.md),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(selectedLibrary, fontSize = 14.sp, color = Color(0xFF262626))
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color(0xFFA3A3A3))
+                            Text(
+                                text = selectedLibrary,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = palette.textPrimary
+                            )
+                            Icon(
+                                imageVector = Icons.Default.ArrowDropDown,
+                                contentDescription = null,
+                                tint = palette.textTertiary
+                            )
                         }
                     }
 
                     DropdownMenu(
                         expanded = expanded,
                         onDismissRequest = { expanded = false },
-                        modifier = Modifier.background(Color.White).fillMaxWidth(0.85f)
+                        modifier = Modifier.background(palette.bgCard).fillMaxWidth(0.85f)
                     ) {
                         knowledgeBases.forEach { kb ->
                             DropdownMenuItem(
@@ -189,7 +219,7 @@ fun ImportSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(spacing.xxxl))
             Button(
                 onClick = {
                     val mimeType = context.contentResolver.getType(uri)
@@ -208,10 +238,14 @@ fun ImportSheet(
                     onClose()
                 },
                 modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
+                shape = RoundedCornerShape(spacing.md),
+                colors = ButtonDefaults.buttonColors(containerColor = palette.bgInverse)
             ) {
-                Text(stringResource(R.string.auto_3d048808), fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text(
+                    text = stringResource(R.string.auto_3d048808),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = palette.textOnBrand
+                )
             }
         }
     }
@@ -223,6 +257,8 @@ fun AskSheet(
     askViewModel: AskViewModel,
     onClose: () -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     val messages by askViewModel.messages.collectAsState()
     val isLoading by askViewModel.isLoading.collectAsState()
     val activeConversationId by askViewModel.activeConversationId.collectAsState()
@@ -239,13 +275,13 @@ fun AskSheet(
         onDismissRequest = onClose,
         sheetState = sheetState,
         modifier = Modifier.fillMaxHeight(0.92f),
-        containerColor = Color.White,
-        dragHandle = { BottomSheetDefaults.DragHandle(color = Color(0xFFEEEEEE)) }
+        containerColor = palette.bgCard,
+        dragHandle = { BottomSheetDefaults.DragHandle(color = palette.borderDefault) }
     ) {
         Column(
             modifier = Modifier
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp)
+                .padding(horizontal = spacing.xl)
+                .padding(bottom = spacing.xxxl)
                 .fillMaxSize()
         ) {
             // ---- Header: title + new-conversation + history toggle + close ----
@@ -255,13 +291,21 @@ fun AskSheet(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(stringResource(R.string.auto_b773dbb2), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    Text(
+                        text = stringResource(R.string.auto_b773dbb2),
+                        style = MaterialTheme.typography.titleLarge,
+                        color = palette.textPrimary
+                    )
                     if (activeConversationId != null) {
                         TextButton(
                             onClick = { askViewModel.startNewConversation() },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            contentPadding = PaddingValues(horizontal = spacing.sm, vertical = 0.dp)
                         ) {
-                            Text(stringResource(R.string.auto_ccde88e4), fontSize = 12.sp, color = Color(0xFF147EC5))
+                            Text(
+                                text = stringResource(R.string.auto_ccde88e4),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = palette.brand
+                            )
                         }
                     }
                 }
@@ -273,51 +317,54 @@ fun AskSheet(
                     if (conversationsWithCount.isNotEmpty()) {
                         TextButton(
                             onClick = { historyExpanded = !historyExpanded },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                            contentPadding = PaddingValues(horizontal = spacing.sm, vertical = 0.dp)
                         ) {
                             Icon(
-                                if (historyExpanded) Icons.Default.ExpandLess else Icons.Default.AutoAwesome,
+                                imageVector = if (historyExpanded) Icons.Default.ExpandLess else Icons.Default.AutoAwesome,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp),
-                                tint = Color(0xFF147EC5)
+                                tint = palette.brand
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(spacing.xs))
                             Text(
-                                if (historyExpanded) "收起历史" else "历史（${conversationsWithCount.size}）",
-                                fontSize = 12.sp,
-                                color = Color(0xFF147EC5)
+                                text = if (historyExpanded) "收起历史" else "历史（${conversationsWithCount.size}）",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = palette.brand
                             )
                         }
                     }
                     IconButton(
                         onClick = onClose,
-                        modifier = Modifier.background(Color(0xFFF5F5F5), CircleShape).size(28.dp)
+                        modifier = Modifier.background(palette.bgSubtle, CircleShape).size(28.dp)
                     ) {
-                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             }
 
             // ---- Inline history drawer ----
             if (historyExpanded && conversationsWithCount.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(spacing.sm))
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFFF7FBFF),
-                    border = BorderStroke(0.5.dp, Color(0xFFDBEEFF)),
+                    shape = RoundedCornerShape(spacing.md),
+                    color = palette.bgPage,
+                    border = BorderStroke(0.5.dp, palette.borderBrand),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
+                    Column(modifier = Modifier.padding(spacing.sm)) {
                         Text(
-                            stringResource(R.string.auto_539d8bbe),
-                            fontSize = 11.sp,
-                            color = Color(0xFF94A3B8),
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
+                            text = stringResource(R.string.auto_539d8bbe),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = palette.textMuted,
+                            modifier = Modifier.padding(horizontal = spacing.xs, vertical = spacing.xs)
                         )
                         LazyColumn(
                             modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                            verticalArrangement = Arrangement.spacedBy(spacing.xs)
                         ) {
                             items(conversationsWithCount, key = { it.conversation.id }) { row ->
                                 val isActive = row.conversation.id == activeConversationId
@@ -326,39 +373,38 @@ fun AskSheet(
                                         askViewModel.selectConversation(row.conversation.id)
                                         historyExpanded = false
                                     },
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = if (isActive) Color(0xFFE0F2FE) else Color.White,
-                                    border = if (isActive) BorderStroke(0.5.dp, Color(0xFF147EC5))
-                                    else BorderStroke(0.5.dp, Color(0xFFEEEEEE)),
+                                    shape = RoundedCornerShape(spacing.sm),
+                                    color = if (isActive) palette.brandSubtle else palette.bgCard,
+                                    border = if (isActive) BorderStroke(0.5.dp, palette.brand)
+                                    else BorderStroke(0.5.dp, palette.borderDefault),
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = spacing.sm),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(
-                                                row.conversation.title,
-                                                fontSize = 13.sp,
-                                                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Medium,
-                                                color = Color(0xFF0F172A),
+                                                text = row.conversation.title,
+                                                style = MaterialTheme.typography.labelLarge,
+                                                color = palette.textPrimary,
                                                 maxLines = 1
                                             )
                                             Text(
-                                                "${formatAskTime(row.conversation.updatedAt)} · ${row.messageCount} 条消息",
-                                                fontSize = 10.sp,
-                                                color = Color(0xFF94A3B8)
+                                                text = "${formatAskTime(row.conversation.updatedAt)} · ${row.messageCount} 条消息",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = palette.textMuted
                                             )
                                         }
                                         if (isActive) {
                                             Surface(
-                                                color = Color(0xFF147EC5),
+                                                color = palette.brand,
                                                 shape = RoundedCornerShape(6.dp)
                                             ) {
                                                 Text(
-                                                    stringResource(R.string.auto_25e74dce),
-                                                    fontSize = 10.sp,
-                                                    color = Color.White,
+                                                    text = stringResource(R.string.auto_25e74dce),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = palette.textOnBrand,
                                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                                 )
                                             }
@@ -371,13 +417,13 @@ fun AskSheet(
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(spacing.sm))
 
             // ---- Messages area ----
             if (messages.isNotEmpty()) {
                 LazyColumn(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(spacing.sm)
                 ) {
                     items(messages) { msg ->
                         MessageBubble(msg, onSaveAsKnowledge = { messageId ->
@@ -387,16 +433,20 @@ fun AskSheet(
                     if (isLoading) {
                         item {
                             Row(
-                                modifier = Modifier.padding(12.dp),
+                                modifier = Modifier.padding(spacing.md),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(16.dp),
                                     strokeWidth = 2.dp,
-                                    color = Color(0xFF147EC5)
+                                    color = palette.brand
                                 )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.auto_7f318ca4), fontSize = 13.sp, color = Color(0xFF5F87A3))
+                                Spacer(modifier = Modifier.width(spacing.sm))
+                                Text(
+                                    text = stringResource(R.string.auto_7f318ca4),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = palette.textSecondary
+                                )
                             }
                         }
                     }
@@ -414,31 +464,42 @@ fun AskSheet(
                             inputText = q
                         },
                         shape = RoundedCornerShape(14.dp),
-                        color = Color.White,
-                        border = BorderStroke(0.5.dp, Color(0xFFF3F3F3)),
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                        color = palette.bgCard,
+                        border = BorderStroke(0.5.dp, palette.borderDefault),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = spacing.xs)
                     ) {
-                        Text(q, fontSize = 14.sp, color = Color(0xFF0F172A), modifier = Modifier.padding(18.dp, 15.dp))
+                        Text(
+                            text = q,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = palette.textPrimary,
+                            modifier = Modifier.padding(18.dp, 15.dp)
+                        )
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(spacing.md))
 
             // ---- Input area ----
             Surface(
                 shape = RoundedCornerShape(14.dp),
-                border = BorderStroke(1.dp, Color(0xFFEEEEEE)),
-                color = Color.White
+                border = BorderStroke(1.dp, palette.borderDefault),
+                color = palette.bgCard
             ) {
                 Row(
-                    modifier = Modifier.padding(8.dp),
+                    modifier = Modifier.padding(spacing.sm),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     TextField(
                         value = inputText,
                         onValueChange = { if (!isLoading) inputText = it },
-                        placeholder = { Text(stringResource(R.string.auto_86b9da2d), fontSize = 14.sp, color = Color(0xFFA3A3A3)) },
+                        placeholder = {
+                            Text(
+                                text = stringResource(R.string.auto_86b9da2d),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = palette.textTertiary
+                            )
+                        },
                         modifier = Modifier.weight(1f),
                         colors = TextFieldDefaults.colors(
                             focusedContainerColor = Color.Transparent,
@@ -447,23 +508,26 @@ fun AskSheet(
                             unfocusedIndicatorColor = Color.Transparent
                         )
                     )
+                    val canSend = inputText.isNotBlank() && !isLoading
                     IconButton(
                         onClick = {
-                            if (inputText.isNotBlank() && !isLoading) {
+                            if (canSend) {
                                 askViewModel.askQuestion(inputText.trim())
                                 inputText = ""
                             }
                         },
-                        enabled = inputText.isNotBlank() && !isLoading,
-                        modifier = Modifier.size(36.dp).background(
-                            if (inputText.isNotBlank() && !isLoading) Color(0xFF111827) else Color(0xFFE5E5E5),
-                            RoundedCornerShape(14.dp)
-                        )
+                        enabled = canSend,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .background(
+                                if (canSend) palette.bgInverse else palette.borderDefault,
+                                RoundedCornerShape(14.dp)
+                            )
                     ) {
                         Icon(
-                            Icons.AutoMirrored.Filled.Send,
+                            imageVector = Icons.AutoMirrored.Filled.Send,
                             contentDescription = "发送",
-                            tint = if (inputText.isNotBlank() && !isLoading) Color.White else Color(0xFFA3A3A3),
+                            tint = if (canSend) palette.textOnBrand else palette.textTertiary,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -496,14 +560,9 @@ fun AiMessageContent(
     messageKey: String = content,
     modifier: Modifier = Modifier
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     if (isUser) {
-        Text(
-            text = content,
-            fontSize = 14.sp,
-            lineHeight = 22.sp,
-            color = Color(0xFF0F172A)
-        )
-    } else {
         // Models differ on how they delimit their reasoning:
         //   - <think>...</think>   (DeepSeek-R1, Qwen-QwQ, OpenAI o-series)
         //   - <thinking>...</thinking>
@@ -530,36 +589,34 @@ fun AiMessageContent(
                 var expanded by rememberSaveable(messageKey) { mutableStateOf(false) }
                 Surface(
                     onClick = { expanded = !expanded },
-                    color = Color(0xFFF3F4F6),
-                    shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.padding(bottom = 8.dp).fillMaxWidth()
+                    color = palette.bgSubtle,
+                    shape = RoundedCornerShape(spacing.sm),
+                    modifier = Modifier.padding(bottom = spacing.sm).fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(8.dp)) {
+                    Column(modifier = Modifier.padding(spacing.sm)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                if (expanded) Icons.Default.ExpandLess else Icons.Default.AutoAwesome,
+                                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.AutoAwesome,
                                 contentDescription = null,
                                 modifier = Modifier.size(14.dp),
-                                tint = Color(0xFF6B7280)
+                                tint = palette.textSecondary
                             )
-                            Spacer(modifier = Modifier.width(4.dp))
+                            Spacer(modifier = Modifier.width(spacing.xs))
                             Text(
-                                buildString {
+                                text = buildString {
                                     append(if (expanded) "收起思考过程" else "已折叠思考过程")
                                     if (isStreaming) append(" · 思考中…")
                                 },
-                                fontSize = 12.sp,
-                                color = Color(0xFF6B7280),
-                                fontWeight = FontWeight.Medium
+                                style = MaterialTheme.typography.labelMedium,
+                                color = palette.textSecondary
                             )
                         }
                         if (expanded && thinkPart.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(spacing.xs))
                             Text(
-                                thinkPart,
-                                fontSize = 12.sp,
-                                color = Color(0xFF6B7280),
-                                lineHeight = 18.sp
+                                text = thinkPart,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = palette.textSecondary
                             )
                         }
                     }
@@ -632,12 +689,14 @@ private fun MessageBubble(
     msg: AiMessageEntity,
     onSaveAsKnowledge: (String) -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     val isUser = msg.role == "user"
     val alignment = if (isUser) Arrangement.End else Arrangement.Start
-    val bgColor = if (isUser) Color(0xFFEFF7FF) else Color(0xFFF9FAFB)
+    val bgColor = if (isUser) palette.brandSubtle else palette.bgSubtle
 
     Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = spacing.xs),
         horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
     ) {
         Row(
@@ -647,14 +706,14 @@ private fun MessageBubble(
         ) {
             if (!isUser) {
                 Icon(
-                    Icons.Default.Person,
+                    imageVector = Icons.Default.Person,
                     contentDescription = null,
-                    modifier = Modifier.size(20.dp).padding(top = 8.dp, end = 4.dp),
-                    tint = Color(0xFF147EC5)
+                    modifier = Modifier.size(20.dp).padding(top = spacing.sm, end = spacing.xs),
+                    tint = palette.brand
                 )
             }
             Surface(
-                shape = RoundedCornerShape(16.dp),
+                shape = RoundedCornerShape(spacing.lg),
                 color = bgColor,
                 shadowElevation = 0.dp,
                 modifier = Modifier.widthIn(max = 360.dp)
@@ -669,17 +728,21 @@ private fun MessageBubble(
         if (!isUser && msg.savedAsKnowledgeItemId == null && msg.content.isNotBlank()) {
             TextButton(
                 onClick = { onSaveAsKnowledge(msg.id) },
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                contentPadding = PaddingValues(horizontal = spacing.sm, vertical = 0.dp),
                 modifier = Modifier.height(28.dp)
             ) {
                 Icon(
-                    Icons.Default.Bookmarks,
+                    imageVector = Icons.Default.Bookmarks,
                     contentDescription = null,
                     modifier = Modifier.size(12.dp),
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_ad868eb9), fontSize = 11.sp, color = Color(0xFF147EC5))
+                Spacer(modifier = Modifier.width(spacing.xs))
+                Text(
+                    text = stringResource(R.string.auto_ad868eb9),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.brand
+                )
             }
         }
     }
