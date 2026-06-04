@@ -249,6 +249,28 @@ class AiGatewayStreamTest {
         assertEquals(logicalContent, fromStream)
     }
 
+    @Test
+    fun `observed complete honors single attempt for ingest callers`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(HttpURLConnection.HTTP_INTERNAL_ERROR)
+                .setBody("""{"error":"temporary upstream failure"}"""),
+        )
+        val gateway = newGateway()
+        var retryEvents = 0
+
+        val result = gateway.completeObserved(
+            systemPrompt = "system",
+            userMessage = "user",
+            maxAttempts = 1,
+            onRetry = { retryEvents += 1 },
+        )
+
+        assertTrue(result.startsWith("[AI 调用异常]") || result.startsWith("[服务端错误]"))
+        assertEquals(0, retryEvents)
+        assertEquals(1, server.requestCount)
+    }
+
     // -----------------------------------------------------------------
     // 4. Cooperative cancellation — parent cancel() must propagate
     //    into the SSE read loop within a few hundred ms, not 180s.

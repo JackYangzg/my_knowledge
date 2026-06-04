@@ -25,6 +25,14 @@ import java.net.URL
 
 private class RetryableRemoteCallException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
+data class AiRetryEvent(
+    val attempt: Int,
+    val maxAttempts: Int,
+    val delayMs: Long,
+    val errorType: String,
+    val message: String,
+)
+
 interface AiProvider {
     suspend fun chat(prompt: String, context: String): String
     suspend fun complete(systemPrompt: String, userMessage: String): String
@@ -108,6 +116,28 @@ class AiGateway(
         return callApi(config, systemPrompt, userMessage)
     }
 
+    suspend fun completeObserved(
+        systemPrompt: String,
+        userMessage: String,
+        temperature: Float = 0.7f,
+        maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
+        onRetry: suspend (AiRetryEvent) -> Unit = {},
+    ): String {
+        val config = configProvider()
+        if (config.apiKey.isBlank()) {
+            return "[配置缺失] 请在设置中配置 API Key。"
+        }
+
+        return callApi(
+            config = config,
+            systemPrompt = systemPrompt,
+            userMessage = userMessage,
+            temperature = temperature,
+            maxAttempts = maxAttempts,
+            onRetry = onRetry,
+        )
+    }
+
     override fun completeStream(systemPrompt: String, userMessage: String): Flow<String> = flow {
         val config = configProvider()
         if (config.apiKey.isBlank()) {
@@ -150,6 +180,26 @@ class AiGateway(
             systemPrompt = "$systemPrompt\n\n只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n$schemaHint",
             userMessage = userPrompt,
             temperature = temperature
+        )
+    }
+
+    suspend fun chatJsonObserved(
+        systemPrompt: String,
+        userPrompt: String,
+        schemaHint: String,
+        temperature: Float = 0.2f,
+        maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
+        onRetry: suspend (AiRetryEvent) -> Unit = {},
+    ): String {
+        val config = configProvider()
+        if (config.apiKey.isBlank()) return ""
+        return callApi(
+            config = config,
+            systemPrompt = "$systemPrompt\n\n只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n$schemaHint",
+            userMessage = userPrompt,
+            temperature = temperature,
+            maxAttempts = maxAttempts,
+            onRetry = onRetry,
         )
     }
 
@@ -268,10 +318,12 @@ class AiGateway(
         config: ModelConfig,
         systemPrompt: String?,
         userMessage: String,
-        temperature: Float = 0.7f
+        temperature: Float = 0.7f,
+        maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
+        onRetry: suspend (AiRetryEvent) -> Unit = {},
     ): String = withContext(Dispatchers.IO) {
         try {
-            retryRemoteCall {
+            retryRemoteCall(maxAttempts, onRetry) {
                 callApiOnce(config, systemPrompt, userMessage, temperature)
             }
         } catch (e: java.net.UnknownHostException) {
@@ -488,15 +540,30 @@ class AiGateway(
         }
     }
 
-    private suspend fun <T> retryRemoteCall(block: () -> T): T {
+    private suspend fun <T> retryRemoteCall(
+        maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
+        onRetry: suspend (AiRetryEvent) -> Unit = {},
+        block: () -> T
+    ): T {
         var last: Throwable? = null
-        repeat(MAX_REMOTE_ATTEMPTS) { attempt ->
+        val attempts = maxAttempts.coerceAtLeast(1)
+        repeat(attempts) { attempt ->
             try {
                 return block()
             } catch (e: Throwable) {
-                if (!e.isRetryableRemoteFailure() || attempt == MAX_REMOTE_ATTEMPTS - 1) throw e
+                if (!e.isRetryableRemoteFailure() || attempt == attempts - 1) throw e
                 last = e
-                delay(remoteRetryDelayMs(attempt))
+                val delayMs = remoteRetryDelayMs(attempt)
+                onRetry(
+                    AiRetryEvent(
+                        attempt = attempt + 1,
+                        maxAttempts = attempts,
+                        delayMs = delayMs,
+                        errorType = e::class.simpleName ?: "Throwable",
+                        message = e.localizedMessage ?: "远端请求失败",
+                    )
+                )
+                delay(delayMs)
             }
         }
         throw last ?: RetryableRemoteCallException("远端请求失败")

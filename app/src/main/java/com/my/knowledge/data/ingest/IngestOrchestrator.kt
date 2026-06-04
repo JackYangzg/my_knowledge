@@ -475,7 +475,7 @@ class IngestOrchestrator(
             appendLog(
                 task,
                 if (willRetry) {
-                    "${taskLabel(task.taskType)}失败，等待重试：${e.message ?: "未知错误"}"
+                    "${taskLabel(task.taskType)}请求失败，已进入任务重试 ${retry}/${task.maxRetry}：${e.message ?: "未知错误"}"
                 } else {
                     "${taskLabel(task.taskType)}失败：${e.message ?: "未知错误"}"
                 },
@@ -892,8 +892,41 @@ class IngestOrchestrator(
         db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_GENERATED, null, now)
         markSuccess(task, "Generated ${writtenItems.size} processed wiki pages", """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         enqueue(source.id, "embedding", 5, """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
-        // 灵感脉络不再从 ingest 触发。脉络由灵感文件的新建/编辑直接
-        // 调 LLM 重新生成；ingest 只负责知识页面、图谱、overview 和 review。
+        // Recompute the knowledge base's mainline / gaps / suggestions
+        // whenever a new generation lands. P0-1: the inline log row
+        // stays (cheap, just a breadcrumb) but the actual evolution
+        // goes through the debouncer instead of `scheduler?.scheduleThreadUpdate`.
+        // The debouncer coalesces 5+ rapid ingests into a single
+        // rebuild per KB and runs the work off the hot path.
+        if (kbId.isNotBlank()) {
+            db.knowledgeBaseDao().getById(kbId)?.let { base ->
+                if (base.type != "unfiled") {
+                    db.knowledgeThreadLogDao().insert(
+                        com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity(
+                            id = UUID.randomUUID().toString(),
+                            threadId = "pending",
+                            triggerType = "ingest_complete",
+                            triggerId = source.id,
+                            beforeHash = null,
+                            afterHash = null,
+                            summary = "源 ${source.title} 加工完成，触发脉络更新",
+                            createdAt = System.currentTimeMillis()
+                        )
+                    )
+                    val debouncer = rebuildDebouncer
+                    if (debouncer != null) {
+                        debouncer.scheduleThreadEvolution(kbId)
+                    } else {
+                        // Back-compat: no debouncer wired → fall
+                        // through to the scheduler (which itself now
+                        // delegates to the debouncer when one is
+                        // present, so this is mostly for the unit
+                        // tests).
+                        scheduler?.scheduleThreadUpdate(kbId)
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -1259,9 +1292,21 @@ class IngestOrchestrator(
         // out of the persisted wiki content even if a future
         // AiGateway.change forgets to do it at the boundary.
         //
-        appendLog(task, "诊断:generation 使用非流式模型调用，等待完整 FILE 块响应", "running", "调用 AI 生成 wiki 页面")
+        appendLog(task, "诊断:generation 使用非流式模型调用，等待完整 FILE 块响应，readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS", "running", "调用 AI 生成 wiki 页面")
         val response = try {
-            ai.complete(systemPrompt, userPrompt)
+            ai.completeObserved(
+                systemPrompt = systemPrompt,
+                userMessage = userPrompt,
+                maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+                onRetry = { event ->
+                    appendLog(
+                        task,
+                        "诊断:generation 远端请求第 ${event.attempt}/${event.maxAttempts} 次失败：${event.errorType} ${event.message}，${event.delayMs / 1000}s 后重试",
+                        "running",
+                        "调用 AI 生成 wiki 页面"
+                    )
+                }
+            )
         } catch (e: CancellationException) {
             appendLog(task, "诊断:generation 非流式模型调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成 wiki 页面")
             throw e
@@ -1406,16 +1451,25 @@ class IngestOrchestrator(
 
         appendLog(
             task,
-            "诊断:analysis 使用非流式 JSON 调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${ANALYSIS_SCHEMA.length} 字符",
+            "诊断:analysis 使用非流式 JSON 调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${ANALYSIS_SCHEMA.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS",
             "running",
             "调用 AI 生成结构化分析"
         )
         val cleaned = try {
-            ai.chatJson(
+            ai.chatJsonObserved(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
                 schemaHint = ANALYSIS_SCHEMA,
-                temperature = 0.1f
+                temperature = 0.1f,
+                maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+                onRetry = { event ->
+                    appendLog(
+                        task,
+                        "诊断:analysis 远端请求第 ${event.attempt}/${event.maxAttempts} 次失败：${event.errorType} ${event.message}，${event.delayMs / 1000}s 后重试",
+                        "running",
+                        "调用 AI 生成结构化分析"
+                    )
+                }
             )
         } catch (e: CancellationException) {
             appendLog(task, "诊断:analysis 非流式 JSON 调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成结构化分析")
@@ -1576,11 +1630,20 @@ class IngestOrchestrator(
                 chunk = chunk,
                 globalDigest = globalDigest
             )
-            val raw = ai.chatJson(
+            val raw = ai.chatJsonObserved(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
                 schemaHint = ANALYSIS_SCHEMA,
-                temperature = 0.1f
+                temperature = 0.1f,
+                maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+                onRetry = { event ->
+                    appendLog(
+                        task,
+                        "P0-3: 分块 ${chunk.index}/${chunks.size} 远端请求第 ${event.attempt}/${event.maxAttempts} 次失败：${event.errorType} ${event.message}，${event.delayMs / 1000}s 后重试",
+                        "running",
+                        "分块 ${chunk.index}/${chunks.size} 分析中"
+                    )
+                }
             )
             appendLog(
                 task,
@@ -2412,6 +2475,8 @@ class IngestOrchestrator(
 
         const val INGEST_IDLE_POLLS: Int = 4
         const val INGEST_IDLE_POLL_MS: Long = 250L
+        private const val INGEST_AI_REMOTE_ATTEMPTS: Int = 1
+        private const val AI_READ_TIMEOUT_MS: Int = 180_000
 
         /**
          * P0-2: throttling constants for the SSE-driven progress

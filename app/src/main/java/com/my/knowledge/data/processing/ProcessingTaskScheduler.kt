@@ -110,29 +110,15 @@ class ProcessingTaskScheduler(
         newItemId: String,
         triggerType: String = "inspiration_added",
     ) {
-        scheduleLlmThreadRegenerate(kbId = kbId, triggerItemId = newItemId, triggerType = triggerType)
-    }
-
-    fun scheduleLlmThreadRegenerate(
-        kbId: String,
-        triggerItemId: String? = null,
-        triggerType: String = "inspiration_regenerate",
-    ) {
         val workManager = WorkManager.getInstance(appContext)
-        val input = if (triggerItemId.isNullOrBlank()) {
-            workDataOf(
-                "knowledgeBaseId" to kbId,
-                "triggerType" to triggerType,
-            )
-        } else {
-            workDataOf(
-                "knowledgeBaseId" to kbId,
-                "newItemId" to triggerItemId,
-                "triggerType" to triggerType,
-            )
-        }
         val request = OneTimeWorkRequestBuilder<LlmInspirationThreadWorker>()
-            .setInputData(input)
+            .setInputData(
+                workDataOf(
+                    "knowledgeBaseId" to kbId,
+                    "newItemId" to newItemId,
+                    "triggerType" to triggerType,
+                )
+            )
             .build()
 
         workManager.enqueueUniqueWork(

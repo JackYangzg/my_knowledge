@@ -68,7 +68,13 @@ class ThreadViewModel(
 
     fun triggerManualEvolution() {
         val kbId = _kbId.value ?: return
-        scheduler.scheduleLlmThreadRegenerate(kbId, triggerType = "manual_regenerate")
+        // Hand off to the worker instead of doing the work inline. The
+        // worker has the full rewrite (input hash + tag cluster + wikilink
+        // graph + score-driven gaps) and writes the resulting thread +
+        // log atomically. The previous in-line path only updated the
+        // graph and dropped a log row, so users saw an empty
+        // "知识主线" list with a fake "刷新成功" toast.
+        scheduler.scheduleThreadUpdate(kbId)
     }
 
     private fun parseStringList(json: String?): List<String> {
