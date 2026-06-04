@@ -155,12 +155,7 @@ fun RecycleBinScreen(
             contentPadding = PaddingValues(bottom = 16.dp)
         ) {
             if (items.isEmpty()) {
-                item {
-                    Box(
-                        modifier = Modifier.fillMaxWidth().padding(64.dp),
-                        contentAlignment = Alignment.Center
-                    ) { Text(stringResource(R.string.auto_fecda037), color = palette.textTertiary, fontSize = 15.sp) }
-                }
+                item { com.my.knowledge.ui.component.EmptyState(title = stringResource(R.string.auto_fecda037)) }
             } else {
                 item { Spacer(modifier = Modifier.height(12.dp)) }
                 items(items) { item ->
