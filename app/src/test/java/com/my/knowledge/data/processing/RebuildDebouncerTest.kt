@@ -256,16 +256,34 @@ class RebuildDebouncerTest {
     }
 
     @Test
-    fun `production RebuildDebouncer exposes typed schedule helpers that share the per-KB bucket`() = runTest {
-        // Smoke test that the production class wires its typed
-        // helpers through the same `schedule(...)` pipeline used by
-        // the test shim. We don't actually call the DB: instead we
-        // assert that calling `scheduleGraphRebuild` lands a job on
-        // the debouncer's `externalScope` and that the lambda we
-        // hand-rolled into the same bucket fires from the same
-        // `externalScope`. This is a structural assertion — the
-        // `runCurrent` / `advanceTimeBy` mechanics are covered by
-        // the shim-based tests above.
+    fun `same KB can debounce independent rebuild kinds`() = runTest {
+        val scheduler = testScheduler
+        val debouncer = newDebouncer(scheduler, graphMs = 100L)
+        val overviewRuns = AtomicInteger(0)
+        val graphRuns = AtomicInteger(0)
+
+        debouncer.schedule(kbId = "kb-A", kind = "overview", debounceMs = 100L) {
+            overviewRuns.incrementAndGet()
+        }
+        debouncer.schedule(kbId = "kb-A", kind = "graph", debounceMs = 100L) {
+            graphRuns.incrementAndGet()
+        }
+
+        advanceTimeBy(100L)
+        runCurrent()
+
+        assertEquals("overview action runs for its own bucket", 1, overviewRuns.get())
+        assertEquals("graph action must not be swallowed by overview bucket", 1, graphRuns.get())
+
+        debouncer.shutdownForTests()
+    }
+
+    @Test
+    fun `production RebuildDebouncer exposes typed schedule helpers`() = runTest {
+        // Smoke test placeholder: production helpers require a real
+        // AppDatabase / KnowledgeRepository because they call concrete
+        // rebuild methods. The coroutine dispatch contract, including
+        // per-kind bucket isolation, is covered by the shim tests above.
         val db: AppDatabase? = null
         val repository: KnowledgeRepository? = null
         val debouncer = if (db != null && repository != null) {
@@ -286,9 +304,9 @@ class RebuildDebouncerTest {
      * [RebuildDebouncer.scheduleInternal] flow control without
      * requiring a real `AppDatabase` / `KnowledgeRepository`. We
      * can't construct the production class without those args, so
-     * this subclass duplicates the (per-KB `MutableSharedFlow` +
-     * `debounce` + `collectLatest`) pipeline and exposes the same
-     * `schedule(kbId, debounceMs, action)` entry point. The
+     * this subclass duplicates the (per-KB + per-kind
+     * `MutableSharedFlow` + `debounce` + `collectLatest`) pipeline
+     * and exposes a compatible `schedule(...)` entry point. The
      * pipeline semantics it verifies are exactly the ones the
      * production class enforces.
      */
@@ -300,12 +318,12 @@ class RebuildDebouncerTest {
         private val buckets = java.util.concurrent.ConcurrentHashMap<String, Bucket>()
 
         @OptIn(FlowPreview::class)
-        fun schedule(kbId: String, debounceMs: Long, action: suspend () -> Unit) {
-            val key = kbId.ifBlank { "_unfiled" }
+        fun schedule(kbId: String, debounceMs: Long, kind: String = "custom:$debounceMs", action: suspend () -> Unit) {
+            val key = "${kbId.ifBlank { "_unfiled" }}:$kind"
             val bucket = buckets.getOrPut(key) {
                 Bucket(
                     trigger = kotlinx.coroutines.flow.MutableSharedFlow(
-                        replay = 0,
+                        replay = 1,
                         extraBufferCapacity = 1,
                         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST,
                     ),

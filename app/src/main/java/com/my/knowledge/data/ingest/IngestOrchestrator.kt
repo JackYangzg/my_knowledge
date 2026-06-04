@@ -39,6 +39,7 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.UUID
 
@@ -347,12 +348,17 @@ class IngestOrchestrator(
         recoverSourcesWithoutActiveTasks()
         val laneCount = parallelism.coerceIn(1, 4)
         val processed = AtomicInteger(0)
+        val activeTasks = AtomicInteger(0)
         val lanes = (0 until laneCount).map {
             async {
                 var idlePolls = 0
                 while (processed.get() < maxTasks) {
                     val task = db.processingTaskDao().claimNextPendingTask(System.currentTimeMillis())
                     if (task == null) {
+                        if (activeTasks.get() > 0) {
+                            delay(INGEST_IDLE_POLL_MS)
+                            continue
+                        }
                         if (idlePolls >= INGEST_IDLE_POLLS) break
                         idlePolls++
                         delay(INGEST_IDLE_POLL_MS)
@@ -360,7 +366,12 @@ class IngestOrchestrator(
                     }
                     idlePolls = 0
                     processed.incrementAndGet()
-                    runTask(task)
+                    activeTasks.incrementAndGet()
+                    try {
+                        runTask(task)
+                    } finally {
+                        activeTasks.decrementAndGet()
+                    }
                 }
             }
         }
@@ -648,6 +659,12 @@ class IngestOrchestrator(
         // single-call path.
         val isLongSource = parsed.markdown.length > LONG_SOURCE_BUDGET_CHARS &&
             longSourceCheckpointStore != null
+        appendLog(
+            task,
+            "诊断:analysis 输入 title=${source.title}, markdown=${parsed.markdown.length} 字符, plainText=${parsed.plainText.length} 字符, mode=${if (isLongSource) "chunked" else "non_stream"}",
+            "running",
+            "调用 AI 生成结构化分析"
+        )
         val rawAiOutput: String? = if (isLongSource) {
             requestAiAnalysisLongSource(task, source, parsed)
         } else {
@@ -875,41 +892,8 @@ class IngestOrchestrator(
         db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_GENERATED, null, now)
         markSuccess(task, "Generated ${writtenItems.size} processed wiki pages", """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         enqueue(source.id, "embedding", 5, """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
-        // Recompute the knowledge base's mainline / gaps / suggestions
-        // whenever a new generation lands. P0-1: the inline log row
-        // stays (cheap, just a breadcrumb) but the actual evolution
-        // goes through the debouncer instead of `scheduler?.scheduleThreadUpdate`.
-        // The debouncer coalesces 5+ rapid ingests into a single
-        // rebuild per KB and runs the work off the hot path.
-        if (kbId.isNotBlank()) {
-            db.knowledgeBaseDao().getById(kbId)?.let { base ->
-                if (base.type != "unfiled") {
-                    db.knowledgeThreadLogDao().insert(
-                        com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity(
-                            id = UUID.randomUUID().toString(),
-                            threadId = "pending",
-                            triggerType = "ingest_complete",
-                            triggerId = source.id,
-                            beforeHash = null,
-                            afterHash = null,
-                            summary = "源 ${source.title} 加工完成，触发脉络更新",
-                            createdAt = System.currentTimeMillis()
-                        )
-                    )
-                    val debouncer = rebuildDebouncer
-                    if (debouncer != null) {
-                        debouncer.scheduleThreadEvolution(kbId)
-                    } else {
-                        // Back-compat: no debouncer wired → fall
-                        // through to the scheduler (which itself now
-                        // delegates to the debouncer when one is
-                        // present, so this is mostly for the unit
-                        // tests).
-                        scheduler?.scheduleThreadUpdate(kbId)
-                    }
-                }
-            }
-        }
+        // 灵感脉络不再从 ingest 触发。脉络由灵感文件的新建/编辑直接
+        // 调 LLM 重新生成；ingest 只负责知识页面、图谱、overview 和 review。
     }
 
     /**
@@ -1052,6 +1036,8 @@ class IngestOrchestrator(
         // means a burst of N chunks collapses to "the last count
         // wins", which is what `sample()` wants — we're rate-limiting
         // the writer, not the producer.
+        val lastSignalled = AtomicInteger(0)
+        val firstChunkSeen = AtomicBoolean(false)
         val signals = MutableSharedFlow<Int>(
             replay = 0,
             extraBufferCapacity = 1,
@@ -1086,10 +1072,15 @@ class IngestOrchestrator(
                 // still see the upstream errors.
             }
         }
+        appendLog(task, "诊断:开始流式模型输出，progressEvery=$everyN, sampleMs=$sampleMs", "running", step)
         try {
             source.collect { chunk ->
                 accumulator.append(chunk)
-                if (accumulator.length % everyN == 0) {
+                if (firstChunkSeen.compareAndSet(false, true)) {
+                    signals.tryEmit(accumulator.length)
+                }
+                if (accumulator.length - lastSignalled.get() >= everyN) {
+                    lastSignalled.set(accumulator.length)
                     signals.tryEmit(accumulator.length)
                 }
             }
@@ -1100,6 +1091,13 @@ class IngestOrchestrator(
             // ensures the post-stream progress update lands within
             // 500ms of the SSE `[DONE]`.
             signals.tryEmit(accumulator.length)
+            appendLog(task, "诊断:流式模型输出完成，累计接收 ${accumulator.length} 字符", "running", step)
+        } catch (e: CancellationException) {
+            appendLog(task, "诊断:流式模型输出被取消：${e.message ?: "无附加信息"}", "running", step)
+            throw e
+        } catch (t: Throwable) {
+            appendLog(task, "诊断:流式模型输出异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
+            throw t
         } finally {
             writer.cancel()
         }
@@ -1140,6 +1138,8 @@ class IngestOrchestrator(
         // counts the actual accumulated length) but still within
         // the spec's "every N tokens" intent.
         val charCount = AtomicInteger(0)
+        val lastSignalled = AtomicInteger(0)
+        val firstChunkSeen = AtomicBoolean(false)
         val signals = MutableSharedFlow<Int>(
             replay = 0,
             extraBufferCapacity = 1,
@@ -1163,6 +1163,12 @@ class IngestOrchestrator(
                 }
             }
         }
+        appendLog(
+            task,
+            "诊断:开始请求流式 JSON，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${schemaHint.length} 字符, readTimeout=180000ms",
+            "running",
+            step
+        )
         return try {
             val result = ai.streamJson(
                 systemPrompt = systemPrompt,
@@ -1171,7 +1177,11 @@ class IngestOrchestrator(
                 temperature = temperature,
                 onChunk = { delta ->
                     val total = charCount.addAndGet(delta.length)
-                    if (total % PROGRESS_EVERY_N_TOKENS == 0) {
+                    if (firstChunkSeen.compareAndSet(false, true)) {
+                        signals.tryEmit(total)
+                    }
+                    if (total - lastSignalled.get() >= PROGRESS_EVERY_N_TOKENS) {
+                        lastSignalled.set(total)
                         signals.tryEmit(total)
                     }
                 },
@@ -1183,7 +1193,19 @@ class IngestOrchestrator(
             // even if it didn't align with the everyN boundary.
             val finalCount = charCount.get()
             if (finalCount > 0) signals.tryEmit(finalCount)
+            appendLog(
+                task,
+                "诊断:流式 JSON 请求完成，累计接收 $finalCount 字符，清洗后 ${result.length} 字符",
+                "running",
+                step
+            )
             result
+        } catch (e: CancellationException) {
+            appendLog(task, "诊断:流式 JSON 请求被取消：${e.message ?: "无附加信息"}", "running", step)
+            throw e
+        } catch (t: Throwable) {
+            appendLog(task, "诊断:流式 JSON 请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
+            throw t
         } finally {
             writer.cancel()
         }
@@ -1222,6 +1244,12 @@ class IngestOrchestrator(
             language = detectedLanguage
         )
         val userPrompt = buildGenerationUserMessage(source.title, analysisText, parsed.markdown, structuredContext)
+        appendLog(
+            task,
+            "诊断:generation 输入 title=${source.title}, markdown=${parsed.markdown.length} 字符, analysis=${analysisText.length} 字符, structured=${structuredContext.length} 字符, systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符",
+            "running",
+            "调用 AI 生成 wiki 页面"
+        )
 
         // System prompt mirrors llm_wiki's "You are a wiki maintainer."
         // The full language directive is injected BOTH at the head of the
@@ -1231,23 +1259,23 @@ class IngestOrchestrator(
         // out of the persisted wiki content even if a future
         // AiGateway.change forgets to do it at the boundary.
         //
-        // P0-2: switched from `ai.complete` (HttpURLConnection.readText,
-        // blocks until the full 180s readTimeout) to `ai.completeStream`
-        // so the user sees real token progress in the log center
-        // (`updateProgress` writes are throttled by
-        // [collectWithThrottledProgress] to one DB write per 500ms).
-        // Errors during the stream still propagate — the
-        // `coroutineScope { ... }` re-throws and the orchestrator's
-        // outer `try { ... } catch (e: Exception)` in `runTask` routes
-        // the failure to the task's retry path. We do NOT silently
-        // treat a mid-stream disconnect as "no AI output" anymore.
-        val response = collectWithThrottledProgress(
-            source = ai.completeStream(systemPrompt, userPrompt),
-            task = task,
-            step = "调用 AI 生成 wiki 页面",
-            logMessage = { charCount -> "模型已生成 $charCount 字符，等待 FILE 块" },
-        )
+        appendLog(task, "诊断:generation 使用非流式模型调用，等待完整 FILE 块响应", "running", "调用 AI 生成 wiki 页面")
+        val response = try {
+            ai.complete(systemPrompt, userPrompt)
+        } catch (e: CancellationException) {
+            appendLog(task, "诊断:generation 非流式模型调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成 wiki 页面")
+            throw e
+        } catch (t: Throwable) {
+            appendLog(task, "诊断:generation 非流式模型调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成 wiki 页面")
+            throw t
+        }
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
+        appendLog(
+            task,
+            "诊断:generation AI 返回 ${cleaned.length} 字符，FILE 块标记数=${Regex("(?m)^FILE:").findAll(cleaned).count()}",
+            "running",
+            "调用 AI 生成 wiki 页面"
+        )
         throwIfAiFailure(cleaned)
         return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
     }
@@ -1364,71 +1392,43 @@ class IngestOrchestrator(
         val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector.detect(parsed.markdown)
         val systemPrompt = com.my.knowledge.data.ai.AiPromptTemplates.analysisPrompt(
             title = source.title,
-            // P0-3: removed the `.take(50_000)` hard truncation. The
-            // `analysisTask` switch above now routes any source
-            // > [LONG_SOURCE_BUDGET_CHARS] through the chunked
-            // path (`requestAiAnalysisLongSource`); sources at or
-            // below the budget stay in this single-call path and
-            // get the FULL markdown so the LLM sees every
-            // section / entity / claim (previously the 50K cap
-            // silently dropped late-document content for short-
-            // to-medium imports too).
-            content = parsed.markdown,
             sourceType = source.sourceType,
             currentIndex = currentIndex,
             purpose = purpose,
             fragments = emptyList(),
-            // The schema hint is what makes the LLM actually emit the
-            // entities / concepts / relations structure that the
-            // downstream WikiPageCompiler + KnowledgeRepositoryImpl
-            // expect. Without it the model defaults to the markdown
-            // `## Key Entities` format and parseAiAnalysisJson ends up
-            // with empty arrays — which is exactly the bug we are
-            // fixing here.
-            schemaHint = ANALYSIS_SCHEMA,
+            // `ai.chatJson` appends ANALYSIS_SCHEMA at the end of the
+            // system prompt. Keeping it there avoids duplicating the
+            // full schema while preserving the strongest tail-anchor.
+            schemaHint = "",
             language = detectedLanguage
         )
         val userPrompt = buildAnalysisUserMessage(source, parsed.markdown)
 
-        // P0-2: switched from `ai.chatJson` (HttpURLConnection.readText,
-        // blocks until the full 180s readTimeout — UI sees a frozen
-        // log at "调用 AI 生成结构化分析" with no token feedback) to
-        // `ai.streamJson`. Behaviour equivalence with `chatJson`:
-        //   - same suffix appended to the system prompt
-        //   - same temperature pin (0.1f here, vs chatJson's 0.2f default
-        //     — we keep the historical 0.1 because the analysis prompt
-        //     was tuned for it; the gateway's default only matters when
-        //     callers don't pin a value)
-        //   - same `cleanModelOutput` strip on the accumulated text
-        //   - same "[AI 调用失败] 模型仅返回了思考过程" guard for
-        //     thinking-only responses
-        // Behavioural differences:
-        //   - per-chunk progress via the onChunk side-channel,
-        //     so the log center sees "模型已生成 N 字符 JSON" every
-        //     500ms while the LLM streams instead of one giant
-        //     60-second wait
-        //   - cooperative cancellation: `cancel()` tears the SSE
-        //     read down at the next line boundary instead of waiting
-        //     for readTimeout
-        //   - mid-stream errors throw (not silently return "") so the
-        //     orchestrator's retry path can react
-        //
-        // The progress side-channel is plumbed through `onChunk` (the
-        // optional 5th param of [AiProvider.streamJson]) rather than
-        // by collecting the Flow ourselves — that keeps the spec's
-        // `streamJson(...)` return-type as `String` and makes the
-        // accumulation + cleaning happen exactly once inside the
-        // gateway, which is the only place the "JSON-mode streaming
-        // must buffer the full body before parsing" rule can be
-        // enforced.
-        val cleaned = streamJsonWithThrottledProgress(
-            systemPrompt = systemPrompt,
-            userPrompt = userPrompt,
-            schemaHint = ANALYSIS_SCHEMA,
-            temperature = 0.1f,
-            task = task,
-            step = "调用 AI 生成结构化分析",
-            logMessage = { charCount -> "模型已生成 $charCount 字符 JSON" },
+        appendLog(
+            task,
+            "诊断:analysis 使用非流式 JSON 调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${ANALYSIS_SCHEMA.length} 字符",
+            "running",
+            "调用 AI 生成结构化分析"
+        )
+        val cleaned = try {
+            ai.chatJson(
+                systemPrompt = systemPrompt,
+                userPrompt = userPrompt,
+                schemaHint = ANALYSIS_SCHEMA,
+                temperature = 0.1f
+            )
+        } catch (e: CancellationException) {
+            appendLog(task, "诊断:analysis 非流式 JSON 调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成结构化分析")
+            throw e
+        } catch (t: Throwable) {
+            appendLog(task, "诊断:analysis 非流式 JSON 调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成结构化分析")
+            throw t
+        }
+        appendLog(
+            task,
+            "诊断:analysis 非流式 JSON 返回 ${cleaned.length} 字符",
+            "running",
+            "调用 AI 生成结构化分析"
         )
         throwIfAiFailure(cleaned)
         return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
@@ -1565,9 +1565,8 @@ class IngestOrchestrator(
 
             val systemPrompt = buildChunkAnalysisSystemPrompt(
                 purpose = purpose,
-                schema = ANALYSIS_SCHEMA,
+                schema = "",
                 index = currentIndex,
-                sourceContent = content,
                 language = detectedLanguage,
                 chunkTotal = chunks.size
             )
@@ -1582,6 +1581,11 @@ class IngestOrchestrator(
                 userPrompt = userPrompt,
                 schemaHint = ANALYSIS_SCHEMA,
                 temperature = 0.1f
+            )
+            appendLog(
+                task,
+                "P0-3: 分块 ${chunk.index}/${chunks.size} LLM 返回 ${raw.length} 字符",
+                "running"
             )
             throwIfAiFailure(raw)
             if (raw.isBlank()) {
@@ -1644,7 +1648,6 @@ class IngestOrchestrator(
         purpose: String,
         schema: String,
         index: String,
-        sourceContent: String,
         language: String,
         chunkTotal: Int
     ): String {

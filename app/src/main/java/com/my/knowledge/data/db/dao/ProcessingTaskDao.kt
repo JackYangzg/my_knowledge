@@ -10,18 +10,12 @@ interface ProcessingTaskDao {
     suspend fun getById(id: String): ProcessingTaskEntity?
 
     @Query("""
-        SELECT * FROM processing_task AS t
-        WHERE t.status IN ('pending', 'pending_network')
-          AND NOT EXISTS (
-              SELECT 1 FROM processing_task AS r
-              WHERE r.status = 'running'
-                AND r.taskType = t.taskType
-                AND COALESCE(r.sourceId, r.targetId) = COALESCE(t.sourceId, t.targetId)
-          )
+        SELECT * FROM processing_task
+        WHERE status IN ('pending', 'pending_network')
         ORDER BY priority DESC, createdAt ASC
-        LIMIT 1
+        LIMIT :limit
     """)
-    suspend fun getNextPendingTask(): ProcessingTaskEntity?
+    suspend fun getPendingTaskCandidates(limit: Int = 8): List<ProcessingTaskEntity>
 
     @Query("""
         UPDATE processing_task
@@ -39,8 +33,11 @@ interface ProcessingTaskDao {
 
     @Transaction
     suspend fun claimNextPendingTask(startedAt: Long): ProcessingTaskEntity? {
-        val task = getNextPendingTask() ?: return null
-        return if (claimTask(task.id, startedAt) > 0) getById(task.id) else null
+        for (task in getPendingTaskCandidates()) {
+            val claimed = claimTask(task.id, startedAt) > 0
+            if (claimed) return getById(task.id)
+        }
+        return null
     }
 
     @Query("""

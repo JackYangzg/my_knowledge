@@ -85,6 +85,7 @@ class RebuildDebouncer(
     fun scheduleGraphRebuild(kbId: String) {
         scheduleInternal(
             kbId = kbId,
+            kind = "graph",
             debounceMs = graphDebounceMs,
             action = {
                 withContext(Dispatchers.IO) {
@@ -104,6 +105,7 @@ class RebuildDebouncer(
         if (kbId.isBlank()) return
         scheduleInternal(
             kbId = kbId,
+            kind = "overview",
             debounceMs = graphDebounceMs,
             action = {
                 withContext(Dispatchers.IO) {
@@ -121,6 +123,7 @@ class RebuildDebouncer(
     fun scheduleSweepReviews(kbId: String) {
         scheduleInternal(
             kbId = kbId,
+            kind = "sweep",
             debounceMs = sweepDebounceMs,
             action = {
                 withContext(Dispatchers.IO) {
@@ -142,6 +145,7 @@ class RebuildDebouncer(
         if (kbId.isBlank()) return
         scheduleInternal(
             kbId = kbId,
+            kind = "thread",
             debounceMs = threadDebounceMs,
             action = {
                 withContext(Dispatchers.IO) {
@@ -158,16 +162,17 @@ class RebuildDebouncer(
      * above so the debounce windows stay consistent.
      */
     fun schedule(kbId: String, debounceMs: Long, action: suspend () -> Unit) {
-        scheduleInternal(kbId = kbId, debounceMs = debounceMs, action = action)
+        scheduleInternal(kbId = kbId, kind = "custom:$debounceMs", debounceMs = debounceMs, action = action)
     }
 
     @OptIn(FlowPreview::class)
-    private fun scheduleInternal(kbId: String, debounceMs: Long, action: suspend () -> Unit) {
-        val key = kbId.ifBlank { "_unfiled" }
+    private fun scheduleInternal(kbId: String, kind: String, debounceMs: Long, action: suspend () -> Unit) {
+        val kbKey = kbId.ifBlank { "_unfiled" }
+        val key = "$kbKey:$kind"
         val bucket = buckets.getOrPut(key) {
             Bucket(
                 trigger = MutableSharedFlow(
-                    replay = 0,
+                    replay = 1,
                     extraBufferCapacity = 1,
                     onBufferOverflow = BufferOverflow.DROP_OLDEST,
                 ),
@@ -197,7 +202,7 @@ class RebuildDebouncer(
                             // will catch the KB up.
                             Log.e(
                                 "RebuildDebouncer",
-                                "Rebuild action failed for kb=$key (debounceMs=$debounceMs): ${t.message}",
+                                "Rebuild action failed for kb=$kbKey kind=$kind (debounceMs=$debounceMs): ${t.message}",
                                 t,
                             )
                         }
@@ -207,7 +212,7 @@ class RebuildDebouncer(
             // scope is cancelled (process death / app teardown).
             bucket.job?.invokeOnCompletion { cause ->
                 if (cause != null && cause !is kotlinx.coroutines.CancellationException) {
-                    Log.w("RebuildDebouncer", "Bucket for kb=$key ended with: ${cause.message}")
+                    Log.w("RebuildDebouncer", "Bucket for kb=$kbKey kind=$kind ended with: ${cause.message}")
                 }
             }
         }
@@ -218,7 +223,7 @@ class RebuildDebouncer(
         // action() once after the debounce window closes".
         val emitted = bucket.trigger.tryEmit(Unit)
         if (!emitted) {
-            Log.w("RebuildDebouncer", "Failed to emit trigger for kb=$key (unexpected — buffer full?)")
+            Log.w("RebuildDebouncer", "Failed to emit trigger for kb=$kbKey kind=$kind (unexpected — buffer full?)")
         }
     }
 

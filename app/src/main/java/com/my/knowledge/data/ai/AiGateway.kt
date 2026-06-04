@@ -438,7 +438,8 @@ class AiGateway(
                     kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     val line = r.readLine() ?: break
                     val payload = line.trim().removePrefix("data:").trim()
-                    if (payload.isBlank() || payload == "[DONE]") continue
+                    if (payload.isBlank()) continue
+                    if (payload == "[DONE]") break
                     val delta = parseStreamDelta(payload)
                     if (!delta.isNullOrBlank()) onDelta(delta)
                 }

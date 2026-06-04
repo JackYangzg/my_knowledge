@@ -100,7 +100,6 @@ class FileBlockParserAlignmentTest {
     fun `analysisPrompt does not promise local entity heuristic supplements`() {
         val prompt = AiPromptTemplates.analysisPrompt(
             title = "raft.md",
-            content = "Raft source",
             currentIndex = "No existing wiki pages.",
             language = "中文",
         )

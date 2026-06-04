@@ -88,7 +88,6 @@ DO NOT use any other language. This overrides all other instructions.
      */
     fun analysisPrompt(
         title: String,
-        content: String,
         sourceType: String = "document",
         currentIndex: String = "No existing index.",
         purpose: String = "Build a readable, maintainable, and evolvable local wiki.",
@@ -100,9 +99,7 @@ ${languageDirective(language)}
 
 You are an expert research analyst. Read the source document and produce a single STRICT JSON object. Do NOT output markdown, code fences, chain-of-thought, hidden reasoning, or any prose. Reason internally and emit only the JSON.
 
-The JSON must conform to this schema (field names are case-sensitive):
-
-$schemaHint
+${if (schemaHint.isNotBlank()) "The JSON must conform to this schema (field names are case-sensitive):\n\n$schemaHint" else "The JSON schema is supplied as the final instruction by the caller. Follow it exactly; field names are case-sensitive."}
 
 ## Field-specific rules
 - `title`: a clean human-readable title for the source (may equal the filename).

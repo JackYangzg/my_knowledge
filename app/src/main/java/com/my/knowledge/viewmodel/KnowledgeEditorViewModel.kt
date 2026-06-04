@@ -112,6 +112,20 @@ class KnowledgeEditorViewModel(
             knowledgeRepository.rebuildFragmentsForItem(updated)
             _item.value = updated
 
+            val base = knowledgeRepository.getBaseById(updated.knowledgeBaseId)
+            if (base?.type == "inspiration") {
+                scheduler.scheduleLlmThreadUpdate(
+                    kbId = updated.knowledgeBaseId,
+                    newItemId = updated.id,
+                    triggerType = "inspiration_edited"
+                )
+                _reingestStatus.value = "已保存,正在重新生成灵感脉络"
+                _isSaving.value = false
+                _saveCompleted.value = true
+                onSaved()
+                return@launch
+            }
+
             val sourceId = updated.sourceId
             if (!sourceId.isNullOrBlank()) {
                 // Mirror the status on the source row too so the Log
