@@ -56,19 +56,27 @@ import java.util.Date
 import java.util.Locale
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import androidx.compose.material3.MaterialTheme
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.Palette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun ImportCenterScreen(
     viewModel: ImportCenterViewModel,
     onBack: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val rows by viewModel.rows.collectAsState()
     var deleteSourceId by remember { mutableStateOf<String?>(null) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .background(palette.bgPage)
     ) {
         Column(
             modifier = Modifier
@@ -78,13 +86,13 @@ fun ImportCenterScreen(
                 .padding(top = 48.dp, bottom = 12.dp)
         ) {
             TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.brand)
                 Spacer(modifier = Modifier.size(4.dp))
-                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(stringResource(R.string.auto_2ff3cc93), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text(stringResource(R.string.auto_00b4a995), fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
+            Text(stringResource(R.string.auto_2ff3cc93), style = MaterialTheme.typography.displayLarge, color = palette.textPrimary)
+            Text(stringResource(R.string.auto_00b4a995), fontSize = 13.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
         }
 
         LazyColumn(
@@ -95,7 +103,7 @@ fun ImportCenterScreen(
             if (rows.isEmpty()) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                        Text(stringResource(R.string.auto_bb9db662), color = Color(0xFF5F87A3), fontSize = 14.sp)
+                        Text(stringResource(R.string.auto_bb9db662), color = palette.textSecondary, fontSize = 14.sp)
                     }
                 }
             } else {
@@ -122,7 +130,7 @@ fun ImportCenterScreen(
                         deleteSourceId?.let(viewModel::deleteSource)
                         deleteSourceId = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.semanticError)
                 ) { Text(stringResource(R.string.auto_3755f56f)) }
             },
             dismissButton = {
@@ -139,50 +147,54 @@ private fun ImportSourceCard(
     onCancel: () -> Unit,
     onDelete: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val task = row.latestTask
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(spacing.md),
         color = Color.White,
         shadowElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(sourceIcon(row.source), contentDescription = null, tint = statusColor(row.source.status), modifier = Modifier.size(22.dp))
+                Icon(sourceIcon(row.source), contentDescription = null, tint = statusColor(palette, row.source.status), modifier = Modifier.size(22.dp))
                 Spacer(modifier = Modifier.size(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(row.source.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                    Text("${row.source.sourceType} · ${row.source.mimeType ?: "unknown"} · ${formatTime(row.source.updatedAt)}", fontSize = 11.sp, color = Color(0xFF5F87A3))
+                    Text(row.source.title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
+                    Text("${row.source.sourceType} · ${row.source.mimeType ?: "unknown"} · ${formatTime(row.source.updatedAt)}", fontSize = 11.sp, color = palette.textSecondary)
                 }
                 StatusPill(row.source.status)
             }
 
             Spacer(modifier = Modifier.height(10.dp))
             if (task != null) {
-                Text("${task.taskType} · ${task.currentStep ?: task.status}", fontSize = 12.sp, color = Color(0xFF5F87A3))
+                Text("${task.taskType} · ${task.currentStep ?: task.status}", fontSize = 12.sp, color = palette.textSecondary)
                 LinearProgressIndicator(
                     progress = { task.progress / 100f },
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    color = statusColor(task.status),
-                    trackColor = Color(0xFFEFF7FF)
+                    color = statusColor(palette, task.status),
+                    trackColor = palette.brandSubtle
                 )
             } else {
-                Text(stringResource(R.string.auto_147d229d), fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                Text(stringResource(R.string.auto_147d229d), fontSize = 12.sp, color = palette.textTertiary)
             }
 
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
                 if (task?.status == "failed" || task?.status == "canceled") {
                     IconButton(onClick = onRetry) {
-                        Icon(Icons.Default.Refresh, contentDescription = "重试", tint = Color(0xFF147EC5))
+                        Icon(Icons.Default.Refresh, contentDescription = "重试", tint = palette.brand)
                     }
                 }
                 if (task?.status == "pending" || task?.status == "running") {
                     IconButton(onClick = onCancel) {
-                        Icon(Icons.Default.Cancel, contentDescription = "取消", tint = Color(0xFFEA580C))
+                        Icon(Icons.Default.Cancel, contentDescription = "取消", tint = palette.semanticWarning)
                     }
                 }
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "删除来源", tint = Color(0xFFDC2626))
+                    Icon(Icons.Default.Delete, contentDescription = "删除来源", tint = palette.semanticError)
                 }
             }
         }
@@ -191,8 +203,12 @@ private fun ImportSourceCard(
 
 @Composable
 private fun StatusPill(status: String) {
-    Surface(color = statusColor(status).copy(alpha = 0.12f), shape = CircleShape) {
-        Text(status, fontSize = 11.sp, color = statusColor(status), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    Surface(color = statusColor(palette, status).copy(alpha = 0.12f), shape = CircleShape) {
+        Text(status, fontSize = 11.sp, color = statusColor(palette, status), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
     }
 }
 
@@ -204,13 +220,13 @@ private fun sourceIcon(source: SourceDocumentEntity): ImageVector = when (source
     else -> Icons.Default.Description
 }
 
-private fun statusColor(status: String): Color = when (status) {
-    "running", "parsing", "analyzing" -> Color(0xFF147EC5)
+private fun statusColor(palette: Palette, status: String): Color = when (status) {
+    "running", "parsing", "analyzing" -> palette.brand
     "pending", "imported", "parsed", "pending_network" -> Color(0xFFF59E0B)
-    "failed" -> Color(0xFFDC2626)
-    "canceled" -> Color(0xFFEA580C)
+    "failed" -> palette.semanticError
+    "canceled" -> palette.semanticWarning
     "generated", "success" -> Color(0xFF0B816F)
-    else -> Color(0xFF5F87A3)
+    else -> palette.textSecondary
 }
 
 private fun formatTime(time: Long): String =

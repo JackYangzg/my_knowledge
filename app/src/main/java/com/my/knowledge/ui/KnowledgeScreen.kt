@@ -32,6 +32,8 @@ import com.my.knowledge.ui.component.AskSheet
 import com.my.knowledge.ui.component.ImportSheet
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -44,6 +46,8 @@ fun KnowledgeScreen(
     onOpenKbDetail: (String) -> Unit,
     onOpenKbManage: () -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     val knowledgeBases by viewModel.knowledgeBases.collectAsState()
 
     var showAskSheet by remember { mutableStateOf(false) }
@@ -65,7 +69,7 @@ fun KnowledgeScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xFFF7FBFF)), // Ocean 25
+                .background(palette.bgPage), // Ocean 25
             contentPadding = PaddingValues(bottom = 100.dp)
         ) {
             item {
@@ -83,7 +87,7 @@ fun KnowledgeScreen(
                                     "image/*"
                                 ))
                             },
-                            colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF147EC5))
+                            colors = ButtonDefaults.textButtonColors(contentColor = palette.brand)
                         ) {
                             Icon(Icons.Default.FileUpload, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(4.dp))
@@ -104,11 +108,11 @@ fun KnowledgeScreen(
                 Section(title = stringResource(R.string.auto_89858b21), more = stringResource(R.string.auto_4989b5cf), onMoreClick = onOpenKbManage) {
                     if (knowledgeBases.isEmpty()) {
                         Box(modifier = Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                            Text(stringResource(R.string.auto_1674dc8d), color = Color(0xFFA3A3A3), fontSize = 14.sp)
+                            Text(stringResource(R.string.auto_1674dc8d), color = palette.textTertiary, fontSize = 14.sp)
                         }
                     } else {
                         knowledgeBases.forEachIndexed { index, item ->
-                            if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
+                            if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = palette.borderBrand)
                             QuietCell(
                                 title = item.name,
                                 desc = item.description,
@@ -117,28 +121,26 @@ fun KnowledgeScreen(
                                     Box(
                                         modifier = Modifier
                                             .size(36.dp)
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .background(Color(0xFFEFF7FF))
-                                            .border(1.dp, Color(0xFFCBE8FF), RoundedCornerShape(12.dp)),
+                                            .clip(RoundedCornerShape(spacing.md))
+                                            .background(palette.brandSubtle)
+                                            .border(1.dp, palette.borderBrand, RoundedCornerShape(spacing.md)),
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            text = item.iconText,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            color = Color(0xFF147EC5)
+                                            text = item.iconText, style = MaterialTheme.typography.titleMedium,
+                                            color = palette.brand
                                         )
                                     }
                                 },
                                 right = {
                                     Surface(
-                                        color = if (item.isSystem) Color(0xFFFFF7ED) else Color(0xFFEFF7FF),
+                                        color = if (item.isSystem) Color(0xFFFFF7ED) else palette.brandSubtle,
                                         shape = CircleShape
                                     ) {
                                         Text(
                                             text = item.itemCount.toString(),
                                             fontSize = 11.sp,
-                                            color = if (item.isSystem) Color(0xFFEA580C) else Color(0xFF147EC5),
+                                            color = if (item.isSystem) palette.semanticWarning else palette.brand,
                                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
                                         )
                                     }
@@ -167,7 +169,7 @@ fun KnowledgeScreen(
                     showAskSheet = true
                 },
                 shape = CircleShape,
-                color = Color(0xFF111827),
+                color = palette.bgInverse,
                 shadowElevation = 12.dp,
                 modifier = Modifier
                     .size(56.dp)

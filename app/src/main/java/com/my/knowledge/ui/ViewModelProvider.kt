@@ -41,7 +41,7 @@ object DependencyProvider {
         val debouncer = provideRebuildDebouncer(context)
         return ProcessingTaskScheduler(
             context.applicationContext,
-            rebuildDebouncer = debouncer,
+            rebuildDebouncer = debouncer
         ).also { scheduler = it }
     }
 
@@ -51,7 +51,7 @@ object DependencyProvider {
         val appContext = context.applicationContext
         val debouncer = RebuildDebouncer(
             db = provideDatabase(appContext),
-            repository = provideKnowledgeRepository(appContext),
+            repository = provideKnowledgeRepository(appContext)
         )
         return debouncer.also { rebuildDebouncer = it }
     }
@@ -118,7 +118,7 @@ val ViewModelFactory = object : ViewModelProvider.Factory {
                     noteRepo,
                     knowledgeRepo,
                     DependencyProvider.provideImportSourceUseCase(context),
-                    DependencyProvider.provideScheduler(context),
+                    DependencyProvider.provideScheduler(context)
                 ) as T
             }
             modelClass.isAssignableFrom(KnowledgeHomeViewModel::class.java) -> {

@@ -41,6 +41,9 @@ import com.my.knowledge.viewmodel.IntermediateDataViewModel
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.Palette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -50,6 +53,8 @@ fun IntermediateDataScreen(
     onViewDetail: (String) -> Unit,
     onSwitchKb: (String?) -> Unit = {}
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     val entities by viewModel.entities.collectAsState()
     val relations by viewModel.relations.collectAsState()
     val communities by viewModel.communities.collectAsState()
@@ -141,7 +146,7 @@ fun IntermediateDataScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .background(palette.bgPage)
     ) {
         // Header
         Column(
@@ -166,35 +171,33 @@ fun IntermediateDataScreen(
                         Icons.AutoMirrored.Filled.ArrowBack,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp),
-                        tint = Color(0xFF147EC5)
+                        tint = palette.brand
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(if (isSelectionMode) "取消选择" else "返回", fontSize = 14.sp, color = Color(0xFF147EC5))
+                    Text(if (isSelectionMode) "取消选择" else "返回", fontSize = 14.sp, color = palette.brand)
                 }
                 Spacer(modifier = Modifier.weight(1f))
                 if (isSelectionMode) {
                     TextButton(onClick = ::toggleSelectAll) {
                         val ids = currentListIds()
                         val isAllSelected = ids.isNotEmpty() && selectedIds.size == ids.size
-                        Text(if (isAllSelected) "取消全选" else "全选", color = Color(0xFF147EC5))
+                        Text(if (isAllSelected) "取消全选" else "全选", color = palette.brand)
                     }
                     TextButton(
                         onClick = { if (selectedIds.isNotEmpty()) pendingBulkDelete = true },
                         enabled = selectedIds.isNotEmpty()
                     ) {
-                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFFEF4444))
+                        Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp), tint = palette.semanticError)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("删除 (${selectedIds.size})", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                        Text("删除 (${selectedIds.size})", color = palette.semanticError, fontWeight = FontWeight.Bold)
                     }
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = stringResource(R.string.auto_90a51271),
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A),
+                    text = stringResource(R.string.auto_90a51271), style = MaterialTheme.typography.displayLarge,
+                    color = palette.textPrimary,
                     modifier = Modifier.weight(1f)
                 )
                 // Knowledge-base scope switcher. Tapping opens a simple
@@ -215,14 +218,14 @@ fun IntermediateDataScreen(
                         Text(
                             text = currentBaseName ?: "全部知识库",
                             fontSize = 12.sp,
-                            color = Color(0xFF147EC5),
+                            color = palette.brand,
                             fontWeight = FontWeight.SemiBold
                         )
                         Spacer(modifier = Modifier.width(2.dp))
                         Icon(
                             Icons.Default.ArrowDropDown,
                             contentDescription = null,
-                            tint = Color(0xFF147EC5),
+                            tint = palette.brand,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -233,8 +236,8 @@ fun IntermediateDataScreen(
         TabRow(
             selectedTabIndex = selectedTab,
             containerColor = Color.White,
-            contentColor = Color(0xFF147EC5),
-            divider = { HorizontalDivider(color = Color(0xFFF3F4F6)) }
+            contentColor = palette.brand,
+            divider = { HorizontalDivider(color = palette.bgSubtle) }
         ) {
             tabs.forEachIndexed { index, title ->
                 Tab(
@@ -347,7 +350,7 @@ fun IntermediateDataScreen(
                     performSingleDelete(req)
                     pendingSingleDelete = null
                 }) {
-                    Text(stringResource(R.string.auto_3755f56f), color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.auto_3755f56f), color = palette.semanticError, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -376,7 +379,7 @@ fun IntermediateDataScreen(
                     performBulkDelete()
                     pendingBulkDelete = false
                 }) {
-                    Text(stringResource(R.string.auto_a5c2dc91), color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.auto_a5c2dc91), color = palette.semanticError, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -407,7 +410,7 @@ fun IntermediateDataScreen(
                         Icon(
                             if (currentKbId == null) Icons.Default.Check else Icons.Default.BubbleChart,
                             contentDescription = null,
-                            tint = if (currentKbId == null) Color(0xFF147EC5) else Color(0xFF94A3B8),
+                            tint = if (currentKbId == null) palette.brand else palette.textMuted,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -415,7 +418,7 @@ fun IntermediateDataScreen(
                             stringResource(R.string.auto_6a782196),
                             fontSize = 15.sp,
                             fontWeight = if (currentKbId == null) FontWeight.Bold else FontWeight.Normal,
-                            color = Color(0xFF0F172A)
+                            color = palette.textPrimary
                         )
                     }
                     HorizontalDivider()
@@ -433,7 +436,7 @@ fun IntermediateDataScreen(
                             Icon(
                                 if (base.id == currentKbId) Icons.Default.Check else Icons.Default.BubbleChart,
                                 contentDescription = null,
-                                tint = if (base.id == currentKbId) Color(0xFF147EC5) else Color(0xFF94A3B8),
+                                tint = if (base.id == currentKbId) palette.brand else palette.textMuted,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(12.dp))
@@ -441,7 +444,7 @@ fun IntermediateDataScreen(
                                 base.name,
                                 fontSize = 15.sp,
                                 fontWeight = if (base.id == currentKbId) FontWeight.Bold else FontWeight.Normal,
-                                color = Color(0xFF0F172A)
+                                color = palette.textPrimary
                             )
                         }
                     }
@@ -468,9 +471,11 @@ private fun BulkSelectHeader(
     onToggleAll: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     val isAllSelected = totalCount > 0 && selectedCount == totalCount
     Surface(
-        color = Color(0xFFF1F5F9),
+        color = palette.bgSubtle,
         shape = RoundedCornerShape(10.dp),
         modifier = Modifier
             .fillMaxWidth()
@@ -486,11 +491,11 @@ private fun BulkSelectHeader(
                 modifier = Modifier
                     .size(22.dp)
                     .clip(CircleShape)
-                    .background(if (isAllSelected) Color(0xFF147EC5) else Color.White)
+                    .background(if (isAllSelected) palette.brand else Color.White)
                     .border(
                         BorderStroke(
                             1.dp,
-                            if (totalCount == 0) Color(0xFFE2E8F0) else Color(0xFF147EC5)
+                            if (totalCount == 0) palette.borderDefault else palette.brand
                         )
                     ),
                 contentAlignment = Alignment.Center
@@ -498,22 +503,20 @@ private fun BulkSelectHeader(
                 if (isAllSelected) {
                     Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
                 } else {
-                    Icon(Icons.Default.DoneAll, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.DoneAll, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(14.dp))
                 }
             }
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (isAllSelected) "已全选 $tabLabel" else "全选$tabLabel",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF0F172A)
+                    text = if (isAllSelected) "已全选 $tabLabel" else "全选$tabLabel", style = MaterialTheme.typography.titleSmall,
+                    color = palette.textPrimary
                 )
                 Text(
                     text = if (selectedCount > 0) "已选 $selectedCount / $totalCount 项"
                     else "共 $totalCount 项",
                     fontSize = 11.sp,
-                    color = Color(0xFF64748B)
+                    color = palette.textMuted
                 )
             }
             if (selectedCount > 0) {
@@ -521,9 +524,9 @@ private fun BulkSelectHeader(
                     onClick = onDelete,
                     enabled = selectedCount > 0
                 ) {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFFEF4444))
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.semanticError)
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("删除 ($selectedCount)", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Text("删除 ($selectedCount)", color = palette.semanticError, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -542,6 +545,10 @@ private fun EntityList(
     onDeleteSingle: (String) -> Unit,
     onViewDetail: (String) -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     if (entities.isEmpty()) {
         EmptyState("暂无提取的实体或概念")
     } else {
@@ -590,6 +597,8 @@ private fun EntityKindSection(
     onDeleteSingle: (String) -> Unit,
     onViewDetail: (String) -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     var expanded by remember(kind) { mutableStateOf(true) }
     val subGroups = remember(entities) {
         entities
@@ -604,7 +613,7 @@ private fun EntityKindSection(
         EntityKindHeader(
             title = kind.entityKindLabel(),
             count = entities.size,
-            color = kind.entityKindColor(),
+            color = kind.entityKindColor(palette),
             expanded = expanded,
             onToggle = { expanded = !expanded }
         )
@@ -641,6 +650,8 @@ private fun EntityGroupSection(
     onDeleteSingle: (String) -> Unit,
     onViewDetail: (String) -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     var expanded by remember(type) { mutableStateOf(false) }
     val visible = if (expanded) groupedEntities else groupedEntities.take(MAX_VISIBLE_PER_GROUP)
     val expandable = groupedEntities.size > MAX_VISIBLE_PER_GROUP
@@ -653,7 +664,7 @@ private fun EntityGroupSection(
             title = type.entityTypeLabel(),
             count = groupedEntities.size,
             shownCount = visible.size,
-            color = type.entityTypeColor(),
+            color = type.entityTypeColor(palette),
             expanded = expanded,
             expandable = expandable,
             onToggle = { expanded = !expanded }
@@ -682,7 +693,7 @@ private fun EntityGroupSection(
                             modifier = Modifier
                                 .size(20.dp)
                                 .clip(CircleShape)
-                                .background(if (isSelected) Color(0xFF147EC5) else Color(0xFFF1F5F9))
+                                .background(if (isSelected) palette.brand else palette.bgSubtle)
                                 .clickable { onToggleSelect(entity.id) },
                             contentAlignment = Alignment.Center
                         ) {
@@ -693,29 +704,27 @@ private fun EntityGroupSection(
                     Box(
                         modifier = Modifier
                             .size(28.dp)
-                            .background(type.entityTypeColor().copy(alpha = 0.12f), RoundedCornerShape(8.dp)),
+                            .background(type.entityTypeColor(palette).copy(alpha = 0.12f), RoundedCornerShape(spacing.sm)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             if (type == "concept") Icons.Default.Category else Icons.Default.BubbleChart,
                             contentDescription = null,
-                            tint = type.entityTypeColor(),
+                            tint = type.entityTypeColor(palette),
                             modifier = Modifier.size(14.dp)
                         )
                     }
                     Spacer(modifier = Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            entity.name,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF0F172A),
+                            entity.name, style = MaterialTheme.typography.titleSmall,
+                            color = palette.textPrimary,
                             maxLines = 1
                         )
                         Text(
                             "${type.entityTypeLabel()} · 权重 ${entity.weight.toInt()}",
                             fontSize = 11.sp,
-                            color = Color(0xFF5F87A3),
+                            color = palette.textSecondary,
                             maxLines = 1
                         )
                     }
@@ -756,9 +765,13 @@ private fun EntityKindHeader(
     expanded: Boolean,
     onToggle: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
         color = Color.White,
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(spacing.md),
         border = BorderStroke(1.dp, color.copy(alpha = 0.18f)),
         modifier = Modifier
             .fillMaxWidth()
@@ -771,7 +784,7 @@ private fun EntityKindHeader(
             Box(
                 modifier = Modifier
                     .size(26.dp)
-                    .background(color.copy(alpha = 0.12f), RoundedCornerShape(8.dp)),
+                    .background(color.copy(alpha = 0.12f), RoundedCornerShape(spacing.sm)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -782,7 +795,7 @@ private fun EntityKindHeader(
                 )
             }
             Spacer(modifier = Modifier.width(10.dp))
-            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            Text(title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
             Spacer(modifier = Modifier.width(8.dp))
             Surface(color = color.copy(alpha = 0.12f), shape = CircleShape) {
                 Text(
@@ -797,7 +810,7 @@ private fun EntityKindHeader(
             Icon(
                 Icons.Default.ArrowDropDown,
                 contentDescription = if (expanded) "收起" else "展开",
-                tint = Color(0xFF94A3B8),
+                tint = palette.textMuted,
                 modifier = Modifier
                     .size(20.dp)
                     .rotate(if (expanded) 180f else 0f)
@@ -818,6 +831,10 @@ private fun EntityGroupHeader(
     expandable: Boolean,
     onToggle: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     // 整个头部是点击区:点击切换展开/折叠。仅在有 > MAX_VISIBLE_PER_GROUP
     // 条时才有视觉效果(箭头旋转、显示"已折叠 N 条"),否则就是个普通小标题。
     Row(
@@ -837,12 +854,12 @@ private fun EntityGroupHeader(
             text = title,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF0F172A)
+            color = palette.textPrimary
         )
         Spacer(modifier = Modifier.width(8.dp))
         Surface(
             color = color.copy(alpha = 0.12f),
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(spacing.md)
         ) {
             Text(
                 text = "$count",
@@ -857,13 +874,13 @@ private fun EntityGroupHeader(
             Text(
                 text = if (expanded) "已展开全部" else "已折叠 ${count - shownCount} 条",
                 fontSize = 10.sp,
-                color = Color(0xFF94A3B8)
+                color = palette.textMuted
             )
             Spacer(modifier = Modifier.weight(1f))
             Icon(
                 Icons.Default.ArrowDropDown,
                 contentDescription = if (expanded) "收起" else "展开",
-                tint = Color(0xFF94A3B8),
+                tint = palette.textMuted,
                 modifier = Modifier
                     .size(18.dp)
                     .rotate(if (expanded) 180f else 0f)
@@ -872,7 +889,7 @@ private fun EntityGroupHeader(
             Spacer(modifier = Modifier.weight(1f))
             HorizontalDivider(
                 modifier = Modifier.width(96.dp),
-                color = Color(0xFFE2E8F0)
+                color = palette.borderDefault
             )
         }
     }
@@ -891,8 +908,8 @@ private fun String.entityKindLabel(): String = when (this) {
     else -> "实体"
 }
 
-private fun String.entityKindColor(): Color = when (this) {
-    "concept" -> Color(0xFF16A34A)
+private fun String.entityKindColor(palette: Palette): Color = when (this) {
+    "concept" -> palette.semanticSuccess
     else -> Color(0xFF0284C7)
 }
 
@@ -928,12 +945,12 @@ private fun String.entityTypeLabel(): String = when (this) {
     else -> replaceFirstChar { char -> char.uppercase() }
 }
 
-private fun String.entityTypeColor(): Color = when (this) {
-    in conceptTypeNames -> Color(0xFF16A34A)
+private fun String.entityTypeColor(palette: Palette): Color = when (this) {
+    in conceptTypeNames -> palette.semanticSuccess
     "person" -> Color(0xFFDB2777)
     "organization", "org" -> Color(0xFF7C3AED)
     "location", "place" -> Color(0xFF0891B2)
-    "event" -> Color(0xFFEA580C)
+    "event" -> palette.semanticWarning
     "source" -> Color(0xFF475569)
     else -> Color(0xFF0284C7)
 }
@@ -948,6 +965,10 @@ private fun RelationList(
     onLongPress: (String) -> Unit,
     onDeleteSingle: (String) -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     if (relations.isEmpty()) {
         EmptyState("暂无识别的关联关系")
     } else {
@@ -992,7 +1013,7 @@ private fun RelationList(
                                 modifier = Modifier
                                     .size(20.dp)
                                     .clip(CircleShape)
-                                    .background(if (isSelected) Color(0xFF147EC5) else Color(0xFFF1F5F9)),
+                                    .background(if (isSelected) palette.brand else palette.bgSubtle),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (isSelected) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
@@ -1005,7 +1026,7 @@ private fun RelationList(
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(relation.relationType, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF6366F1), maxLines = 1)
                                 Spacer(modifier = Modifier.weight(1f))
-                                Text("置信度 ${(relation.confidence * 100).toInt()}%", fontSize = 10.sp, color = Color(0xFFA3A3A3), maxLines = 1)
+                                Text("置信度 ${(relation.confidence * 100).toInt()}%", fontSize = 10.sp, color = palette.textTertiary, maxLines = 1)
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Row(
@@ -1014,14 +1035,14 @@ private fun RelationList(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Surface(
-                                    color = Color(0xFFF1F5F9),
+                                    color = palette.bgSubtle,
                                     shape = RoundedCornerShape(6.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text(
                                         fromName,
                                         fontSize = 12.sp,
-                                        color = Color(0xFF0F172A),
+                                        color = palette.textPrimary,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1
@@ -1031,17 +1052,17 @@ private fun RelationList(
                                     Icons.AutoMirrored.Filled.ArrowForward,
                                     contentDescription = null,
                                     modifier = Modifier.size(14.dp),
-                                    tint = Color(0xFF94A3B8)
+                                    tint = palette.textMuted
                                 )
                                 Surface(
-                                    color = Color(0xFFF1F5F9),
+                                    color = palette.bgSubtle,
                                     shape = RoundedCornerShape(6.dp),
                                     modifier = Modifier.weight(1f)
                                 ) {
                                     Text(
                                         toName,
                                         fontSize = 12.sp,
-                                        color = Color(0xFF0F172A),
+                                        color = palette.textPrimary,
                                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1
@@ -1087,6 +1108,8 @@ private fun CollapsibleSectionHeader(
     expandable: Boolean,
     onToggle: () -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1098,18 +1121,18 @@ private fun CollapsibleSectionHeader(
             text = title,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
-            color = Color(0xFF0F172A)
+            color = palette.textPrimary
         )
         Spacer(modifier = Modifier.width(8.dp))
         Surface(
             color = Color(0xFFE0F2FE),
-            shape = RoundedCornerShape(12.dp)
+            shape = RoundedCornerShape(spacing.md)
         ) {
             Text(
                 text = "$total",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF147EC5),
+                color = palette.brand,
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
             )
         }
@@ -1118,13 +1141,13 @@ private fun CollapsibleSectionHeader(
             Text(
                 text = if (expanded) "已展开全部" else "已折叠 ${total - shown} 条",
                 fontSize = 10.sp,
-                color = Color(0xFF94A3B8)
+                color = palette.textMuted
             )
             Spacer(modifier = Modifier.weight(1f))
             Icon(
                 Icons.Default.ArrowDropDown,
                 contentDescription = if (expanded) "收起" else "展开",
-                tint = Color(0xFF94A3B8),
+                tint = palette.textMuted,
                 modifier = Modifier
                     .size(18.dp)
                     .rotate(if (expanded) 180f else 0f)
@@ -1135,18 +1158,22 @@ private fun CollapsibleSectionHeader(
 
 @Composable
 private fun ExpandToggleRow(expanded: Boolean, remaining: Int, onToggle: () -> Unit) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     TextButton(
         onClick = onToggle,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(vertical = 4.dp)
     ) {
         if (expanded) {
-            Text(stringResource(R.string.auto_5d581564), fontSize = 12.sp, color = Color(0xFF64748B))
+            Text(stringResource(R.string.auto_5d581564), fontSize = 12.sp, color = palette.textMuted)
             Spacer(modifier = Modifier.width(4.dp))
             Icon(
                 Icons.Default.ArrowDropDown,
                 contentDescription = null,
-                tint = Color(0xFF64748B),
+                tint = palette.textMuted,
                 modifier = Modifier
                     .size(16.dp)
                     .rotate(180f)
@@ -1155,13 +1182,13 @@ private fun ExpandToggleRow(expanded: Boolean, remaining: Int, onToggle: () -> U
             Text(
                 "展开更多（还有 $remaining 条）",
                 fontSize = 12.sp,
-                color = Color(0xFF147EC5)
+                color = palette.brand
             )
             Spacer(modifier = Modifier.width(4.dp))
             Icon(
                 Icons.Default.ArrowDropDown,
                 contentDescription = null,
-                tint = Color(0xFF147EC5),
+                tint = palette.brand,
                 modifier = Modifier.size(16.dp)
             )
         }
@@ -1177,6 +1204,10 @@ private fun CommunityList(
     onLongPress: (String) -> Unit,
     onDeleteSingle: (String) -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     if (communities.isEmpty()) {
         EmptyState("暂无形成的主题群")
     } else {
@@ -1217,7 +1248,7 @@ private fun CommunityList(
                                 modifier = Modifier
                                     .size(20.dp)
                                     .clip(CircleShape)
-                                    .background(if (isSelected) Color(0xFF147EC5) else Color(0xFFF1F5F9)),
+                                    .background(if (isSelected) palette.brand else palette.bgSubtle),
                                 contentAlignment = Alignment.Center
                             ) {
                                 if (isSelected) Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
@@ -1225,9 +1256,9 @@ private fun CommunityList(
                             Spacer(modifier = Modifier.width(10.dp))
                         }
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(community.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), maxLines = 1)
+                            Text(community.name, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, maxLines = 1)
                             Spacer(modifier = Modifier.height(2.dp))
-                            Text(community.summary, fontSize = 12.sp, color = Color(0xFF5F87A3), lineHeight = 18.sp, maxLines = 2)
+                            Text(community.summary, fontSize = 12.sp, color = palette.textSecondary, lineHeight = 18.sp, maxLines = 2)
                         }
                         if (!isSelectionMode) {
                             IconButton(
@@ -1255,11 +1286,15 @@ private fun CommunityList(
 
 @Composable
 private fun EmptyState(text: String) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.BubbleChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = Color(0xFFDBEEFF))
+            Icon(Icons.Default.BubbleChart, contentDescription = null, modifier = Modifier.size(48.dp), tint = palette.borderBrand)
             Spacer(modifier = Modifier.height(16.dp))
-            Text(text, fontSize = 14.sp, color = Color(0xFFA3A3A3))
+            Text(text, fontSize = 14.sp, color = palette.textTertiary)
         }
     }
 }

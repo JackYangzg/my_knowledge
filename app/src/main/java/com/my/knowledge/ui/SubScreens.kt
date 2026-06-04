@@ -24,6 +24,8 @@ import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.ThreadViewModel
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -32,6 +34,8 @@ fun KnowledgeContextScreen(
     threadViewModel: ThreadViewModel,
     onBack: () -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     val bases by homeViewModel.knowledgeBases.collectAsState()
     val formalBases = bases.filter { it.type != "unfiled" && it.type != "system" }
     var selectedKbId by remember { mutableStateOf<String?>(null) }
@@ -50,7 +54,7 @@ fun KnowledgeContextScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF)),
+            .background(palette.bgPage),
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
         item {
@@ -59,9 +63,9 @@ fun KnowledgeContextScreen(
                 hint = stringResource(R.string.auto_b721d9b3),
                 back = {
                     TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.brand)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
+                        Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = palette.brand)
                     }
                 },
                 action = {
@@ -70,10 +74,10 @@ fun KnowledgeContextScreen(
                             onClick = { threadViewModel.triggerManualEvolution() },
                             shape = CircleShape,
                             color = Color.White,
-                            border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+                            border = BorderStroke(1.dp, palette.borderBrand),
                             shadowElevation = 1.dp
                         ) {
-                            Text(stringResource(R.string.auto_146d3b54), fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                            Text(stringResource(R.string.auto_146d3b54), fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                         }
                     }
                 }
@@ -84,10 +88,10 @@ fun KnowledgeContextScreen(
             item {
                 Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.AccountTree, contentDescription = null, tint = Color(0xFFA3A3A3), modifier = Modifier.size(48.dp))
+                        Icon(Icons.Default.AccountTree, contentDescription = null, tint = palette.textTertiary, modifier = Modifier.size(48.dp))
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text(stringResource(R.string.auto_d09adbd6), color = Color(0xFF5F87A3), fontSize = 14.sp)
-                        Text(stringResource(R.string.auto_19cab229), fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                        Text(stringResource(R.string.auto_d09adbd6), color = palette.textSecondary, fontSize = 14.sp)
+                        Text(stringResource(R.string.auto_19cab229), fontSize = 12.sp, color = palette.textTertiary)
                     }
                 }
             }
@@ -109,7 +113,7 @@ fun KnowledgeContextScreen(
                             },
                             label = { Text(base.name, fontSize = 12.sp) },
                             colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = Color(0xFF147EC5),
+                                selectedContainerColor = palette.brand,
                                 selectedLabelColor = Color.White
                             )
                         )
@@ -122,38 +126,38 @@ fun KnowledgeContextScreen(
                     Column(modifier = Modifier.padding(horizontal = 20.dp)) {
                         // Description
                         Surface(
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(spacing.lg),
                             color = Color.White,
                             shadowElevation = 1.dp,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(stringResource(R.string.auto_153042ed), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                                Text(stringResource(R.string.auto_153042ed), style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
                                 Spacer(modifier = Modifier.height(6.dp))
-                                Text(thread!!.description, fontSize = 13.sp, color = Color(0xFF5F87A3), lineHeight = 20.sp)
+                                Text(thread!!.description, fontSize = 13.sp, color = palette.textSecondary, lineHeight = 20.sp)
                             }
                         }
 
                         // Core question
                         Surface(
-                            shape = RoundedCornerShape(16.dp),
-                            color = Color(0xFFEFF7FF),
+                            shape = RoundedCornerShape(spacing.lg),
+                            color = palette.brandSubtle,
                             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                         ) {
                             Row(
                                 modifier = Modifier.padding(16.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Default.HelpOutline, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.HelpOutline, contentDescription = null, tint = palette.brand, modifier = Modifier.size(18.dp))
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text(thread!!.coreQuestion, fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A))
+                                Text(thread!!.coreQuestion, style = MaterialTheme.typography.labelLarge, color = palette.textPrimary)
                             }
                         }
 
                         if (mainlines.isNotEmpty()) {
                             SectionHeader("知识主线", Icons.Default.Timeline)
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(spacing.md),
                                 color = Color.White,
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                             ) {
@@ -163,13 +167,13 @@ fun KnowledgeContextScreen(
                                             Box(
                                                 modifier = Modifier
                                                     .size(20.dp)
-                                                    .background(Color(0xFF147EC5), CircleShape),
+                                                    .background(palette.brand, CircleShape),
                                                 contentAlignment = Alignment.Center
                                             ) {
                                                 Text("${idx + 1}", fontSize = 10.sp, color = Color.White, fontWeight = FontWeight.Bold)
                                             }
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(line, fontSize = 13.sp, color = Color(0xFF0F172A))
+                                            Text(line, fontSize = 13.sp, color = palette.textPrimary)
                                         }
                                         if (idx < mainlines.size - 1) {
                                             Spacer(modifier = Modifier.height(4.dp))
@@ -178,7 +182,7 @@ fun KnowledgeContextScreen(
                                                     .padding(start = 9.dp)
                                                     .width(2.dp)
                                                     .height(12.dp)
-                                                    .background(Color(0xFFDBEEFF))
+                                                    .background(palette.borderBrand)
                                             )
                                             Spacer(modifier = Modifier.height(4.dp))
                                         }
@@ -190,7 +194,7 @@ fun KnowledgeContextScreen(
                         if (relations.isNotEmpty()) {
                             SectionHeader("知识关联", Icons.Default.AccountTree)
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(spacing.md),
                                 color = Color.White,
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                             ) {
@@ -201,20 +205,20 @@ fun KnowledgeContextScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Surface(
-                                                color = Color(0xFFEFF7FF),
+                                                color = palette.brandSubtle,
                                                 shape = RoundedCornerShape(6.dp)
                                             ) {
-                                                Text(rel.from, fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                                Text(rel.from, fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                                             }
-                                            Text(" → ", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                                            Text(" → ", fontSize = 12.sp, color = palette.textTertiary)
                                             Surface(
-                                                color = Color(0xFFEFF7FF),
+                                                color = palette.brandSubtle,
                                                 shape = RoundedCornerShape(6.dp)
                                             ) {
-                                                Text(rel.to, fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
+                                                Text(rel.to, fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp))
                                             }
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(rel.relation, fontSize = 11.sp, color = Color(0xFF5F87A3))
+                                            Text(rel.relation, fontSize = 11.sp, color = palette.textSecondary)
                                         }
                                     }
                                 }
@@ -224,7 +228,7 @@ fun KnowledgeContextScreen(
                         if (graphEntities.isNotEmpty()) {
                             SectionHeader("实体关系图谱", Icons.Default.Hub)
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(spacing.md),
                                 color = Color.White,
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                             ) {
@@ -232,16 +236,16 @@ fun KnowledgeContextScreen(
                                     Text(
                                         "${graphEntities.size} 个实体 · ${graphRelations.size} 条关系",
                                         fontSize = 12.sp,
-                                        color = Color(0xFF5F87A3)
+                                        color = palette.textSecondary
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
                                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                                         graphEntities.take(16).forEach { entity ->
-                                            Surface(color = Color(0xFFEFF7FF), shape = CircleShape) {
+                                            Surface(color = palette.brandSubtle, shape = CircleShape) {
                                                 Text(
                                                     entity.name,
                                                     fontSize = 11.sp,
-                                                    color = Color(0xFF147EC5),
+                                                    color = palette.brand,
                                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                 )
                                             }
@@ -254,15 +258,15 @@ fun KnowledgeContextScreen(
                         if (graphCommunities.isNotEmpty()) {
                             SectionHeader("知识社区", Icons.Default.Groups)
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(spacing.md),
                                 color = Color.White,
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                             ) {
                                 Column(modifier = Modifier.padding(16.dp)) {
                                     graphCommunities.take(6).forEach { community ->
                                         Column(modifier = Modifier.padding(vertical = 4.dp)) {
-                                            Text(community.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                                            Text(community.summary, fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 2.dp))
+                                            Text(community.name, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
+                                            Text(community.summary, fontSize = 12.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
                                         }
                                     }
                                 }
@@ -272,7 +276,7 @@ fun KnowledgeContextScreen(
                         if (gaps.isNotEmpty()) {
                             SectionHeader("知识缺口", Icons.Default.WarningAmber)
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(spacing.md),
                                 color = Color(0xFFFFF7ED),
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                             ) {
@@ -282,7 +286,7 @@ fun KnowledgeContextScreen(
                                             modifier = Modifier.padding(vertical = 2.dp),
                                             verticalAlignment = Alignment.Top
                                         ) {
-                                            Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = Color(0xFFEA580C), modifier = Modifier.size(6.dp).padding(top = 6.dp))
+                                            Icon(Icons.Default.FiberManualRecord, contentDescription = null, tint = palette.semanticWarning, modifier = Modifier.size(6.dp).padding(top = 6.dp))
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Text(gap, fontSize = 13.sp, color = Color(0xFF92400E))
                                         }
@@ -294,7 +298,7 @@ fun KnowledgeContextScreen(
                         if (suggestions.isNotEmpty()) {
                             SectionHeader("探索建议", Icons.Default.TipsAndUpdates)
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(spacing.md),
                                 color = Color.White,
                                 modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                             ) {
@@ -306,7 +310,7 @@ fun KnowledgeContextScreen(
                                         ) {
                                             Icon(Icons.Default.Lightbulb, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(14.dp))
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(s, fontSize = 13.sp, color = Color(0xFF0F172A))
+                                            Text(s, fontSize = 13.sp, color = palette.textPrimary)
                                         }
                                     }
                                 }
@@ -316,7 +320,7 @@ fun KnowledgeContextScreen(
                         if (logs.isNotEmpty()) {
                             SectionHeader("演进日志 (v${thread!!.version})", Icons.Default.History)
                             Surface(
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(spacing.md),
                                 color = Color.White,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
@@ -330,23 +334,23 @@ fun KnowledgeContextScreen(
                                             Icon(
                                                 if (log.triggerType == "manual") Icons.Default.Person else Icons.Default.Settings,
                                                 contentDescription = null,
-                                                tint = Color(0xFFA3A3A3),
+                                                tint = palette.textTertiary,
                                                 modifier = Modifier.size(14.dp).padding(top = 2.dp)
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Column {
-                                                Text(log.summary, fontSize = 12.sp, color = Color(0xFF0F172A))
+                                                Text(log.summary, fontSize = 12.sp, color = palette.textPrimary)
                                                 Text(
                                                     log.triggerType + " · " + java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(log.createdAt)),
                                                     fontSize = 10.sp,
-                                                    color = Color(0xFFA3A3A3)
+                                                    color = palette.textTertiary
                                                 )
                                             }
                                         }
                                     }
                                     if (logs.size > 2) {
                                         HorizontalDivider(
-                                            color = Color(0xFFF1F5F9),
+                                            color = palette.bgSubtle,
                                             modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
                                         )
                                         TextButton(
@@ -356,7 +360,7 @@ fun KnowledgeContextScreen(
                                             Text(
                                                 if (showAllEvolutionLogs) "收起日志" else "展开全部 ${logs.size} 条日志",
                                                 fontSize = 12.sp,
-                                                color = Color(0xFF147EC5),
+                                                color = palette.brand,
                                                 fontWeight = FontWeight.SemiBold
                                             )
                                         }
@@ -370,9 +374,9 @@ fun KnowledgeContextScreen(
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.TouchApp, contentDescription = null, tint = Color(0xFFA3A3A3), modifier = Modifier.size(32.dp))
+                            Icon(Icons.Default.TouchApp, contentDescription = null, tint = palette.textTertiary, modifier = Modifier.size(32.dp))
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text(stringResource(R.string.auto_b257119b), fontSize = 14.sp, color = Color(0xFF5F87A3))
+                            Text(stringResource(R.string.auto_b257119b), fontSize = 14.sp, color = palette.textSecondary)
                         }
                     }
                 }
@@ -380,9 +384,9 @@ fun KnowledgeContextScreen(
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = Color(0xFF147EC5))
+                            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = palette.brand)
                             Spacer(modifier = Modifier.height(12.dp))
-                            Text(stringResource(R.string.auto_5b54efff), fontSize = 13.sp, color = Color(0xFF5F87A3))
+                            Text(stringResource(R.string.auto_5b54efff), fontSize = 13.sp, color = palette.textSecondary)
                         }
                     }
                 }
@@ -393,18 +397,26 @@ fun KnowledgeContextScreen(
 
 @Composable
 private fun SectionHeader(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(top = 8.dp, bottom = 6.dp)
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF5F87A3))
+        Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.textSecondary)
         Spacer(modifier = Modifier.width(6.dp))
-        Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF5F87A3))
+        Text(title, style = MaterialTheme.typography.titleSmall, color = palette.textSecondary)
     }
 }
 
 @Composable
 fun FragmentOrganizeScreen(onBack: () -> Unit) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     var filter by remember { mutableStateOf("全部") }
     val filters = listOf("全部", "待归类", "可提炼", "可归档")
     val fragments = KnowledgeManager.fragments
@@ -412,7 +424,7 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF)), // Ocean 25
+            .background(palette.bgPage), // Ocean 25
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
         item {
@@ -421,9 +433,9 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
                 hint = stringResource(R.string.auto_9340db23),
                 back = {
                     TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.brand)
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
+                        Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = palette.brand)
                     }
                 },
                 action = {
@@ -431,10 +443,10 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
                         onClick = {},
                         shape = CircleShape,
                         color = Color.White,
-                        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+                        border = BorderStroke(1.dp, palette.borderBrand),
                         shadowElevation = 1.dp
                     ) {
-                        Text(stringResource(R.string.auto_dcce9a14), fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                        Text(stringResource(R.string.auto_dcce9a14), fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                     }
                 }
             )
@@ -459,13 +471,13 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
                         Surface(
                             onClick = { filter = item },
                             shape = CircleShape,
-                            color = if (selected) Color(0xFF147EC5) else Color.White,
-                            border = if (selected) null else BorderStroke(1.dp, Color(0xFFDBEEFF)),
+                            color = if (selected) palette.brand else Color.White,
+                            border = if (selected) null else BorderStroke(1.dp, palette.borderBrand)
                         ) {
                             Text(
                                 text = item,
                                 fontSize = 12.sp,
-                                color = if (selected) Color.White else Color(0xFF5F87A3),
+                                color = if (selected) Color.White else palette.textSecondary,
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                             )
                         }
@@ -477,14 +489,14 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
         if (fragments.isEmpty()) {
             item {
                 Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.auto_b05a59ae), color = Color(0xFF5F87A3), fontSize = 14.sp)
+                    Text(stringResource(R.string.auto_b05a59ae), color = palette.textSecondary, fontSize = 14.sp)
                 }
             }
         } else {
             item {
                 Section(title = stringResource(R.string.auto_73565d17)) {
                     fragments.forEachIndexed { index, fragment ->
-                        if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
+                        if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = palette.borderBrand)
                         QuietCell(
                             icon = when {
                                 fragment.sourceFile.endsWith(".md") -> Icons.Default.Description
@@ -503,16 +515,20 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
 
 @Composable
 fun StatCard(modifier: Modifier = Modifier, value: String, label: String) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(spacing.lg),
         color = Color.White,
-        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+        border = BorderStroke(1.dp, palette.borderBrand),
         shadowElevation = 1.dp
     ) {
         Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text(label, fontSize = 11.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 2.dp))
+            Text(value, style = MaterialTheme.typography.headlineMedium, color = palette.textPrimary)
+            Text(label, fontSize = 11.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }

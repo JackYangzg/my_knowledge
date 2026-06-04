@@ -37,6 +37,8 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.io.File
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun ComposeMarkdown(
@@ -44,6 +46,10 @@ fun ComposeMarkdown(
     onLinkClick: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         val lines = markdown.split("\n")
         var inCodeBlock = false
@@ -73,7 +79,7 @@ fun ComposeMarkdown(
                 trimmed.startsWith("## ") -> renderHeading(trimmed.removePrefix("## "), 2, onLinkClick)
                 trimmed.startsWith("# ") -> renderHeading(trimmed.removePrefix("# "), 1, onLinkClick)
                 trimmed.startsWith("---") || trimmed.startsWith("***") ->
-                    HorizontalDivider(color = Color(0xFFE5E7EB), modifier = Modifier.padding(vertical = 8.dp))
+                    HorizontalDivider(color = palette.borderDefault, modifier = Modifier.padding(vertical = 8.dp))
                 trimmed.startsWith("- ") || trimmed.startsWith("* ") -> {
                     val bullet = trimmed.removePrefix("- ").removePrefix("* ")
                     Row(modifier = Modifier.padding(start = 4.dp)) {
@@ -118,16 +124,20 @@ fun ComposeMarkdown(
 
 @Composable
 private fun renderCodeBlock(code: String) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
         color = Color(0xFF1E293B),
-        shape = RoundedCornerShape(8.dp)
+        shape = RoundedCornerShape(spacing.sm)
     ) {
         Text(
             text = code,
             fontSize = 13.sp,
             fontFamily = FontFamily.Monospace,
-            color = Color(0xFFE2E8F0),
+            color = palette.borderDefault,
             modifier = Modifier.padding(12.dp),
             lineHeight = 20.sp
         )
@@ -136,17 +146,25 @@ private fun renderCodeBlock(code: String) {
 
 @Composable
 private fun renderHeading(text: String, level: Int, onLinkClick: (String) -> Unit) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val fontSize = when (level) { 1 -> 22.sp; 2 -> 18.sp; else -> 16.sp }
     val topPad = when (level) { 1 -> 16.dp; 2 -> 12.dp; else -> 8.dp }
     InlineMarkdownText(
         text = text, onLinkClick = onLinkClick,
         modifier = Modifier.padding(top = topPad, bottom = 4.dp),
-        style = TextStyle(fontSize = fontSize, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+        style = TextStyle(fontSize = fontSize, fontWeight = FontWeight.Bold, color = palette.textPrimary)
     )
 }
 
 @Composable
 fun ImageBlock(raw: String, onLinkClick: (String) -> Unit) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val alt = raw.substringAfter("![").substringBefore("]")
     val uri = raw.substringAfter("](").substringBefore(")")
     val context = LocalContext.current
@@ -169,20 +187,20 @@ fun ImageBlock(raw: String, onLinkClick: (String) -> Unit) {
 
     Surface(
         onClick = { onLinkClick(uri) },
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(spacing.md),
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
     ) {
         if (bitmap != null) {
             Image(bitmap = bitmap.asImageBitmap(), contentDescription = alt,
-                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)),
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(spacing.sm)),
                 contentScale = ContentScale.FillWidth)
         } else {
-            Box(modifier = Modifier.fillMaxWidth().height(120.dp).background(Color(0xFFF1F5F9), RoundedCornerShape(8.dp)),
+            Box(modifier = Modifier.fillMaxWidth().height(120.dp).background(palette.bgSubtle, RoundedCornerShape(spacing.sm)),
                 contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(36.dp), tint = Color(0xFFCBD5E1))
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text(alt.ifEmpty { "Image" }, fontSize = 12.sp, color = Color(0xFF94A3B8))
+                    Text(alt.ifEmpty { "Image" }, fontSize = 12.sp, color = palette.textMuted)
                 }
             }
         }
@@ -191,15 +209,19 @@ fun ImageBlock(raw: String, onLinkClick: (String) -> Unit) {
 
 @Composable
 fun AttachmentBlock(raw: String, onLinkClick: (String) -> Unit) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val name = raw.substringAfter("[").substringBefore("]")
     val uri = raw.substringAfter("(").substringBefore(")")
     val isPdf = uri.endsWith(".pdf", ignoreCase = true)
-    Surface(onClick = { onLinkClick(uri) }, shape = RoundedCornerShape(12.dp),
-        color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, Color(0xFFE2E8F0)),
+    Surface(onClick = { onLinkClick(uri) }, shape = RoundedCornerShape(spacing.md),
+        color = Color(0xFFF8FAFC), border = BorderStroke(1.dp, palette.borderDefault),
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(if (isPdf) Icons.AutoMirrored.Filled.InsertDriveFile else Icons.Default.AttachFile,
-                contentDescription = null, modifier = Modifier.size(24.dp), tint = Color(0xFF64748B))
+                contentDescription = null, modifier = Modifier.size(24.dp), tint = palette.textMuted)
             Spacer(modifier = Modifier.width(12.dp))
             Text(text = name, fontSize = 14.sp, color = Color(0xFF1E293B),
                 maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
@@ -213,8 +235,13 @@ fun AttachmentBlock(raw: String, onLinkClick: (String) -> Unit) {
 private fun InlineMarkdownText(
     text: String, onLinkClick: (String) -> Unit,
     modifier: Modifier = Modifier,
-    style: TextStyle = TextStyle(fontSize = 16.sp, lineHeight = 28.sp, color = Color(0xFF262626))
+    style: TextStyle? = null
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    val effectiveStyle = style ?: TextStyle(color = palette.textPrimary)
     val annotated = buildAnnotatedString {
         val all = Regex("(\\*\\*(.+?)\\*\\*)|(\\*(.+?)\\*)|(`([^`]+)`)|(\\[(.+?)\\]\\((.+?)\\))")
         var last = 0
@@ -223,9 +250,9 @@ private fun InlineMarkdownText(
             when {
                 m.groups[1] != null -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(m.groups[2]!!.value) }
                 m.groups[3] != null -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(m.groups[4]!!.value) }
-                m.groups[5] != null -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color(0xFFF1F5F9))) { append(m.groups[6]!!.value) }
+                m.groups[5] != null -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = palette.bgSubtle)) { append(m.groups[6]!!.value) }
                 m.groups[7] != null -> {
-                    withStyle(SpanStyle(color = Color(0xFF147EC5), textDecoration = TextDecoration.Underline)) {
+                    withStyle(SpanStyle(color = palette.brand, textDecoration = TextDecoration.Underline)) {
                         pushStringAnnotation("link", m.groups[9]!!.value); append(m.groups[8]!!.value); pop()
                     }
                 }
@@ -233,7 +260,7 @@ private fun InlineMarkdownText(
         }
         append(text.substring(last))
     }
-    ClickableText(text = annotated, modifier = modifier.fillMaxWidth(), style = style) { offset ->
+    ClickableText(text = annotated, modifier = modifier.fillMaxWidth(), style = effectiveStyle) { offset ->
         annotated.getStringAnnotations("link", offset, offset).firstOrNull()?.let { onLinkClick(it.item) }
     }
 }

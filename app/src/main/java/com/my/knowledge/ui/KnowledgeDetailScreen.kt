@@ -43,6 +43,8 @@ import com.my.knowledge.data.ai.ScopeType
 import kotlin.math.roundToInt
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun KnowledgeDetailScreen(
@@ -56,6 +58,10 @@ fun KnowledgeDetailScreen(
     onOpenItem: (String) -> Unit = {},
     onOpenIntermediate: (String) -> Unit = {}
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val items by viewModel.items.collectAsState()
     val hasMore by viewModel.hasMore.collectAsState()
     val isLoadingMore by viewModel.isLoadingMore.collectAsState()
@@ -112,7 +118,7 @@ fun KnowledgeDetailScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .background(palette.bgPage)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
         // Header
@@ -132,10 +138,10 @@ fun KnowledgeDetailScreen(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), style = MaterialTheme.typography.titleSmall, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -148,12 +154,12 @@ fun KnowledgeDetailScreen(
                         text = kbName,
                         fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0F172A)
+                        color = palette.textPrimary
                     )
                     Text(
                         text = if (itemCount > 0) "共 $itemCount 条知识" else "暂无知识",
                         fontSize = 13.sp,
-                        color = Color(0xFF5F87A3),
+                        color = palette.textSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
@@ -166,11 +172,11 @@ fun KnowledgeDetailScreen(
                             Icon(
                                 Icons.Default.Hub,
                                 contentDescription = null,
-                                tint = Color(0xFF147EC5),
+                                tint = palette.brand,
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(R.string.auto_1503df87), fontSize = 12.sp, color = Color(0xFF147EC5))
+                            Text(stringResource(R.string.auto_1503df87), fontSize = 12.sp, color = palette.brand)
                         }
                     }
                     // In-place import. Always visible (not gated on
@@ -199,12 +205,12 @@ fun KnowledgeDetailScreen(
                             },
                             modifier = Modifier
                                 .size(36.dp)
-                                .background(Color(0xFFF7FBFF), RoundedCornerShape(10.dp))
+                                .background(palette.bgPage, RoundedCornerShape(10.dp))
                         ) {
                             Icon(
                                 Icons.Default.FileUpload,
                                 contentDescription = "导入到本知识库",
-                                tint = Color(0xFF147EC5),
+                                tint = palette.brand,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -218,12 +224,12 @@ fun KnowledgeDetailScreen(
                             },
                             modifier = Modifier
                                 .size(36.dp)
-                                .background(Color(0xFFF7FBFF), RoundedCornerShape(10.dp))
+                                .background(palette.bgPage, RoundedCornerShape(10.dp))
                         ) {
                             Icon(
                                 Icons.Default.Download,
                                 contentDescription = "导出选中",
-                                tint = Color(0xFF147EC5),
+                                tint = palette.brand,
                                 modifier = Modifier.size(18.dp)
                             )
                         }
@@ -235,12 +241,12 @@ fun KnowledgeDetailScreen(
                         },
                         modifier = Modifier
                             .size(36.dp)
-                            .background(Color(0xFFF7FBFF), RoundedCornerShape(10.dp))
+                            .background(palette.bgPage, RoundedCornerShape(10.dp))
                     ) {
                         Icon(
                             Icons.Default.Checklist,
                             contentDescription = "多选",
-                            tint = if (selectionMode) Color(0xFFEA580C) else Color(0xFF147EC5),
+                            tint = if (selectionMode) palette.semanticWarning else palette.brand,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -248,12 +254,12 @@ fun KnowledgeDetailScreen(
                         onClick = { showSearch = !showSearch },
                         modifier = Modifier
                             .size(36.dp)
-                            .background(Color(0xFFF7FBFF), RoundedCornerShape(10.dp))
+                            .background(palette.bgPage, RoundedCornerShape(10.dp))
                     ) {
                         Icon(
                             Icons.Default.Search,
                             contentDescription = "搜索",
-                            tint = Color(0xFF147EC5),
+                            tint = palette.brand,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -266,13 +272,13 @@ fun KnowledgeDetailScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text(stringResource(R.string.auto_c5a0477b), color = Color(0xFFA3A3A3)) },
+                    placeholder = { Text(stringResource(R.string.auto_c5a0477b), color = palette.textTertiary) },
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(spacing.md),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFF147EC5),
-                        unfocusedBorderColor = Color(0xFFDBEEFF)
+                        focusedBorderColor = palette.brand,
+                        unfocusedBorderColor = palette.borderBrand
                     )
                 )
             }
@@ -282,7 +288,7 @@ fun KnowledgeDetailScreen(
                 Text(
                     text = "已选择 ${selectedIds.size} 条",
                     fontSize = 12.sp,
-                    color = Color(0xFF5F87A3)
+                    color = palette.textSecondary
                 )
             }
         }
@@ -311,7 +317,7 @@ fun KnowledgeDetailScreen(
                     Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
                         Text(
                             if (searchQuery.isNotEmpty()) "未找到匹配结果" else "该知识库尚无已整理知识",
-                            color = Color(0xFF5F87A3),
+                            color = palette.textSecondary,
                             fontSize = 14.sp
                         )
                     }
@@ -363,7 +369,7 @@ fun KnowledgeDetailScreen(
                 properties = PopupProperties(focusable = true)
             ) {
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(spacing.sm),
                     color = Color.White,
                     shadowElevation = 8.dp,
                     tonalElevation = 2.dp
@@ -415,7 +421,7 @@ fun KnowledgeDetailScreen(
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Surface(
-                                        color = Color(0xFFEFF7FF),
+                                        color = palette.brandSubtle,
                                         shape = RoundedCornerShape(4.dp),
                                         modifier = Modifier.size(24.dp)
                                     ) {
@@ -423,12 +429,12 @@ fun KnowledgeDetailScreen(
                                             Text(
                                                 base.iconText.ifBlank { base.name.take(1) },
                                                 fontSize = 12.sp,
-                                                color = Color(0xFF147EC5)
+                                                color = palette.brand
                                             )
                                         }
                                     }
                                     Spacer(modifier = Modifier.width(12.dp))
-                                    Text(base.name, color = Color(0xFF0F172A), fontSize = 15.sp)
+                                    Text(base.name, color = palette.textPrimary, fontSize = 15.sp)
                                 }
                             }
                         }
@@ -446,13 +452,13 @@ fun KnowledgeDetailScreen(
 
         exportStatus?.let { status ->
             Surface(
-                color = Color(0xFFEFF7FF),
+                color = palette.brandSubtle,
                 shadowElevation = 2.dp
             ) {
                 Text(
                     text = status,
                     fontSize = 12.sp,
-                    color = Color(0xFF147EC5),
+                    color = palette.brand,
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp)
                 )
             }
@@ -476,7 +482,7 @@ fun KnowledgeDetailScreen(
                         showAskSheet = true
                     },
                     shape = CircleShape,
-                    color = Color(0xFF111827),
+                    color = palette.bgInverse,
                     shadowElevation = 12.dp,
                     modifier = Modifier
                         .size(56.dp)
@@ -502,7 +508,7 @@ fun KnowledgeDetailScreen(
                 showDeleteDialog = false
                 deleteTarget = null
             },
-            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEA580C)) },
+            icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = palette.semanticWarning) },
             title = { Text(stringResource(R.string.auto_cea896db), fontWeight = FontWeight.Bold) },
             text = { Text("确定要删除「${deleteTarget!!.title}」吗？删除后可从回收站恢复。") },
             confirmButton = {
@@ -512,7 +518,7 @@ fun KnowledgeDetailScreen(
                         showDeleteDialog = false
                         deleteTarget = null
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.semanticError)
                 ) {
                     Text(stringResource(R.string.auto_3755f56f), color = Color.White)
                 }
@@ -581,7 +587,7 @@ fun KnowledgeDetailScreen(
                             viewModel.retryItem(item.id)
                             statusTarget = null
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.brand)
                     ) { Text(stringResource(R.string.auto_e2d53a6d)) }
                 }
             },
@@ -594,6 +600,10 @@ fun KnowledgeDetailScreen(
 
 @Composable
 private fun ListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -605,15 +615,15 @@ private fun ListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(14.dp),
                     strokeWidth = 2.dp,
-                    color = Color(0xFF147EC5)
+                    color = palette.brand
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.auto_300ee3de), fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                Text(stringResource(R.string.auto_300ee3de), fontSize = 12.sp, color = palette.textTertiary)
             }
             !hasMore -> Text(
                 stringResource(R.string.auto_049d09bf),
                 fontSize = 12.sp,
-                color = Color(0xFFA3A3A3)
+                color = palette.textTertiary
             )
         }
     }

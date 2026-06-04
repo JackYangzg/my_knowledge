@@ -45,6 +45,8 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.viewmodel.KnowledgeEditorViewModel
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 /**
  * Markdown editor dedicated to existing knowledge items. Distinct from
@@ -65,6 +67,8 @@ fun KnowledgeEditorScreen(
     onBack: () -> Unit,
     onSaved: () -> Unit = {}
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     LaunchedEffect(itemId) {
         viewModel.load(itemId)
     }
@@ -98,7 +102,7 @@ fun KnowledgeEditorScreen(
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "返回",
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
             }
             Spacer(modifier = Modifier.width(4.dp))
@@ -106,7 +110,7 @@ fun KnowledgeEditorScreen(
                 Icon(
                     Icons.Default.Edit,
                     contentDescription = null,
-                    tint = Color(0xFF147EC5),
+                    tint = palette.brand,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
@@ -114,7 +118,7 @@ fun KnowledgeEditorScreen(
                     text = "编辑 ${item?.title ?: title.ifBlank { "..." }}",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF0F172A),
+                    color = palette.textPrimary,
                     maxLines = 1
                 )
             }
@@ -125,17 +129,17 @@ fun KnowledgeEditorScreen(
                 Icon(
                     Icons.Default.Check,
                     contentDescription = null,
-                    tint = Color(0xFF147EC5),
+                    tint = palette.brand,
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_fadf24db), color = Color(0xFF147EC5), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.auto_fadf24db), color = palette.brand, fontWeight = FontWeight.SemiBold)
             }
         }
 
         if (item == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFF147EC5))
+                CircularProgressIndicator(color = palette.brand)
             }
         } else {
             val scrollState = rememberScrollState()
@@ -149,26 +153,26 @@ fun KnowledgeEditorScreen(
                 Text(
                     text = stringResource(R.string.auto_748d7dc7),
                     fontSize = 12.sp,
-                    color = Color(0xFF64748B),
+                    color = palette.textMuted,
                     fontWeight = FontWeight.Medium
                 )
                 OutlinedTextField(
                     value = title,
                     onValueChange = viewModel::setTitle,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(spacing.md),
                     singleLine = true,
-                    textStyle = TextStyle(fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A)),
+                    textStyle = TextStyle(color = palette.textPrimary),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFF147EC5),
-                        unfocusedBorderColor = Color(0xFFDBEEFF)
+                        focusedBorderColor = palette.brand,
+                        unfocusedBorderColor = palette.borderBrand
                     )
                 )
 
                 Text(
                     text = stringResource(R.string.auto_92633211),
                     fontSize = 12.sp,
-                    color = Color(0xFF64748B),
+                    color = palette.textMuted,
                     fontWeight = FontWeight.Medium
                 )
                 OutlinedTextField(
@@ -177,11 +181,11 @@ fun KnowledgeEditorScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(420.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    textStyle = TextStyle(fontSize = 14.sp, lineHeight = 22.sp, color = Color(0xFF0F172A)),
+                    shape = RoundedCornerShape(spacing.md),
+                    textStyle = TextStyle(fontSize = 14.sp, lineHeight = 22.sp, color = palette.textPrimary),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFF147EC5),
-                        unfocusedBorderColor = Color(0xFFDBEEFF)
+                        focusedBorderColor = palette.brand,
+                        unfocusedBorderColor = palette.borderBrand
                     )
                 )
 
@@ -215,7 +219,7 @@ fun KnowledgeEditorScreen(
                         onSaved()
                     }
                 }) {
-                    Text(stringResource(R.string.auto_fadf24db), color = Color(0xFF147EC5), fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.auto_fadf24db), color = palette.brand, fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
@@ -233,7 +237,7 @@ fun KnowledgeEditorScreen(
                 .background(Color.Black.copy(alpha = 0.18f)),
             contentAlignment = Alignment.Center
         ) {
-            CircularProgressIndicator(color = Color(0xFF147EC5))
+            CircularProgressIndicator(color = palette.brand)
         }
     }
 

@@ -66,6 +66,10 @@ import java.util.Date
 import java.util.Locale
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import androidx.compose.material3.MaterialTheme
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.Palette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun KnowledgeLogScreen(
@@ -73,24 +77,28 @@ fun KnowledgeLogScreen(
     processingViewModel: ProcessingStatusViewModel,
     onBack: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val rows by importViewModel.rows.collectAsState()
     val bases by importViewModel.knowledgeBases.collectAsState()
     val reviews by processingViewModel.pendingReviews.collectAsState()
     var deleteSourceId by remember { mutableStateOf<String?>(null) }
     var detailRow by remember { mutableStateOf<ImportCenterRow?>(null) }
 
-    Column(modifier = Modifier.fillMaxSize().background(Color(0xFFF7FBFF))) {
+    Column(modifier = Modifier.fillMaxSize().background(palette.bgPage)) {
         Column(
             modifier = Modifier.fillMaxWidth().background(Color.White).padding(horizontal = 20.dp).padding(top = 48.dp, bottom = 12.dp)
         ) {
             TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = palette.brand)
                 Spacer(modifier = Modifier.size(4.dp))
-                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(stringResource(R.string.auto_b9543b21), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text(stringResource(R.string.auto_949f9b3a), fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
+            Text(stringResource(R.string.auto_b9543b21), style = MaterialTheme.typography.displayLarge, color = palette.textPrimary)
+            Text(stringResource(R.string.auto_949f9b3a), fontSize = 13.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
         }
 
         LazyColumn(
@@ -100,16 +108,16 @@ fun KnowledgeLogScreen(
         ) {
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    LogSummaryCard(rows.count { it.latestTask?.status == "pending" || it.latestTask?.status == "running" || it.latestTask?.status == "pending_network" }, "处理中", Color(0xFF147EC5), Modifier.weight(1f))
-                    LogSummaryCard(rows.count { it.latestTask?.status == "failed" || it.source.status == SourceDocumentEntity.STATUS_FAILED }, "失败", Color(0xFFDC2626), Modifier.weight(1f))
-                    LogSummaryCard(reviews.size, "待确认", Color(0xFFEA580C), Modifier.weight(1f))
+                    LogSummaryCard(rows.count { it.latestTask?.status == "pending" || it.latestTask?.status == "running" || it.latestTask?.status == "pending_network" }, "处理中", palette.brand, Modifier.weight(1f))
+                    LogSummaryCard(rows.count { it.latestTask?.status == "failed" || it.source.status == SourceDocumentEntity.STATUS_FAILED }, "失败", palette.semanticError, Modifier.weight(1f))
+                    LogSummaryCard(reviews.size, "待确认", palette.semanticWarning, Modifier.weight(1f))
                 }
             }
 
             if (rows.isEmpty() && reviews.isEmpty()) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                        Text(stringResource(R.string.auto_44060e77), color = Color(0xFF5F87A3), fontSize = 14.sp)
+                        Text(stringResource(R.string.auto_44060e77), color = palette.textSecondary, fontSize = 14.sp)
                     }
                 }
             }
@@ -127,20 +135,20 @@ fun KnowledgeLogScreen(
             }
 
             items(reviews) { review ->
-                Surface(shape = RoundedCornerShape(12.dp), color = Color.White, shadowElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
+                Surface(shape = RoundedCornerShape(spacing.md), color = Color.White, shadowElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.RateReview, contentDescription = null, tint = Color(0xFFEA580C), modifier = Modifier.size(18.dp))
+                            Icon(Icons.Default.RateReview, contentDescription = null, tint = palette.semanticWarning, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.size(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(review.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                                Text("文件/来源：${review.sourceId ?: "未知"}", fontSize = 11.sp, color = Color(0xFF5F87A3))
+                                Text(review.title, style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
+                                Text("文件/来源：${review.sourceId ?: "未知"}", fontSize = 11.sp, color = palette.textSecondary)
                             }
                         }
-                        Text(review.description, fontSize = 12.sp, lineHeight = 18.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 8.dp))
+                        Text(review.description, fontSize = 12.sp, lineHeight = 18.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 8.dp))
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = { processingViewModel.skipReview(review.id) }) { Text(stringResource(R.string.auto_479fcc1c), fontSize = 13.sp, color = Color(0xFFA3A3A3)) }
-                            Button(onClick = { processingViewModel.acceptReview(review.id) }, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))) {
+                            TextButton(onClick = { processingViewModel.skipReview(review.id) }) { Text(stringResource(R.string.auto_479fcc1c), fontSize = 13.sp, color = palette.textTertiary) }
+                            Button(onClick = { processingViewModel.acceptReview(review.id) }, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = palette.brand)) {
                                 Text(stringResource(R.string.auto_b56d9ac6), fontSize = 13.sp)
                             }
                         }
@@ -160,7 +168,7 @@ fun KnowledgeLogScreen(
                 Button(onClick = {
                     deleteSourceId?.let(importViewModel::deleteSourceLog)
                     deleteSourceId = null
-                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))) { Text(stringResource(R.string.auto_3755f56f)) }
+                }, colors = ButtonDefaults.buttonColors(containerColor = palette.semanticError)) { Text(stringResource(R.string.auto_3755f56f)) }
             },
             dismissButton = { TextButton(onClick = { deleteSourceId = null }) { Text(stringResource(R.string.auto_4d0b4688)) } }
         )
@@ -197,7 +205,7 @@ fun KnowledgeLogScreen(
                         Text("步骤：${task.currentStep ?: task.status}")
                         Text("进度：${task.progress}%")
                         Text("重试：${task.retryCount}/${task.maxRetry}")
-                        if (!task.errorMessage.isNullOrBlank()) Text("错误：${task.errorMessage}", color = Color(0xFFDC2626))
+                        if (!task.errorMessage.isNullOrBlank()) Text("错误：${task.errorMessage}", color = palette.semanticError)
                     }
                     if (recentLogs.isNotEmpty()) {
                         HorizontalDivider()
@@ -227,15 +235,15 @@ fun KnowledgeLogScreen(
                                 "[${formatLogTime(log.createdAt)}][${log.stage}] ${displayLogMessage(log.message)}",
                                 fontSize = 11.sp,
                                 color = when (log.status) {
-                                    "success" -> Color(0xFF16A34A)
-                                    "pending_config", "failed" -> Color(0xFFDC2626)
+                                    "success" -> palette.semanticSuccess
+                                    "pending_config", "failed" -> palette.semanticError
                                     "pending_network" -> Color(0xFFF59E0B)
-                                    else -> Color(0xFF5F87A3)
+                                    else -> palette.textSecondary
                                 }
                             )
                         }
                     }
-                    if (!row.source.errorMessage.isNullOrBlank()) Text("来源错误：${row.source.errorMessage}", color = Color(0xFFDC2626))
+                    if (!row.source.errorMessage.isNullOrBlank()) Text("来源错误：${row.source.errorMessage}", color = palette.semanticError)
                 }
             },
             confirmButton = { TextButton(onClick = { detailRow = null }) { Text(stringResource(R.string.auto_6c14bd7f)) } }
@@ -245,10 +253,14 @@ fun KnowledgeLogScreen(
 
 @Composable
 private fun LogSummaryCard(count: Int, label: String, color: Color, modifier: Modifier) {
-    Surface(modifier = modifier, shape = RoundedCornerShape(12.dp), color = Color.White, shadowElevation = 1.dp) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    Surface(modifier = modifier, shape = RoundedCornerShape(spacing.md), color = Color.White, shadowElevation = 1.dp) {
         Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(count.toString(), fontSize = 20.sp, fontWeight = FontWeight.Bold, color = color)
-            Text(label, fontSize = 11.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 2.dp))
+            Text(count.toString(), style = MaterialTheme.typography.headlineMedium, color = color)
+            Text(label, fontSize = 11.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
         }
     }
 }
@@ -262,19 +274,23 @@ private fun LogSourceCard(
     onCancel: () -> Unit,
     onDelete: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val task = row.latestTask
     // Log-center retry must not remove knowledge-base rows. It only enqueues
     // a fresh parse task and leaves existing knowledge visible while the new
     // run appends its own processing logs.
     val canRetry = task != null && task.status !in setOf("running")
-    Surface(onClick = onDetail, shape = RoundedCornerShape(12.dp), color = Color.White, shadowElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
+    Surface(onClick = onDetail, shape = RoundedCornerShape(spacing.md), color = Color.White, shadowElevation = 1.dp, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(sourceIcon(row.source), contentDescription = null, tint = logStatusColor(task?.status ?: row.source.status), modifier = Modifier.size(22.dp))
+                Icon(sourceIcon(row.source), contentDescription = null, tint = logStatusColor(palette, task?.status ?: row.source.status), modifier = Modifier.size(22.dp))
                 Spacer(modifier = Modifier.size(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(row.source.title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                    Text("${row.source.sourceType} · ${row.source.mimeType ?: "unknown"} · ${formatLogTime(row.source.updatedAt)}", fontSize = 11.sp, color = Color(0xFF5F87A3))
+                    Text(row.source.title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
+                    Text("${row.source.sourceType} · ${row.source.mimeType ?: "unknown"} · ${formatLogTime(row.source.updatedAt)}", fontSize = 11.sp, color = palette.textSecondary)
                 }
                 LogStatusPill(task?.status ?: row.source.status)
             }
@@ -305,21 +321,21 @@ private fun LogSourceCard(
                         append(displayStep)
                     },
                     fontSize = 12.sp,
-                    color = Color(0xFF5F87A3)
+                    color = palette.textSecondary
                 )
-                LinearProgressIndicator(progress = { task.progress / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp), color = logStatusColor(task.status), trackColor = Color(0xFFEFF7FF))
+                LinearProgressIndicator(progress = { task.progress / 100f }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp), color = logStatusColor(palette, task.status), trackColor = palette.brandSubtle)
                 if (!task.errorMessage.isNullOrBlank()) {
-                    Text(task.errorMessage, fontSize = 12.sp, color = Color(0xFFDC2626), modifier = Modifier.padding(top = 8.dp))
+                    Text(task.errorMessage, fontSize = 12.sp, color = palette.semanticError, modifier = Modifier.padding(top = 8.dp))
                 }
             }
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
                 if (canRetry) {
-                    IconButton(onClick = onRetry) { Icon(Icons.Default.Refresh, contentDescription = "重新发起分析", tint = Color(0xFF147EC5)) }
+                    IconButton(onClick = onRetry) { Icon(Icons.Default.Refresh, contentDescription = "重新发起分析", tint = palette.brand) }
                 }
                 if (task?.status == "pending" || task?.status == "running") {
-                    IconButton(onClick = onCancel) { Icon(Icons.Default.Cancel, contentDescription = "取消", tint = Color(0xFFEA580C)) }
+                    IconButton(onClick = onCancel) { Icon(Icons.Default.Cancel, contentDescription = "取消", tint = palette.semanticWarning) }
                 }
-                IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "删除来源", tint = Color(0xFFDC2626)) }
+                IconButton(onClick = onDelete) { Icon(Icons.Default.Delete, contentDescription = "删除来源", tint = palette.semanticError) }
             }
         }
     }
@@ -327,6 +343,10 @@ private fun LogSourceCard(
 
 @Composable
 private fun PipelineStepper(tasks: List<ProcessingTaskEntity>) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val steps = listOf(
         "parse" to "解析",
         "analysis" to "分析",
@@ -351,13 +371,13 @@ private fun PipelineStepper(tasks: List<ProcessingTaskEntity>) {
                     modifier = Modifier
                         .size(10.dp)
                         .clip(CircleShape)
-                        .background(getStepColor(status))
+                        .background(getStepColor(palette, status))
                 )
                 Text(
                     text = label,
                     fontSize = 9.sp,
                     fontWeight = if (status == "running") FontWeight.Bold else FontWeight.Normal,
-                    color = getStepColor(status),
+                    color = getStepColor(palette, status),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.padding(top = 2.dp)
                 )
@@ -366,11 +386,11 @@ private fun PipelineStepper(tasks: List<ProcessingTaskEntity>) {
             if (index < steps.size - 1) {
                 val nextTask = tasks.find { it.taskType == steps[index+1].first }
                 val connectorColor = if (status == "success" && nextTask != null) {
-                    getStepColor(nextTask.status)
+                    getStepColor(palette, nextTask.status)
                 } else if (status == "success") {
-                    Color(0xFFE5E7EB)
+                    palette.borderDefault
                 } else {
-                    Color(0xFFE5E7EB)
+                    palette.borderDefault
                 }
                 
                 Box(
@@ -384,19 +404,23 @@ private fun PipelineStepper(tasks: List<ProcessingTaskEntity>) {
     }
 }
 
-private fun getStepColor(status: String): Color = when (status) {
+private fun getStepColor(palette: Palette, status: String): Color = when (status) {
     "success", "generated" -> Color(0xFF0B816F)
-    "running", "parsing", "analyzing" -> Color(0xFF147EC5)
-    "failed" -> Color(0xFFDC2626)
+    "running", "parsing", "analyzing" -> palette.brand
+    "failed" -> palette.semanticError
     "pending", "imported", "parsed", "pending_config", "pending_network" -> Color(0xFFF59E0B)
-    "canceled" -> Color(0xFFEA580C)
+    "canceled" -> palette.semanticWarning
     else -> Color(0xFFD1D5DB) // upcoming / gray
 }
 
 @Composable
 private fun LogStatusPill(status: String) {
-    Surface(color = logStatusColor(status).copy(alpha = 0.12f), shape = CircleShape) {
-        Text(logStatusLabel(status), fontSize = 11.sp, color = logStatusColor(status), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    Surface(color = logStatusColor(palette, status).copy(alpha = 0.12f), shape = CircleShape) {
+        Text(logStatusLabel(status), fontSize = 11.sp, color = logStatusColor(palette, status), modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp))
     }
 }
 
@@ -408,13 +432,13 @@ private fun sourceIcon(source: SourceDocumentEntity): ImageVector = when (source
     else -> Icons.Default.Description
 }
 
-private fun logStatusColor(status: String): Color = when (status) {
-    "running", "parsing", "analyzing" -> Color(0xFF147EC5)
+private fun logStatusColor(palette: Palette, status: String): Color = when (status) {
+    "running", "parsing", "analyzing" -> palette.brand
     "pending", "imported", "parsed", "pending_config", "pending_network" -> Color(0xFFF59E0B)
-    "failed" -> Color(0xFFDC2626)
-    "canceled" -> Color(0xFFEA580C)
+    "failed" -> palette.semanticError
+    "canceled" -> palette.semanticWarning
     "generated", "success" -> Color(0xFF0B816F)
-    else -> Color(0xFF5F87A3)
+    else -> palette.textSecondary
 }
 
 private fun logStatusLabel(status: String): String = when (status) {

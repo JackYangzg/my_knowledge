@@ -24,12 +24,18 @@ import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.viewmodel.ProcessingStatusViewModel
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun ProcessingStatusScreen(
     viewModel: ProcessingStatusViewModel,
     onBack: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val activeTasks by viewModel.activeTasks.collectAsState()
     val pendingRecommendations by viewModel.pendingRecommendations.collectAsState()
     val pendingReviews by viewModel.pendingReviews.collectAsState()
@@ -38,7 +44,7 @@ fun ProcessingStatusScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .background(palette.bgPage)
     ) {
         // Header
         Column(
@@ -57,17 +63,15 @@ fun ProcessingStatusScreen(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = stringResource(R.string.auto_c2f69d5e),
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF0F172A)
+                text = stringResource(R.string.auto_c2f69d5e), style = MaterialTheme.typography.displayLarge,
+                color = palette.textPrimary
             )
         }
 
@@ -86,14 +90,14 @@ fun ProcessingStatusScreen(
                         modifier = Modifier.weight(1f),
                         count = activeTasks.size,
                         label = "运行中",
-                        color = Color(0xFF147EC5),
+                        color = palette.brand,
                         icon = Icons.Default.Sync
                     )
                     StatusSummaryCard(
                         modifier = Modifier.weight(1f),
                         count = pendingRecommendations.size + pendingReviews.size,
                         label = "待人工确认",
-                        color = Color(0xFFEA580C),
+                        color = palette.semanticWarning,
                         icon = Icons.Default.Recommend
                     )
                 }
@@ -168,33 +172,37 @@ private fun ReviewCard(
     onAccept: () -> Unit,
     onSkip: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(spacing.md),
         color = Color.White,
         shadowElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.RateReview, contentDescription = null, tint = Color(0xFFEA580C), modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.RateReview, contentDescription = null, tint = palette.semanticWarning, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(review.title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                    Text(review.type, fontSize = 11.sp, color = Color(0xFFEA580C), modifier = Modifier.padding(top = 2.dp))
+                    Text(review.title, style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
+                    Text(review.type, fontSize = 11.sp, color = palette.semanticWarning, modifier = Modifier.padding(top = 2.dp))
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text(review.description, fontSize = 12.sp, lineHeight = 18.sp, color = Color(0xFF5F87A3))
+            Text(review.description, fontSize = 12.sp, lineHeight = 18.sp, color = palette.textSecondary)
             Spacer(modifier = Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onSkip) {
-                    Text(stringResource(R.string.auto_479fcc1c), fontSize = 13.sp, color = Color(0xFFA3A3A3))
+                    Text(stringResource(R.string.auto_479fcc1c), fontSize = 13.sp, color = palette.textTertiary)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = onAccept,
                     shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5)),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.brand),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
                     Text(stringResource(R.string.auto_b56d9ac6), fontSize = 13.sp)
@@ -212,9 +220,13 @@ private fun StatusSummaryCard(
     color: Color,
     icon: androidx.compose.ui.graphics.vector.ImageVector
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(spacing.lg),
         color = Color.White,
         shadowElevation = 1.dp
     ) {
@@ -226,14 +238,14 @@ private fun StatusSummaryCard(
             Box(
                 modifier = Modifier
                     .size(40.dp)
-                    .background(color.copy(alpha = 0.1f), RoundedCornerShape(12.dp)),
+                    .background(color.copy(alpha = 0.1f), RoundedCornerShape(spacing.md)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(20.dp))
             }
             Column {
-                Text(count.toString(), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                Text(label, fontSize = 12.sp, color = Color(0xFF5F87A3))
+                Text(count.toString(), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                Text(label, fontSize = 12.sp, color = palette.textSecondary)
             }
         }
     }
@@ -241,20 +253,28 @@ private fun StatusSummaryCard(
 
 @Composable
 private fun SectionHeader(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color(0xFF5F87A3))
+        Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = palette.textSecondary)
         Spacer(modifier = Modifier.width(6.dp))
-        Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+        Text(title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
     }
 }
 
 @Composable
 private fun EmptyHint(text: String) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(spacing.md),
         color = Color.White,
         modifier = Modifier.fillMaxWidth()
     ) {
@@ -262,7 +282,7 @@ private fun EmptyHint(text: String) {
             modifier = Modifier.padding(32.dp),
             contentAlignment = Alignment.Center
         ) {
-            Text(text, fontSize = 14.sp, color = Color(0xFFA3A3A3))
+            Text(text, fontSize = 14.sp, color = palette.textTertiary)
         }
     }
 }
@@ -274,6 +294,10 @@ private fun TaskCard(
     onCancel: () -> Unit,
     viewModel: ProcessingStatusViewModel
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     var expanded by remember { mutableStateOf(false) }
     val logs by if (expanded) {
         viewModel.observeLogs(task.targetType, task.targetId).collectAsState(emptyList())
@@ -282,7 +306,7 @@ private fun TaskCard(
     }
 
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(spacing.md),
         color = Color.White,
         shadowElevation = 1.dp,
         modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded }
@@ -298,22 +322,20 @@ private fun TaskCard(
                     Spacer(modifier = Modifier.width(8.dp))
                     Column {
                         Text(
-                            task.taskType,
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFF0F172A)
+                            task.taskType, style = MaterialTheme.typography.titleSmall,
+                            color = palette.textPrimary
                         )
                         Text(
                             "目标: ${task.targetType}/${task.targetId.take(8)}...",
                             fontSize = 12.sp,
-                            color = Color(0xFF5F87A3)
+                            color = palette.textSecondary
                         )
                     }
                 }
                 Icon(
                     if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = null,
-                    tint = Color(0xFFA3A3A3),
+                    tint = palette.textTertiary,
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -323,18 +345,18 @@ private fun TaskCard(
                 LinearProgressIndicator(
                     progress = { task.progress / 100f },
                     modifier = Modifier.fillMaxWidth().height(4.dp),
-                    color = Color(0xFF147EC5),
-                    trackColor = Color(0xFFDBEEFF)
+                    color = palette.brand,
+                    trackColor = palette.borderBrand
                 )
                 Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text(task.currentStep ?: "执行中", fontSize = 11.sp, color = Color(0xFF5F87A3))
-                    Text("${task.progress}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF147EC5))
+                    Text(task.currentStep ?: "执行中", fontSize = 11.sp, color = palette.textSecondary)
+                    Text("${task.progress}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = palette.brand)
                 }
             }
 
             if (expanded) {
                 Spacer(modifier = Modifier.height(16.dp))
-                Text(stringResource(R.string.auto_8316b0a2), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                Text(stringResource(R.string.auto_8316b0a2), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 // Pipeline Stages
@@ -355,12 +377,12 @@ private fun TaskCard(
 
                 if (logs.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text(stringResource(R.string.auto_70f1aab1), fontSize = 12.sp, color = Color(0xFF5F87A3))
+                    Text(stringResource(R.string.auto_70f1aab1), fontSize = 12.sp, color = palette.textSecondary)
                     logs.take(3).forEach { log ->
                         Text(
                             "• [${log.status}] ${log.message}",
                             fontSize = 11.sp,
-                            color = Color(0xFF737373),
+                            color = palette.textSecondary,
                             modifier = Modifier.padding(top = 4.dp)
                         )
                     }
@@ -370,14 +392,14 @@ private fun TaskCard(
             if (task.errorMessage != null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Surface(
-                    color = Color(0xFFFEF2F2),
-                    shape = RoundedCornerShape(8.dp),
+                    color = palette.semanticErrorBg,
+                    shape = RoundedCornerShape(spacing.sm),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
                         task.errorMessage,
                         fontSize = 12.sp,
-                        color = Color(0xFFDC2626),
+                        color = palette.semanticError,
                         modifier = Modifier.padding(12.dp)
                     )
                 }
@@ -391,7 +413,7 @@ private fun TaskCard(
                 Text(
                     "重试: ${task.retryCount}/${task.maxRetry}",
                     fontSize = 11.sp,
-                    color = Color(0xFFA3A3A3)
+                    color = palette.textTertiary
                 )
 
                 if (task.status == "failed") {
@@ -403,10 +425,10 @@ private fun TaskCard(
                             Icons.Default.Refresh,
                             contentDescription = null,
                             modifier = Modifier.size(14.dp),
-                            tint = Color(0xFF147EC5)
+                            tint = palette.brand
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.auto_e2d53a6d), fontSize = 12.sp, color = Color(0xFF147EC5))
+                        Text(stringResource(R.string.auto_e2d53a6d), fontSize = 12.sp, color = palette.brand)
                     }
                 }
                 if (task.status == "pending" || task.status == "running") {
@@ -418,10 +440,10 @@ private fun TaskCard(
                             Icons.Default.Close,
                             contentDescription = null,
                             modifier = Modifier.size(14.dp),
-                            tint = Color(0xFFDC2626)
+                            tint = palette.semanticError
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text(stringResource(R.string.auto_4d0b4688), fontSize = 12.sp, color = Color(0xFFDC2626))
+                        Text(stringResource(R.string.auto_4d0b4688), fontSize = 12.sp, color = palette.semanticError)
                     }
                 }
             }
@@ -431,23 +453,27 @@ private fun TaskCard(
 
 @Composable
 private fun StageRow(label: String, status: String, message: String?) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         val (icon, color) = when (status) {
-            "success" -> Icons.Default.CheckCircle to Color(0xFF16A34A)
-            "running" -> Icons.Default.Sync to Color(0xFF147EC5)
+            "success" -> Icons.Default.CheckCircle to palette.semanticSuccess
+            "running" -> Icons.Default.Sync to palette.brand
             "pending_network" -> Icons.Default.Sync to Color(0xFFF59E0B)
-            "failed" -> Icons.Default.Error to Color(0xFFDC2626)
+            "failed" -> Icons.Default.Error to palette.semanticError
             else -> Icons.Default.RadioButtonUnchecked to Color(0xFFD4D4D4)
         }
         Icon(icon, contentDescription = null, tint = color, modifier = Modifier.size(16.dp))
         Spacer(modifier = Modifier.width(8.dp))
         Column {
-            Text(label, fontSize = 12.sp, color = if (status == "pending") Color(0xFFA3A3A3) else Color(0xFF0F172A))
+            Text(label, fontSize = 12.sp, color = if (status == "pending") palette.textTertiary else palette.textPrimary)
             if (!message.isNullOrBlank()) {
-                Text(displayTaskMessage(message), fontSize = 11.sp, color = Color(0xFF5F87A3))
+                Text(displayTaskMessage(message), fontSize = 11.sp, color = palette.textSecondary)
             }
         }
     }
@@ -460,11 +486,15 @@ private fun displayTaskMessage(message: String): String =
 
 @Composable
 private fun StatusDot(status: String) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val color = when (status) {
-        "running" -> Color(0xFF147EC5)
+        "running" -> palette.brand
         "pending", "pending_network" -> Color(0xFFF59E0B)
-        "failed" -> Color(0xFFDC2626)
-        else -> Color(0xFFA3A3A3)
+        "failed" -> palette.semanticError
+        else -> palette.textTertiary
     }
     Box(
         modifier = Modifier
@@ -480,8 +510,12 @@ private fun RecommendationCard(
     onAccept: () -> Unit,
     onReject: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(spacing.md),
         color = Color.White,
         shadowElevation = 1.dp,
         modifier = Modifier.fillMaxWidth()
@@ -494,34 +528,32 @@ private fun RecommendationCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        "知识：$itemTitle",
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF0F172A)
+                        "知识：$itemTitle", style = MaterialTheme.typography.titleSmall,
+                        color = palette.textPrimary
                     )
                     Text(
                         "推荐归档到: ${recommendation.recommendedKnowledgeBaseName ?: recommendation.recommendedKnowledgeBaseId ?: "未指定"}",
                         fontSize = 12.sp,
-                        color = Color(0xFF5F87A3),
+                        color = palette.textSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         recommendation.reason,
                         fontSize = 12.sp,
-                        color = Color(0xFF5F87A3)
+                        color = palette.textSecondary
                     )
                     Spacer(modifier = Modifier.height(4.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
                             "置信度: ",
                             fontSize = 11.sp,
-                            color = Color(0xFFA3A3A3)
+                            color = palette.textTertiary
                         )
                         val confColor = when {
-                            recommendation.confidence >= 0.7f -> Color(0xFF16A34A)
+                            recommendation.confidence >= 0.7f -> palette.semanticSuccess
                             recommendation.confidence >= 0.4f -> Color(0xFFF59E0B)
-                            else -> Color(0xFFDC2626)
+                            else -> palette.semanticError
                         }
                         Text(
                             "${(recommendation.confidence * 100).toInt()}%",
@@ -545,16 +577,16 @@ private fun RecommendationCard(
                         Icons.Default.Close,
                         contentDescription = null,
                         modifier = Modifier.size(14.dp),
-                        tint = Color(0xFFA3A3A3)
+                        tint = palette.textTertiary
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.auto_03e210a6), fontSize = 13.sp, color = Color(0xFFA3A3A3))
+                    Text(stringResource(R.string.auto_03e210a6), fontSize = 13.sp, color = palette.textTertiary)
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
                     onClick = onAccept,
                     shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5)),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.brand),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                 ) {
                     Icon(

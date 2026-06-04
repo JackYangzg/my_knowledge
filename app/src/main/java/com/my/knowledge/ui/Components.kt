@@ -184,7 +184,7 @@ fun SoftTag(text: String) {
     val spacing = LocalSpacing.current
     Surface(
         color = palette.brandSubtle,
-        shape = CircleShape,
+        shape = CircleShape
     ) {
         Text(
             text = text,

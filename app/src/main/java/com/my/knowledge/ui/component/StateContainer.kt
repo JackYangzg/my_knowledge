@@ -56,7 +56,7 @@ sealed interface ScreenState<out T> {
         val desc: String? = null,
         val icon: ImageVector? = null,
         val actionLabel: String? = null,
-        val onAction: (() -> Unit)? = null,
+        val onAction: (() -> Unit)? = null
     ) : ScreenState<Nothing>
 
     /**
@@ -68,7 +68,7 @@ sealed interface ScreenState<out T> {
      */
     data class Error(
         val title: String = "加载失败",
-        val message: String,
+        val message: String
     ) : ScreenState<Nothing>
 
     data class Content<T>(val data: T) : ScreenState<T>

@@ -39,6 +39,8 @@ import com.my.knowledge.viewmodel.ProfileViewModel
 import com.my.knowledge.viewmodel.RecycleBinViewModel
 import com.my.knowledge.viewmodel.ThreadViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 enum class Tab(val id: String, val label: String, val icon: ImageVector) {
     KNOWLEDGE("knowledge", "知识库", Icons.Default.Book),
@@ -90,6 +92,8 @@ sealed class Route(val path: String) {
 @OptIn(ExperimentalCoroutinesApi::class)
 @Composable
 fun KnowledgeApp() {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: Route.Home.path
@@ -347,10 +351,14 @@ fun BottomNavigationBar(
     activeTab: Tab,
     onTabSelected: (Tab) -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
         color = Color.White.copy(alpha = 0.95f),
         modifier = Modifier.fillMaxWidth(),
-        border = BorderStroke(0.5.dp, Color(0xFFE5E5E5))
+        border = BorderStroke(0.5.dp, palette.borderDefault)
     ) {
         Row(
             modifier = Modifier
@@ -377,12 +385,12 @@ fun BottomNavigationBar(
                         imageVector = tab.icon,
                         contentDescription = tab.label,
                         modifier = Modifier.size(20.dp),
-                        tint = if (selected) Color(0xFF147EC5) else Color(0xFF8BB9D8)
+                        tint = if (selected) palette.brand else Color(0xFF8BB9D8)
                     )
                     Text(
                         text = tab.label,
                         fontSize = 10.sp,
-                        color = if (selected) Color(0xFF147EC5) else Color(0xFF8BB9D8)
+                        color = if (selected) palette.brand else Color(0xFF8BB9D8)
                     )
                 }
             }
@@ -393,5 +401,7 @@ fun BottomNavigationBar(
 @Preview(showBackground = true)
 @Composable
 fun KnowledgeAppPreview() {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     KnowledgeApp()
 }

@@ -20,6 +20,8 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.viewmodel.ProfileViewModel
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun ProfileScreen(
@@ -29,6 +31,10 @@ fun ProfileScreen(
     onOpenRecycleBin: () -> Unit = {},
     onOpenIntermediateData: (String?) -> Unit = {}
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     // "原始文件导入" section 已被移除——同名信息在「日志中心」页面（LogSourceCard）
     // 已经能完整展示,这里只保留「知识加工数据」「管理」等更高层的摘要。
     val unfiledWorkCount by viewModel.unfiledWorkCount.collectAsState()
@@ -41,7 +47,7 @@ fun ProfileScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF)), // Ocean 25
+            .background(palette.bgPage), // Ocean 25
         contentPadding = PaddingValues(bottom = 100.dp)
     ) {
         item {
@@ -68,23 +74,23 @@ fun ProfileScreen(
                     Box(
                         modifier = Modifier
                             .size(56.dp)
-                            .background(Color(0xFF0F172A), RoundedCornerShape(16.dp)),
+                            .background(palette.textPrimary, RoundedCornerShape(spacing.lg)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(stringResource(R.string.auto_805d5a4a), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                        Text(stringResource(R.string.auto_805d5a4a), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
                         Text(
                             "${profileStats.knowledgeItemCount} 条知识，${profileStats.knowledgeBaseCount} 个知识库",
                             fontSize = 14.sp,
-                            color = Color(0xFF5F87A3),
+                            color = palette.textSecondary,
                             modifier = Modifier.padding(top = 4.dp)
                         )
                         Text(
                             "${profileStats.entityCount} 个实体，${profileStats.conceptCount} 个概念",
                             fontSize = 12.sp,
-                            color = Color(0xFFA3A3A3),
+                            color = palette.textTertiary,
                             modifier = Modifier.padding(top = 2.dp)
                         )
                     }
@@ -109,7 +115,7 @@ fun ProfileScreen(
                     )
                 } else {
                     visibleSummaries.forEachIndexed { index, summary ->
-                        if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
+                        if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = palette.borderBrand)
                         QuietCell(
                             icon = Icons.Default.Hub,
                             title = summary.knowledgeBaseName,
@@ -146,7 +152,7 @@ fun ProfileScreen(
                     Triple(Icons.Default.Settings, "设置", "同步、模型、默认知识库")
                 )
                 items.forEachIndexed { index, (icon, title, desc) ->
-                    if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
+                    if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = palette.borderBrand)
                     QuietCell(
                         icon = icon,
                         title = title,

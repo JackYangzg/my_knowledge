@@ -29,6 +29,8 @@ import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.KnowledgeManageViewModel
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun KnowledgeManageScreen(
@@ -37,6 +39,10 @@ fun KnowledgeManageScreen(
     onBack: () -> Unit,
     onOpenKbDetail: (String) -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val knowledgeBases by homeViewModel.knowledgeBases.collectAsState()
     var deleteTarget by remember { mutableStateOf<KnowledgeBaseEntity?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -49,7 +55,7 @@ fun KnowledgeManageScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .background(palette.bgPage)
     ) {
         // Header
         Column(
@@ -68,10 +74,10 @@ fun KnowledgeManageScreen(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), style = MaterialTheme.typography.titleSmall, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -81,15 +87,13 @@ fun KnowledgeManageScreen(
             ) {
                 Column {
                     Text(
-                        text = stringResource(R.string.auto_053fc4ec),
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF0F172A)
+                        text = stringResource(R.string.auto_053fc4ec), style = MaterialTheme.typography.displayLarge,
+                        color = palette.textPrimary
                     )
                     Text(
                         text = stringResource(R.string.auto_af04525e),
                         fontSize = 13.sp,
-                        color = Color(0xFF5F87A3),
+                        color = palette.textSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
@@ -99,14 +103,14 @@ fun KnowledgeManageScreen(
                         createDescription = ""
                         showCreateDialog = true
                     },
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5)),
+                    shape = RoundedCornerShape(spacing.md),
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.brand),
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 0.dp),
                     modifier = Modifier.height(40.dp)
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.auto_f93ee39a), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                    Text(stringResource(R.string.auto_f93ee39a), style = MaterialTheme.typography.labelLarge, color = Color.White)
                 }
             }
         }
@@ -129,7 +133,7 @@ fun KnowledgeManageScreen(
             item {
                 Section(title = stringResource(R.string.auto_6a782196), more = stringResource(R.string.auto_a7f814c0)) {
                     knowledgeBases.forEachIndexed { index, item ->
-                        if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = Color(0xFFDBEEFF))
+                        if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = palette.borderBrand)
                         QuietCell(
                             title = item.name,
                             desc = if (item.type == "unfiled") "系统默认知识库，暂存还没决定去向的内容" else item.description,
@@ -139,15 +143,13 @@ fun KnowledgeManageScreen(
                                     modifier = Modifier
                                         .size(38.dp)
                                         .clip(RoundedCornerShape(14.dp))
-                                        .background(Color(0xFFEFF7FF))
-                                        .border(1.dp, Color(0xFFCBE8FF), RoundedCornerShape(14.dp)),
+                                        .background(palette.brandSubtle)
+                                        .border(1.dp, palette.borderBrand, RoundedCornerShape(14.dp)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = item.iconText,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF147EC5)
+                                        text = item.iconText, style = MaterialTheme.typography.titleMedium,
+                                        color = palette.brand
                                     )
                                 }
                             },
@@ -167,7 +169,7 @@ fun KnowledgeManageScreen(
                                             Icon(
                                                 Icons.Default.DeleteOutline,
                                                 contentDescription = "删除",
-                                                tint = Color(0xFF9CA3AF),
+                                                tint = palette.textMuted,
                                                 modifier = Modifier.size(16.dp)
                                             )
                                         }
@@ -188,7 +190,7 @@ fun KnowledgeManageScreen(
                     Icon(
                         Icons.Default.Add,
                         contentDescription = null,
-                        tint = Color(0xFF147EC5),
+                        tint = palette.brand,
                         modifier = Modifier.size(24.dp)
                     )
                 },
@@ -202,24 +204,24 @@ fun KnowledgeManageScreen(
                                 createNameError = null
                             },
                             label = { Text(stringResource(R.string.auto_82e28f0d)) },
-                            placeholder = { Text(stringResource(R.string.auto_ef91ee7d), color = Color(0xFFA3A3A3)) },
+                            placeholder = { Text(stringResource(R.string.auto_ef91ee7d), color = palette.textTertiary) },
                             singleLine = true,
                             isError = createNameError != null,
                             supportingText = if (createNameError != null) {
-                                { Text(createNameError!!, color = Color(0xFFDC2626), fontSize = 12.sp) }
+                                { Text(createNameError!!, color = palette.semanticError, fontSize = 12.sp) }
                             } else null,
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(spacing.md)
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         OutlinedTextField(
                             value = createDescription,
                             onValueChange = { createDescription = it },
                             label = { Text(stringResource(R.string.auto_912ab301)) },
-                            placeholder = { Text(stringResource(R.string.auto_fb0a5997), color = Color(0xFFA3A3A3)) },
+                            placeholder = { Text(stringResource(R.string.auto_fb0a5997), color = palette.textTertiary) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(spacing.md)
                         )
                     }
                 },
@@ -240,7 +242,7 @@ fun KnowledgeManageScreen(
                             showCreateDialog = false
                         },
                         enabled = true,
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.bgInverse)
                     ) {
                         Text(stringResource(R.string.auto_fcbd0932), color = Color.White)
                     }
@@ -257,7 +259,7 @@ fun KnowledgeManageScreen(
         if (showDeleteDialog && deleteTarget != null) {
             AlertDialog(
                 onDismissRequest = { showDeleteDialog = false },
-                icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEA580C)) },
+                icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = palette.semanticWarning) },
                 title = { Text(stringResource(R.string.auto_e62a78b1), fontWeight = FontWeight.Bold) },
                 text = {
                     Column {
@@ -266,7 +268,7 @@ fun KnowledgeManageScreen(
                         Text(
                             "该知识库包含 ${deleteTarget!!.itemCount} 条知识。",
                             fontSize = 13.sp,
-                            color = Color(0xFF5F87A3)
+                            color = palette.textSecondary
                         )
                         Spacer(modifier = Modifier.height(12.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -285,7 +287,7 @@ fun KnowledgeManageScreen(
                             showDeleteDialog = false
                             deleteTarget = null
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                        colors = ButtonDefaults.buttonColors(containerColor = palette.semanticError)
                     ) {
                         Text(stringResource(R.string.auto_3755f56f), color = Color.White)
                     }

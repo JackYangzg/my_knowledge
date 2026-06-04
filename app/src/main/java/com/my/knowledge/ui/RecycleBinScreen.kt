@@ -22,12 +22,18 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.viewmodel.RecycleBinViewModel
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun RecycleBinScreen(
     viewModel: RecycleBinViewModel,
     onBack: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val items by viewModel.items.collectAsState()
     val selectedIds by viewModel.selectedIds.collectAsState()
     val selectionCount by viewModel.selectionCount.collectAsState()
@@ -40,7 +46,7 @@ fun RecycleBinScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .background(palette.bgPage)
     ) {
         // Header
         Column(
@@ -59,10 +65,10 @@ fun RecycleBinScreen(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), style = MaterialTheme.typography.titleSmall, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -71,8 +77,8 @@ fun RecycleBinScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text(stringResource(R.string.auto_64ea8751), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-                    Text("共 $totalCount 条已删除", fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
+                    Text(stringResource(R.string.auto_64ea8751), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
+                    Text("共 $totalCount 条已删除", fontSize = 13.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
                 }
                 if (items.isNotEmpty()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -82,9 +88,9 @@ fun RecycleBinScreen(
                                 if (checked) viewModel.selectAll(items.map { it.id })
                                 else viewModel.clearSelection()
                             },
-                            colors = CheckboxDefaults.colors(checkedColor = Color(0xFF147EC5))
+                            colors = CheckboxDefaults.colors(checkedColor = palette.brand)
                         )
-                        Text(stringResource(R.string.auto_3e44b2a9), fontSize = 13.sp, color = Color(0xFF5F87A3))
+                        Text(stringResource(R.string.auto_3e44b2a9), fontSize = 13.sp, color = palette.textSecondary)
                     }
                 }
             }
@@ -93,7 +99,7 @@ fun RecycleBinScreen(
         // Batch action bar
         if (selectionCount > 0) {
             Surface(
-                color = Color(0xFFEFF7FF),
+                color = palette.brandSubtle,
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Row(
@@ -103,11 +109,11 @@ fun RecycleBinScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("已选 $selectionCount 项", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A))
+                    Text("已选 $selectionCount 项", style = MaterialTheme.typography.labelLarge, color = palette.textPrimary)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(
                             onClick = { viewModel.restoreSelected() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5)),
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.brand),
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                         ) {
@@ -117,7 +123,7 @@ fun RecycleBinScreen(
                         }
                         Button(
                             onClick = { showBatchDeleteDialog = true },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626)),
+                            colors = ButtonDefaults.buttonColors(containerColor = palette.semanticError),
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                         ) {
@@ -153,7 +159,7 @@ fun RecycleBinScreen(
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(64.dp),
                         contentAlignment = Alignment.Center
-                    ) { Text(stringResource(R.string.auto_fecda037), color = Color(0xFFA3A3A3), fontSize = 15.sp) }
+                    ) { Text(stringResource(R.string.auto_fecda037), color = palette.textTertiary, fontSize = 15.sp) }
                 }
             } else {
                 item { Spacer(modifier = Modifier.height(12.dp)) }
@@ -166,11 +172,11 @@ fun RecycleBinScreen(
                             .padding(horizontal = 20.dp, vertical = 5.dp),
                         shape = RoundedCornerShape(14.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = if (isSelected) Color(0xFFEFF7FF) else Color.White
+                            containerColor = if (isSelected) palette.brandSubtle else Color.White
                         ),
                         border = if (isSelected) CardDefaults.outlinedCardBorder().copy(
                             width = 1.5.dp,
-                            brush = androidx.compose.ui.graphics.SolidColor(Color(0xFF147EC5))
+                            brush = androidx.compose.ui.graphics.SolidColor(palette.brand)
                         ) else null
                     ) {
                         Row(
@@ -180,22 +186,20 @@ fun RecycleBinScreen(
                             Checkbox(
                                 checked = isSelected,
                                 onCheckedChange = { viewModel.toggleSelection(item.id) },
-                                colors = CheckboxDefaults.colors(checkedColor = Color(0xFF147EC5))
+                                colors = CheckboxDefaults.colors(checkedColor = palette.brand)
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    item.title,
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color(0xFF0F172A),
+                                    item.title, style = MaterialTheme.typography.titleMedium,
+                                    color = palette.textPrimary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     item.excerpt,
                                     fontSize = 13.sp,
-                                    color = Color(0xFF737373),
+                                    color = palette.textSecondary,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis,
                                     modifier = Modifier.padding(top = 2.dp)
@@ -203,7 +207,7 @@ fun RecycleBinScreen(
                                 Text(
                                     "删除时间: ${formatTimestamp(item.deletedAt ?: 0)}",
                                     fontSize = 11.sp,
-                                    color = Color(0xFFA3A3A3),
+                                    color = palette.textTertiary,
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
                             }
@@ -211,7 +215,7 @@ fun RecycleBinScreen(
                                 onClick = { viewModel.restoreItem(item.id) },
                                 modifier = Modifier.size(32.dp)
                             ) {
-                                Icon(Icons.Default.Restore, contentDescription = "恢复", tint = Color(0xFF147EC5), modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Restore, contentDescription = "恢复", tint = palette.brand, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -227,7 +231,7 @@ fun RecycleBinScreen(
     if (showBatchDeleteDialog) {
         AlertDialog(
             onDismissRequest = { showBatchDeleteDialog = false },
-            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
+            icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = palette.semanticError) },
             title = { Text(stringResource(R.string.auto_a7fadbe1), fontWeight = FontWeight.Bold) },
             text = { Text("确定要永久删除所选的 $selectionCount 条知识条目吗？此操作不可恢复。") },
             confirmButton = {
@@ -236,7 +240,7 @@ fun RecycleBinScreen(
                         viewModel.permanentDeleteSelected()
                         showBatchDeleteDialog = false
                     },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.semanticError)
                 ) { Text(stringResource(R.string.auto_a7fadbe1), color = Color.White) }
             },
             dismissButton = {
@@ -254,6 +258,10 @@ private fun formatTimestamp(timestamp: Long): String {
 
 @Composable
 private fun RecycleBinListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -265,15 +273,15 @@ private fun RecycleBinListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(14.dp),
                     strokeWidth = 2.dp,
-                    color = Color(0xFF147EC5)
+                    color = palette.brand
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.auto_300ee3de), fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                Text(stringResource(R.string.auto_300ee3de), fontSize = 12.sp, color = palette.textTertiary)
             }
             !hasMore -> Text(
                 stringResource(R.string.auto_049d09bf),
                 fontSize = 12.sp,
-                color = Color(0xFFA3A3A3)
+                color = palette.textTertiary
             )
         }
     }

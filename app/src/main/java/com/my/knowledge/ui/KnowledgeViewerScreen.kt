@@ -48,6 +48,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.Palette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun KnowledgeViewerScreen(
@@ -59,6 +62,10 @@ fun KnowledgeViewerScreen(
     onOpenItem: (String) -> Unit = {},
     onEditItem: (String) -> Unit = {}
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val context = LocalContext.current
     LaunchedEffect(itemId) {
         viewModel.loadItem(itemId)
@@ -102,10 +109,10 @@ fun KnowledgeViewerScreen(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), style = MaterialTheme.typography.titleSmall, color = palette.brand)
             }
             item?.let { currentItem ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -118,11 +125,11 @@ fun KnowledgeViewerScreen(
                             Icon(
                                 if (showProcessedItems) Icons.AutoMirrored.Filled.ArrowBack else Icons.Default.Hub,
                                 contentDescription = null,
-                                tint = Color(0xFF147EC5),
+                                tint = palette.brand,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(if (showProcessedItems) "原文" else "加工数据", fontSize = 12.sp, color = Color(0xFF147EC5))
+                            Text(if (showProcessedItems) "原文" else "加工数据", fontSize = 12.sp, color = palette.brand)
                         }
                     }
                     // Per-item ask history used to open AskHistorySheet; the
@@ -136,11 +143,11 @@ fun KnowledgeViewerScreen(
                             Icon(
                                 Icons.Default.Edit,
                                 contentDescription = null,
-                                tint = Color(0xFF147EC5),
+                                tint = palette.brand,
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text(stringResource(R.string.auto_a7f814c0), fontSize = 12.sp, color = Color(0xFF147EC5))
+                            Text(stringResource(R.string.auto_a7f814c0), fontSize = 12.sp, color = palette.brand)
                         }
                     }
                     MiniTag(fileTypeLabel(currentItem.sourceType))
@@ -198,7 +205,7 @@ fun KnowledgeViewerScreen(
             }
         } ?: run {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFF147EC5))
+                CircularProgressIndicator(color = palette.brand)
             }
         }
     } // close outer Column
@@ -219,7 +226,7 @@ fun KnowledgeViewerScreen(
                         showAskSheet = true
                     },
                     shape = CircleShape,
-                    color = Color(0xFF111827),
+                    color = palette.bgInverse,
                     shadowElevation = 12.dp,
                     modifier = Modifier
                         .size(56.dp)
@@ -249,6 +256,10 @@ private fun WikiMarkdownContent(
     linkTargets: Map<String, String>,
     onOpenItem: (String) -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     // 把 frontmatter 里的 sources / related 列表都提取出来渲染成跳转
     // chips。原来的实现只渲染 sources,related 被 stripFrontMatter 一起
     // 剥掉——结果实体/概念页里"## 相关"段就算写了 wikilink,顶部的
@@ -259,9 +270,9 @@ private fun WikiMarkdownContent(
     val body = remember(markdown) { stripFrontMatter(markdown) }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
         if (sources.isNotEmpty()) {
-            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
+            Surface(shape = RoundedCornerShape(spacing.md), color = palette.bgPage, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(stringResource(R.string.auto_5b11946d), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_5b11946d), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
                     sources.forEach { source ->
                         InternalLinkText(
                             text = source,
@@ -277,13 +288,13 @@ private fun WikiMarkdownContent(
         // 的方式(每个 chip 一行),让用户能快速跳到关联页面。空列表就
         // 跳过,避免空 Surface 浪费空间。
         if (related.isNotEmpty()) {
-            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFEFF7FF), modifier = Modifier.fillMaxWidth()) {
+            Surface(shape = RoundedCornerShape(spacing.md), color = palette.brandSubtle, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
                         "相关页面（${related.size}）",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFF0F172A)
+                        color = palette.textPrimary
                     )
                     related.forEach { ref ->
                         // related 的每一项就是一个页面标题(label)——直接当
@@ -304,9 +315,9 @@ private fun WikiMarkdownContent(
             val trimmed = line.trim()
             when {
                 trimmed.isBlank() -> Spacer(modifier = Modifier.height(4.dp))
-                trimmed.startsWith("# ") -> Text(trimmed.removePrefix("# "), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), lineHeight = 30.sp)
-                trimmed.startsWith("## ") -> Text(trimmed.removePrefix("## "), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A), modifier = Modifier.padding(top = 8.dp))
-                trimmed.startsWith("### ") -> Text(trimmed.removePrefix("### "), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF334155), modifier = Modifier.padding(top = 4.dp))
+                trimmed.startsWith("# ") -> Text(trimmed.removePrefix("# "), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, lineHeight = 30.sp)
+                trimmed.startsWith("## ") -> Text(trimmed.removePrefix("## "), fontSize = 17.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary, modifier = Modifier.padding(top = 8.dp))
+                trimmed.startsWith("### ") -> Text(trimmed.removePrefix("### "), style = MaterialTheme.typography.titleMedium, color = Color(0xFF334155), modifier = Modifier.padding(top = 4.dp))
                 else -> InternalLinkText(
                     text = trimmed,
                     linkTargets = linkTargets,
@@ -325,8 +336,12 @@ private fun InternalLinkText(
     onOpenItem: (String) -> Unit,
     fallbackAsLink: Boolean
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val annotated = remember(text, linkTargets, fallbackAsLink) {
-        buildInternalLinkAnnotatedString(text, linkTargets, fallbackAsLink)
+        buildInternalLinkAnnotatedString(palette, text, linkTargets, fallbackAsLink)
     }
     ClickableText(
         text = annotated,
@@ -341,6 +356,7 @@ private fun InternalLinkText(
 }
 
 private fun buildInternalLinkAnnotatedString(
+    palette: Palette,
     text: String,
     linkTargets: Map<String, String>,
     fallbackAsLink: Boolean
@@ -349,34 +365,35 @@ private fun buildInternalLinkAnnotatedString(
     var cursor = 0
     val matches = regex.findAll(text).toList()
     if (matches.isEmpty()) {
-        appendMaybeLinkedPlainText(text, linkTargets, fallbackAsLink)
+        appendMaybeLinkedPlainText(palette, text, linkTargets, fallbackAsLink)
         return@buildAnnotatedString
     }
     matches.forEach { match ->
         append(text.substring(cursor, match.range.first))
         val label = match.groupValues[1].substringBefore("|").trim()
-        appendLinkedLabel(label, linkTargets)
+        appendLinkedLabel(palette, label, linkTargets)
         cursor = match.range.last + 1
     }
     append(text.substring(cursor))
 }
 
 private fun AnnotatedString.Builder.appendMaybeLinkedPlainText(
+    palette: Palette,
     text: String,
     linkTargets: Map<String, String>,
     fallbackAsLink: Boolean
 ) {
-    if (fallbackAsLink) appendLinkedLabel(text, linkTargets) else append(text)
+    if (fallbackAsLink) appendLinkedLabel(palette, text, linkTargets) else append(text)
 }
 
-private fun AnnotatedString.Builder.appendLinkedLabel(label: String, linkTargets: Map<String, String>) {
+private fun AnnotatedString.Builder.appendLinkedLabel(palette: Palette, label: String, linkTargets: Map<String, String>) {
     val targetId = linkTargets[normalizeLinkKey(label)]
     if (targetId == null) {
         append(label)
         return
     }
     pushStringAnnotation(TAG_INTERNAL_LINK, targetId)
-    withStyle(SpanStyle(color = Color(0xFF147EC5), fontWeight = FontWeight.SemiBold, textDecoration = TextDecoration.Underline)) {
+    withStyle(SpanStyle(color = palette.brand, fontWeight = FontWeight.SemiBold, textDecoration = TextDecoration.Underline)) {
         append(label)
     }
     pop()
@@ -423,11 +440,15 @@ private fun KnowledgeBodyHeader(
     title: String,
     item: KnowledgeItemEntity
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Text(
         text = title,
         fontSize = 24.sp,
         fontWeight = FontWeight.Bold,
-        color = Color(0xFF0F172A),
+        color = palette.textPrimary,
         lineHeight = 32.sp
     )
     Spacer(modifier = Modifier.height(8.dp))
@@ -440,11 +461,11 @@ private fun KnowledgeBodyHeader(
         Text(
             formatTimestamp(item.updatedAt),
             fontSize = 12.sp,
-            color = Color(0xFFA3A3A3)
+            color = palette.textTertiary
         )
     }
     Spacer(modifier = Modifier.height(4.dp))
-    HorizontalDivider(color = Color(0xFFF3F4F6))
+    HorizontalDivider(color = palette.bgSubtle)
     Spacer(modifier = Modifier.height(16.dp))
 }
 
@@ -453,22 +474,26 @@ private fun ProcessedWikiSection(
     items: List<KnowledgeItemEntity>,
     onOpenItem: (String) -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = Color(0xFFF7FBFF),
+        color = palette.bgPage,
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Default.Hub, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(18.dp))
+                Icon(Icons.Default.Hub, contentDescription = null, tint = palette.brand, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.auto_60d89c2c), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                Text(stringResource(R.string.auto_60d89c2c), style = MaterialTheme.typography.titleSmall, color = palette.textPrimary)
                 Spacer(modifier = Modifier.weight(1f))
-                Text("${items.size} 项", fontSize = 12.sp, color = Color(0xFF5F87A3))
+                Text("${items.size} 项", fontSize = 12.sp, color = palette.textSecondary)
             }
             Spacer(modifier = Modifier.height(10.dp))
             items.forEachIndexed { index, processed ->
-                if (index != 0) HorizontalDivider(color = Color(0xFFDBEEFF))
+                if (index != 0) HorizontalDivider(color = palette.borderBrand)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -477,11 +502,11 @@ private fun ProcessedWikiSection(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(processed.title, fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFF0F172A))
-                        Text(fileTypeLabel(processed.sourceType), fontSize = 11.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 2.dp))
+                        Text(processed.title, style = MaterialTheme.typography.labelLarge, color = palette.textPrimary)
+                        Text(fileTypeLabel(processed.sourceType), fontSize = 11.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 2.dp))
                     }
                     Icons.AutoMirrored.Filled.KeyboardArrowRight.let {
-                        Icon(it, contentDescription = null, tint = Color(0xFF94A3B8), modifier = Modifier.size(16.dp))
+                        Icon(it, contentDescription = null, tint = palette.textMuted, modifier = Modifier.size(16.dp))
                     }
                 }
             }
@@ -494,6 +519,10 @@ private fun PdfContentViewer(
     item: KnowledgeItemEntity,
     modifier: Modifier = Modifier
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val context = LocalContext.current
     val localPath = remember(item.sourceTraceJson) { extractJsonString(item.sourceTraceJson, "localPath") }
     var previewPages by remember(localPath) { mutableStateOf<List<Bitmap>>(emptyList()) }
@@ -530,15 +559,15 @@ private fun PdfContentViewer(
             KnowledgeBodyHeader(title = item.title, item = item)
         }
         item {
-            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
+            Surface(shape = RoundedCornerShape(spacing.md), color = palette.bgPage, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.auto_08be1e8e), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_08be1e8e), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
                     previewError?.let {
-                        Text(it, color = Color(0xFFDC2626), fontSize = 12.sp)
+                        Text(it, color = palette.semanticError, fontSize = 12.sp)
                     } ?: Text(
                         "为避免大文件卡顿，仅预览前 ${previewPages.size.coerceAtLeast(1).coerceAtMost(PDF_PREVIEW_PAGE_LIMIT)} 页；完整内容请查看下方解析文本。",
                         fontSize = 12.sp,
-                        color = Color(0xFF5F87A3)
+                        color = palette.textSecondary
                     )
                     TextButton(onClick = { localPath?.let { openFile(context, "file://$it") } }) {
                         Text(stringResource(R.string.auto_b7eecdbe), fontSize = 13.sp)
@@ -547,7 +576,7 @@ private fun PdfContentViewer(
             }
         }
         items(previewPages, key = { it.hashCode() }) { bitmap ->
-            Surface(shape = RoundedCornerShape(8.dp), color = Color.White, shadowElevation = 1.dp) {
+            Surface(shape = RoundedCornerShape(spacing.sm), color = Color.White, shadowElevation = 1.dp) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "PDF 预览页",
@@ -556,13 +585,13 @@ private fun PdfContentViewer(
             }
         }
         item {
-            Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
+            Surface(shape = RoundedCornerShape(spacing.md), color = palette.bgPage, modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    Text(stringResource(R.string.auto_b8c3d2a6), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_b8c3d2a6), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = palette.textPrimary)
                     Text(
                         "共 ${item.contentMarkdown.length} 字符，已分块懒加载显示。",
                         fontSize = 12.sp,
-                        color = Color(0xFF5F87A3),
+                        color = palette.textSecondary,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
@@ -574,7 +603,7 @@ private fun PdfContentViewer(
                     Text(
                         "文本片段 ${chunk.index + 1}",
                         fontSize = 11.sp,
-                        color = Color(0xFF94A3B8),
+                        color = palette.textMuted,
                         modifier = Modifier.padding(horizontal = 4.dp, vertical = 4.dp)
                     )
                     ComposeMarkdown(
@@ -590,7 +619,7 @@ private fun PdfContentViewer(
                 Button(
                     onClick = { showFullText = true },
                     modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))
+                    colors = ButtonDefaults.buttonColors(containerColor = palette.brand)
                 ) {
                     Text(stringResource(R.string.auto_4a705f3b), color = Color.White)
                 }
@@ -659,6 +688,10 @@ private fun extractJsonString(raw: String, key: String): String? {
 
 @Composable
 private fun ImagePlaceholder(contentMarkdown: String) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val context = LocalContext.current
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -669,27 +702,25 @@ private fun ImagePlaceholder(contentMarkdown: String) {
             Icons.Default.AutoAwesome,
             contentDescription = null,
             modifier = Modifier.size(48.dp),
-            tint = Color(0xFFDBEEFF)
+            tint = palette.borderBrand
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            stringResource(R.string.auto_d50f96ec),
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Bold,
-            color = Color(0xFF0F172A)
+            stringResource(R.string.auto_d50f96ec), style = MaterialTheme.typography.titleLarge,
+            color = palette.textPrimary
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             stringResource(R.string.auto_676993cb),
             fontSize = 14.sp,
-            color = Color(0xFFA3A3A3)
+            color = palette.textTertiary
         )
         Spacer(modifier = Modifier.height(24.dp))
         if (contentMarkdown.isNotBlank()) {
             Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                color = Color(0xFFF7FBFF)
+                shape = RoundedCornerShape(spacing.md),
+                color = palette.bgPage
             ) {
                 ComposeMarkdown(
                     modifier = Modifier.padding(16.dp).fillMaxWidth(),

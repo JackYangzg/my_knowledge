@@ -26,6 +26,8 @@ import com.my.knowledge.ui.component.AiMessageContent
 import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun AskScreen(
@@ -33,6 +35,10 @@ fun AskScreen(
     itemTitle: String,
     onBack: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val messages by viewModel.messages.collectAsState()
     val citations by viewModel.lastCitations.collectAsState()
     val debugPrompts by viewModel.debugPrompts.collectAsState()
@@ -50,7 +56,7 @@ fun AskScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .background(palette.bgPage)
     ) {
         // Header
         Column(
@@ -69,17 +75,17 @@ fun AskScreen(
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), style = MaterialTheme.typography.titleSmall, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = stringResource(R.string.auto_37f4358f),
                 fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color(0xFF0F172A)
+                color = palette.textPrimary
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -89,7 +95,7 @@ fun AskScreen(
                 Text(
                     text = "基于「$itemTitle」的知识内容",
                     fontSize = 13.sp,
-                    color = Color(0xFF5F87A3),
+                    color = palette.textSecondary,
                     modifier = Modifier.padding(top = 4.dp).weight(1f)
                 )
                 TextButton(
@@ -100,10 +106,10 @@ fun AskScreen(
                         Icons.Default.Delete,
                         contentDescription = "清空对话",
                         modifier = Modifier.size(16.dp),
-                        tint = Color(0xFFEF4444)
+                        tint = palette.semanticError
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(stringResource(R.string.auto_578bbcfa), fontSize = 13.sp, color = Color(0xFFEF4444))
+                    Text(stringResource(R.string.auto_578bbcfa), fontSize = 13.sp, color = palette.semanticError)
                 }
             }
         }
@@ -128,13 +134,13 @@ fun AskScreen(
                                 stringResource(R.string.auto_c5b06dab),
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Medium,
-                                color = Color(0xFF0F172A)
+                                color = palette.textPrimary
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
                                 stringResource(R.string.auto_b5d282f1),
                                 fontSize = 13.sp,
-                                color = Color(0xFF5F87A3)
+                                color = palette.textSecondary
                             )
                         }
                     }
@@ -161,9 +167,9 @@ fun AskScreen(
                         CircularProgressIndicator(
                             modifier = Modifier.size(16.dp),
                             strokeWidth = 2.dp,
-                            color = Color(0xFF147EC5)
+                            color = palette.brand
                         )
-                        Text(stringResource(R.string.auto_55b4eacf), fontSize = 13.sp, color = Color(0xFF5F87A3))
+                        Text(stringResource(R.string.auto_55b4eacf), fontSize = 13.sp, color = palette.textSecondary)
                     }
                 }
             }
@@ -185,13 +191,13 @@ fun AskScreen(
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
-                    placeholder = { Text(stringResource(R.string.auto_650b2de8), color = Color(0xFFA3A3A3), fontSize = 14.sp) },
+                    placeholder = { Text(stringResource(R.string.auto_650b2de8), color = palette.textTertiary, fontSize = 14.sp) },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(24.dp),
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFF147EC5),
-                        unfocusedBorderColor = Color(0xFFDBEEFF)
+                        focusedBorderColor = palette.brand,
+                        unfocusedBorderColor = palette.borderBrand
                     )
                 )
                 IconButton(
@@ -207,8 +213,8 @@ fun AskScreen(
                         .size(44.dp)
                         .clip(RoundedCornerShape(22.dp))
                         .background(
-                            if (inputText.isNotBlank() && !isLoading) Color(0xFF147EC5)
-                            else Color(0xFFE5E5E5)
+                            if (inputText.isNotBlank() && !isLoading) palette.brand
+                            else palette.borderDefault
                         )
                 ) {
                     Icon(
@@ -230,6 +236,10 @@ private fun MessageBubble(
     debugPrompt: String? = null,
     onSaveAsKnowledge: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val isUser = msg.role == "user"
 
     Row(
@@ -243,7 +253,7 @@ private fun MessageBubble(
                 bottomStart = if (isUser) 16.dp else 4.dp,
                 bottomEnd = if (isUser) 4.dp else 16.dp
             ),
-            color = if (isUser) Color(0xFF147EC5) else Color.White,
+            color = if (isUser) palette.brand else Color.White,
             border = if (!isUser) androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEEF6FF)) else null,
             modifier = Modifier.widthIn(max = 360.dp)
         ) {
@@ -278,7 +288,7 @@ private fun MessageBubble(
                     Text(
                         text = if (isUser) "你" else "AI",
                         fontSize = 11.sp,
-                        color = if (isUser) Color.White.copy(alpha = 0.7f) else Color(0xFFA3A3A3)
+                        color = if (isUser) Color.White.copy(alpha = 0.7f) else palette.textTertiary
                     )
                     if (!isUser) {
                         val isSaved = msg.savedAsKnowledgeItemId != null
@@ -291,7 +301,7 @@ private fun MessageBubble(
                             Text(
                                 text = if (isSaved) "已保存到知识库" else "保存到知识库",
                                 fontSize = 11.sp,
-                                color = if (isSaved) Color(0xFFA3A3A3) else Color(0xFF147EC5)
+                                color = if (isSaved) palette.textTertiary else palette.brand
                             )
                         }
                     }
@@ -309,13 +319,17 @@ private fun MessageBubble(
 
 @Composable
 private fun CitationRow(citation: AskCitationEntity) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
         color = when (citation.label) {
-            AskCitationEntity.LABEL_SOURCE -> Color(0xFFEFF7FF)
+            AskCitationEntity.LABEL_SOURCE -> palette.brandSubtle
             AskCitationEntity.LABEL_INFERENCE -> Color(0xFFFFF7ED)
-            else -> Color(0xFFFEF2F2)
+            else -> palette.semanticErrorBg
         },
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(spacing.sm),
         modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
@@ -323,13 +337,13 @@ private fun CitationRow(citation: AskCitationEntity) {
                 "〖${citation.label}〗${citation.fragmentId?.let { " 片段 ${it.take(8)}" } ?: ""}",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF0F172A)
+                color = palette.textPrimary
             )
             Text(
                 citation.quote,
                 fontSize = 11.sp,
                 lineHeight = 16.sp,
-                color = Color(0xFF5F87A3),
+                color = palette.textSecondary,
                 modifier = Modifier.padding(top = 2.dp)
             )
         }

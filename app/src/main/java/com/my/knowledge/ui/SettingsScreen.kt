@@ -41,9 +41,15 @@ import java.net.HttpURLConnection
 import java.net.URL
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     val currentConfig = KnowledgeManager.modelConfig
     var section by remember { mutableStateOf<SettingsSection?>(null) }
     var provider by remember { mutableStateOf(currentConfig.provider) }
@@ -117,7 +123,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFFF7FBFF))
+            .background(palette.bgPage)
     ) {
         // Header
         Column(
@@ -138,17 +144,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = null,
                     modifier = Modifier.size(16.dp),
-                    tint = Color(0xFF147EC5)
+                    tint = palette.brand
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = section?.title ?: "设置",
-                fontSize = 28.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF0F172A)
+                text = section?.title ?: "设置", style = MaterialTheme.typography.displayLarge,
+                color = palette.textPrimary
             )
         }
 
@@ -186,16 +190,16 @@ fun SettingsScreen(onBack: () -> Unit) {
                     )
                     Surface(
                         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(spacing.md),
                         color = Color.White,
-                        border = BorderStroke(1.dp, Color(0xFFDBEEFF))
+                        border = BorderStroke(1.dp, palette.borderBrand)
                     ) {
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.BugReport, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(22.dp))
+                            Icon(Icons.Default.BugReport, contentDescription = null, tint = palette.brand, modifier = Modifier.size(22.dp))
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text(stringResource(R.string.auto_0ee20898), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                                Text(stringResource(R.string.auto_2804e24e), fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 3.dp))
+                                Text(stringResource(R.string.auto_0ee20898), style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
+                                Text(stringResource(R.string.auto_2804e24e), fontSize = 12.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 3.dp))
                             }
                             Switch(
                                 checked = debugPromptEnabled,
@@ -265,7 +269,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                             context.startActivity(intent)
                         },
                         modifier = Modifier.fillMaxWidth().padding(bottom = 20.dp),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(spacing.md),
                         color = Color(0xFFF0F9FF),
                         border = BorderStroke(1.dp, Color(0xFFBAE6FD))
                     ) {
@@ -321,19 +325,23 @@ fun SettingsTextField(
     placeholder: String,
     isPassword: Boolean = false
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Column(modifier = Modifier.padding(bottom = 20.dp)) {
-        Text(label, fontSize = 14.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(bottom = 8.dp))
+        Text(label, fontSize = 14.sp, color = palette.textSecondary, modifier = Modifier.padding(bottom = 8.dp))
         OutlinedTextField(
             value = value,
             onValueChange = onValueChange,
-            placeholder = { Text(placeholder, color = Color(0xFFA3A3A3)) },
+            placeholder = { Text(placeholder, color = palette.textTertiary) },
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(spacing.md),
             singleLine = true,
             visualTransformation = if (isPassword) PasswordVisualTransformation() else VisualTransformation.None,
             colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = Color(0xFF147EC5),
-                unfocusedBorderColor = Color(0xFFDBEEFF)
+                focusedBorderColor = palette.brand,
+                unfocusedBorderColor = palette.borderBrand
             )
         )
     }
@@ -346,9 +354,11 @@ fun VoiceProviderDropdown(
     value: String,
     onValueChange: (String) -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     var expanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.padding(bottom = 20.dp)) {
-        Text(label, fontSize = 14.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(bottom = 8.dp))
+        Text(label, fontSize = 14.sp, color = palette.textSecondary, modifier = Modifier.padding(bottom = 8.dp))
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
             OutlinedTextField(
                 value = value,
@@ -356,10 +366,10 @@ fun VoiceProviderDropdown(
                 readOnly = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                 modifier = Modifier.menuAnchor().fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(spacing.md),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF147EC5),
-                    unfocusedBorderColor = Color(0xFFDBEEFF)
+                    focusedBorderColor = palette.brand,
+                    unfocusedBorderColor = palette.borderBrand
                 )
             )
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -382,9 +392,11 @@ fun ProviderDropdown(
     value: String,
     onValueChange: (String) -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     var expanded by remember { mutableStateOf(false) }
     Column(modifier = Modifier.padding(bottom = 20.dp)) {
-        Text(label, fontSize = 14.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(bottom = 8.dp))
+        Text(label, fontSize = 14.sp, color = palette.textSecondary, modifier = Modifier.padding(bottom = 8.dp))
         ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
             OutlinedTextField(
                 value = value,
@@ -392,10 +404,10 @@ fun ProviderDropdown(
                 readOnly = true,
                 trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
                 modifier = Modifier.menuAnchor().fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(spacing.md),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = Color(0xFF147EC5),
-                    unfocusedBorderColor = Color(0xFFDBEEFF)
+                    focusedBorderColor = palette.brand,
+                    unfocusedBorderColor = palette.borderBrand
                 )
             )
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
@@ -417,8 +429,12 @@ fun CapabilitySection(
     provider: String,
     onProviderChange: (String) -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Column(modifier = Modifier.padding(bottom = 20.dp)) {
-        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A), modifier = Modifier.padding(bottom = 12.dp))
+        Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary, modifier = Modifier.padding(bottom = 12.dp))
         ProviderDropdown(label = "服务提供商", value = provider, onValueChange = onProviderChange)
     }
 }
@@ -430,30 +446,38 @@ private fun SettingsSectionRow(
     desc: String,
     onClick: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Surface(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(spacing.md),
         color = Color.White,
-        border = BorderStroke(1.dp, Color(0xFFDBEEFF))
+        border = BorderStroke(1.dp, palette.borderBrand)
     ) {
         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(22.dp))
+            Icon(icon, contentDescription = null, tint = palette.brand, modifier = Modifier.size(22.dp))
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(title, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                Text(desc, fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 3.dp))
+                Text(title, style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
+                Text(desc, fontSize = 12.sp, color = palette.textSecondary, modifier = Modifier.padding(top = 3.dp))
             }
-            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color(0xFFA3A3A3))
+            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = palette.textTertiary)
         }
     }
 }
 
 @Composable
 private fun SettingsHint() {
-    Surface(color = Color(0xFFFFF7ED), shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    Surface(color = Color(0xFFFFF7ED), shape = RoundedCornerShape(spacing.sm), modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
-            Icon(Icons.Filled.Info, contentDescription = null, tint = Color(0xFFEA580C), modifier = Modifier.size(16.dp))
+            Icon(Icons.Filled.Info, contentDescription = null, tint = palette.semanticWarning, modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(8.dp))
             Text(stringResource(R.string.auto_3c554377), fontSize = 12.sp, color = Color(0xFF92400E))
         }
@@ -466,29 +490,33 @@ private fun SaveButton(
     onSave: () -> Unit,
     onTest: () -> Unit
 ) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
     Column {
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(
                 onClick = onTest,
                 modifier = Modifier.weight(1f).height(50.dp),
-                shape = RoundedCornerShape(16.dp)
+                shape = RoundedCornerShape(spacing.lg)
             ) {
-                Text(stringResource(R.string.auto_0152e9cd), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.auto_0152e9cd), style = MaterialTheme.typography.titleMedium)
             }
             Button(
                 onClick = onSave,
                 modifier = Modifier.weight(1f).height(50.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
+                shape = RoundedCornerShape(spacing.lg),
+                colors = ButtonDefaults.buttonColors(containerColor = palette.bgInverse)
             ) {
                 Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(stringResource(R.string.auto_817af187), fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.auto_817af187), style = MaterialTheme.typography.titleMedium)
             }
         }
         statusMessage?.let {
-            Surface(color = Color(0xFFEFF7FF), shape = RoundedCornerShape(8.dp), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
-                Text(it, fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(12.dp))
+            Surface(color = palette.brandSubtle, shape = RoundedCornerShape(spacing.sm), modifier = Modifier.fillMaxWidth().padding(top = 12.dp)) {
+                Text(it, fontSize = 12.sp, color = palette.brand, modifier = Modifier.padding(12.dp))
             }
         }
     }
