@@ -175,53 +175,35 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_review_item_status` ON `review_item` (`status`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_review_item_type` ON `review_item` (`type`)")
 
-                addColumnIfMissing(db, "knowledge_fragment", "sourceId", "TEXT")
-                addColumnIfMissing(db, "knowledge_fragment", "parsedContentId", "TEXT")
-                addColumnIfMissing(db, "knowledge_fragment", "knowledgeItemId", "TEXT")
-                addColumnIfMissing(db, "knowledge_fragment", "orderIndex", "INTEGER NOT NULL DEFAULT 0")
-                addColumnIfMissing(db, "knowledge_fragment", "heading", "TEXT")
-                addColumnIfMissing(db, "knowledge_fragment", "tokenCount", "INTEGER NOT NULL DEFAULT 0")
-                addColumnIfMissing(db, "knowledge_fragment", "embeddingId", "TEXT")
+                db.addColumnIfMissing( "knowledge_fragment", "sourceId", "TEXT")
+                db.addColumnIfMissing( "knowledge_fragment", "parsedContentId", "TEXT")
+                db.addColumnIfMissing( "knowledge_fragment", "knowledgeItemId", "TEXT")
+                db.addColumnIfMissing( "knowledge_fragment", "orderIndex", "INTEGER NOT NULL DEFAULT 0")
+                db.addColumnIfMissing( "knowledge_fragment", "heading", "TEXT")
+                db.addColumnIfMissing( "knowledge_fragment", "tokenCount", "INTEGER NOT NULL DEFAULT 0")
+                db.addColumnIfMissing( "knowledge_fragment", "embeddingId", "TEXT")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_fragment_sourceId` ON `knowledge_fragment` (`sourceId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_fragment_parsedContentId` ON `knowledge_fragment` (`parsedContentId`)")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_fragment_knowledgeItemId` ON `knowledge_fragment` (`knowledgeItemId`)")
 
-                addColumnIfMissing(db, "processing_task", "sourceId", "TEXT")
-                addColumnIfMissing(db, "processing_task", "itemId", "TEXT")
-                addColumnIfMissing(db, "processing_task", "progress", "INTEGER NOT NULL DEFAULT 0")
-                addColumnIfMissing(db, "processing_task", "currentStep", "TEXT")
-                addColumnIfMissing(db, "processing_task", "inputJson", "TEXT NOT NULL DEFAULT '{}'")
-                addColumnIfMissing(db, "processing_task", "outputJson", "TEXT")
-                addColumnIfMissing(db, "processing_task", "startedAt", "INTEGER")
+                db.addColumnIfMissing( "processing_task", "sourceId", "TEXT")
+                db.addColumnIfMissing( "processing_task", "itemId", "TEXT")
+                db.addColumnIfMissing( "processing_task", "progress", "INTEGER NOT NULL DEFAULT 0")
+                db.addColumnIfMissing( "processing_task", "currentStep", "TEXT")
+                db.addColumnIfMissing( "processing_task", "inputJson", "TEXT NOT NULL DEFAULT '{}'")
+                db.addColumnIfMissing( "processing_task", "outputJson", "TEXT")
+                db.addColumnIfMissing( "processing_task", "startedAt", "INTEGER")
             }
 
-            private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, column: String, spec: String) {
-                db.query("PRAGMA table_info(`$table`)").use { cursor ->
-                    val nameIndex = cursor.getColumnIndex("name")
-                    while (cursor.moveToNext()) {
-                        if (cursor.getString(nameIndex) == column) return
-                    }
-                }
-                db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $spec")
-            }
         }
 
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                addColumnIfMissing(db, "knowledge_entity", "deletedAt", "INTEGER")
-                addColumnIfMissing(db, "knowledge_relation", "deletedAt", "INTEGER")
-                addColumnIfMissing(db, "knowledge_community", "deletedAt", "INTEGER")
+                db.addColumnIfMissing( "knowledge_entity", "deletedAt", "INTEGER")
+                db.addColumnIfMissing( "knowledge_relation", "deletedAt", "INTEGER")
+                db.addColumnIfMissing( "knowledge_community", "deletedAt", "INTEGER")
             }
 
-            private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, column: String, spec: String) {
-                db.query("PRAGMA table_info(`$table`)").use { cursor ->
-                    val nameIndex = cursor.getColumnIndex("name")
-                    while (cursor.moveToNext()) {
-                        if (cursor.getString(nameIndex) == column) return
-                    }
-                }
-                db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $spec")
-            }
         }
 
         /**
@@ -230,22 +212,12 @@ abstract class AppDatabase : RoomDatabase() {
          */
         val MIGRATION_7_8 = object : Migration(7, 8) {
         override fun migrate(db: SupportSQLiteDatabase) {
-            addColumnIfMissing(db, "knowledge_entity", "confidence", "REAL NOT NULL DEFAULT 1.0")
+            db.addColumnIfMissing( "knowledge_entity", "confidence", "REAL NOT NULL DEFAULT 1.0")
             // The new rawNoteId index on knowledge_item was added when we
             // wired InspirationScreen → knowledge_item dedup. v7 never had
             // this index, so without this line Room detects a schema
             // mismatch and crashes the app on first launch after upgrade.
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_item_rawNoteId` ON `knowledge_item` (`rawNoteId`)")
-        }
-
-        private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, column: String, spec: String) {
-            db.query("PRAGMA table_info(`$table`)").use { cursor ->
-                val nameIndex = cursor.getColumnIndex("name")
-                while (cursor.moveToNext()) {
-                    if (cursor.getString(nameIndex) == column) return
-                }
-            }
-            db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $spec")
         }
     }
 
@@ -260,22 +232,13 @@ abstract class AppDatabase : RoomDatabase() {
 
         val MIGRATION_5_6 = object : Migration(5, 6) {
             override fun migrate(db: SupportSQLiteDatabase) {
-                addColumnIfMissing(db, "knowledge_item", "sourceId", "TEXT")
-                addColumnIfMissing(db, "knowledge_item", "sourceTraceJson", "TEXT NOT NULL DEFAULT '[]'")
-                addColumnIfMissing(db, "knowledge_item", "confidence", "REAL NOT NULL DEFAULT 1.0")
-                addColumnIfMissing(db, "knowledge_item", "archivedAt", "INTEGER")
+                db.addColumnIfMissing( "knowledge_item", "sourceId", "TEXT")
+                db.addColumnIfMissing( "knowledge_item", "sourceTraceJson", "TEXT NOT NULL DEFAULT '[]'")
+                db.addColumnIfMissing( "knowledge_item", "confidence", "REAL NOT NULL DEFAULT 1.0")
+                db.addColumnIfMissing( "knowledge_item", "archivedAt", "INTEGER")
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_item_sourceId` ON `knowledge_item` (`sourceId`)")
             }
 
-            private fun addColumnIfMissing(db: SupportSQLiteDatabase, table: String, column: String, spec: String) {
-                db.query("PRAGMA table_info(`$table`)").use { cursor ->
-                    val nameIndex = cursor.getColumnIndex("name")
-                    while (cursor.moveToNext()) {
-                        if (cursor.getString(nameIndex) == column) return
-                    }
-                }
-                db.execSQL("ALTER TABLE `$table` ADD COLUMN `$column` $spec")
-            }
         }
     }
 }
