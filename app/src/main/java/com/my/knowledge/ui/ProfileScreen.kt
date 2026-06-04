@@ -18,6 +18,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.my.knowledge.viewmodel.ProfileViewModel
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun ProfileScreen(
@@ -72,7 +74,7 @@ fun ProfileScreen(
                         Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(24.dp))
                     }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("个人知识空间", fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                        Text(stringResource(R.string.auto_805d5a4a), fontSize = 16.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                         Text(
                             "${profileStats.knowledgeItemCount} 条知识，${profileStats.knowledgeBaseCount} 个知识库",
                             fontSize = 14.sp,

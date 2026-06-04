@@ -64,6 +64,8 @@ import com.my.knowledge.viewmodel.ProcessingStatusViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun KnowledgeLogScreen(
@@ -84,11 +86,11 @@ fun KnowledgeLogScreen(
             TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
                 Spacer(modifier = Modifier.size(4.dp))
-                Text("返回", fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text("日志中心", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text("导入、加工、未归档和人工复核状态", fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
+            Text(stringResource(R.string.auto_b9543b21), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            Text(stringResource(R.string.auto_949f9b3a), fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
         }
 
         LazyColumn(
@@ -107,7 +109,7 @@ fun KnowledgeLogScreen(
             if (rows.isEmpty() && reviews.isEmpty()) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                        Text("暂无日志", color = Color(0xFF5F87A3), fontSize = 14.sp)
+                        Text(stringResource(R.string.auto_44060e77), color = Color(0xFF5F87A3), fontSize = 14.sp)
                     }
                 }
             }
@@ -137,9 +139,9 @@ fun KnowledgeLogScreen(
                         }
                         Text(review.description, fontSize = 12.sp, lineHeight = 18.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 8.dp))
                         Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
-                            TextButton(onClick = { processingViewModel.skipReview(review.id) }) { Text("稍后", fontSize = 13.sp, color = Color(0xFFA3A3A3)) }
+                            TextButton(onClick = { processingViewModel.skipReview(review.id) }) { Text(stringResource(R.string.auto_479fcc1c), fontSize = 13.sp, color = Color(0xFFA3A3A3)) }
                             Button(onClick = { processingViewModel.acceptReview(review.id) }, shape = RoundedCornerShape(10.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))) {
-                                Text("确认", fontSize = 13.sp)
+                                Text(stringResource(R.string.auto_b56d9ac6), fontSize = 13.sp)
                             }
                         }
                     }
@@ -152,15 +154,15 @@ fun KnowledgeLogScreen(
     if (deleteSourceId != null) {
         AlertDialog(
             onDismissRequest = { deleteSourceId = null },
-            title = { Text("删除来源") },
-            text = { Text("仅删除日志中心中的记录和处理任务，不会删除知识条目、解析结果、中间数据或本地来源文件。") },
+            title = { Text(stringResource(R.string.auto_ecafc815)) },
+            text = { Text(stringResource(R.string.auto_c6a6d2ab)) },
             confirmButton = {
                 Button(onClick = {
                     deleteSourceId?.let(importViewModel::deleteSourceLog)
                     deleteSourceId = null
-                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))) { Text("删除") }
+                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))) { Text(stringResource(R.string.auto_3755f56f)) }
             },
-            dismissButton = { TextButton(onClick = { deleteSourceId = null }) { Text("取消") } }
+            dismissButton = { TextButton(onClick = { deleteSourceId = null }) { Text(stringResource(R.string.auto_4d0b4688)) } }
         )
     }
 
@@ -236,7 +238,7 @@ fun KnowledgeLogScreen(
                     if (!row.source.errorMessage.isNullOrBlank()) Text("来源错误：${row.source.errorMessage}", color = Color(0xFFDC2626))
                 }
             },
-            confirmButton = { TextButton(onClick = { detailRow = null }) { Text("关闭") } }
+            confirmButton = { TextButton(onClick = { detailRow = null }) { Text(stringResource(R.string.auto_6c14bd7f)) } }
         )
     }
 }

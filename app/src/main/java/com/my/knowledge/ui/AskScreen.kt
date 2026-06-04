@@ -24,6 +24,8 @@ import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.ui.component.AiMessageContent
 import kotlinx.coroutines.launch
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun AskScreen(
@@ -70,11 +72,11 @@ fun AskScreen(
                     tint = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("返回上一层", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "AI 对话",
+                text = stringResource(R.string.auto_37f4358f),
                 fontSize = 26.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF0F172A)
@@ -101,7 +103,7 @@ fun AskScreen(
                         tint = Color(0xFFEF4444)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("清空历史", fontSize = 13.sp, color = Color(0xFFEF4444))
+                    Text(stringResource(R.string.auto_578bbcfa), fontSize = 13.sp, color = Color(0xFFEF4444))
                 }
             }
         }
@@ -123,14 +125,14 @@ fun AskScreen(
                             Text("📚", fontSize = 40.sp)
                             Spacer(modifier = Modifier.height(12.dp))
                             Text(
-                                "知识内容已加载到上下文中",
+                                stringResource(R.string.auto_c5b06dab),
                                 fontSize = 15.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = Color(0xFF0F172A)
                             )
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                "在下方输入问题，AI 将基于该知识内容为你解答",
+                                stringResource(R.string.auto_b5d282f1),
                                 fontSize = 13.sp,
                                 color = Color(0xFF5F87A3)
                             )
@@ -161,7 +163,7 @@ fun AskScreen(
                             strokeWidth = 2.dp,
                             color = Color(0xFF147EC5)
                         )
-                        Text("AI 正在思考...", fontSize = 13.sp, color = Color(0xFF5F87A3))
+                        Text(stringResource(R.string.auto_55b4eacf), fontSize = 13.sp, color = Color(0xFF5F87A3))
                     }
                 }
             }
@@ -183,7 +185,7 @@ fun AskScreen(
                 OutlinedTextField(
                     value = inputText,
                     onValueChange = { inputText = it },
-                    placeholder = { Text("输入问题...", color = Color(0xFFA3A3A3), fontSize = 14.sp) },
+                    placeholder = { Text(stringResource(R.string.auto_650b2de8), color = Color(0xFFA3A3A3), fontSize = 14.sp) },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(24.dp),
                     singleLine = true,
@@ -256,7 +258,7 @@ private fun MessageBubble(
                     Spacer(modifier = Modifier.height(8.dp))
                     Surface(color = Color.White.copy(alpha = 0.16f), shape = RoundedCornerShape(10.dp)) {
                         Column(modifier = Modifier.padding(10.dp)) {
-                            Text("调试上下文", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
+                            Text(stringResource(R.string.auto_7f13af3e), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color.White)
                             Text(
                                 debugPrompt,
                                 fontSize = 10.sp,

@@ -22,6 +22,8 @@ import com.my.knowledge.ui.component.MiniTag
 import com.my.knowledge.ui.component.StatCard
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.ThreadViewModel
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -59,7 +61,7 @@ fun KnowledgeContextScreen(
                     TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("返回", fontSize = 14.sp, color = Color(0xFF147EC5))
+                        Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
                     }
                 },
                 action = {
@@ -71,7 +73,7 @@ fun KnowledgeContextScreen(
                             border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
                             shadowElevation = 1.dp
                         ) {
-                            Text("刷新脉络", fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                            Text(stringResource(R.string.auto_146d3b54), fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                         }
                     }
                 }
@@ -84,8 +86,8 @@ fun KnowledgeContextScreen(
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Default.AccountTree, contentDescription = null, tint = Color(0xFFA3A3A3), modifier = Modifier.size(48.dp))
                         Spacer(modifier = Modifier.height(12.dp))
-                        Text("暂无正式知识库", color = Color(0xFF5F87A3), fontSize = 14.sp)
-                        Text("请先创建知识库并添加知识", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                        Text(stringResource(R.string.auto_d09adbd6), color = Color(0xFF5F87A3), fontSize = 14.sp)
+                        Text(stringResource(R.string.auto_19cab229), fontSize = 12.sp, color = Color(0xFFA3A3A3))
                     }
                 }
             }
@@ -126,7 +128,7 @@ fun KnowledgeContextScreen(
                             modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)
                         ) {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text("概述", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                                Text(stringResource(R.string.auto_153042ed), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(thread!!.description, fontSize = 13.sp, color = Color(0xFF5F87A3), lineHeight = 20.sp)
                             }
@@ -370,7 +372,7 @@ fun KnowledgeContextScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.TouchApp, contentDescription = null, tint = Color(0xFFA3A3A3), modifier = Modifier.size(32.dp))
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("选择一个知识库查看脉络", fontSize = 14.sp, color = Color(0xFF5F87A3))
+                            Text(stringResource(R.string.auto_b257119b), fontSize = 14.sp, color = Color(0xFF5F87A3))
                         }
                     }
                 }
@@ -380,7 +382,7 @@ fun KnowledgeContextScreen(
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp, color = Color(0xFF147EC5))
                             Spacer(modifier = Modifier.height(12.dp))
-                            Text("加载脉络中...", fontSize = 13.sp, color = Color(0xFF5F87A3))
+                            Text(stringResource(R.string.auto_5b54efff), fontSize = 13.sp, color = Color(0xFF5F87A3))
                         }
                     }
                 }
@@ -421,7 +423,7 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
                     TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("返回", fontSize = 14.sp, color = Color(0xFF147EC5))
+                        Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
                     }
                 },
                 action = {
@@ -432,7 +434,7 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
                         border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
                         shadowElevation = 1.dp
                     ) {
-                        Text("筛选", fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
+                        Text(stringResource(R.string.auto_dcce9a14), fontSize = 12.sp, color = Color(0xFF147EC5), modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp))
                     }
                 }
             )
@@ -475,7 +477,7 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
         if (fragments.isEmpty()) {
             item {
                 Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                    Text("暂无碎片，请先通过灵感或文件导入", color = Color(0xFF5F87A3), fontSize = 14.sp)
+                    Text(stringResource(R.string.auto_b05a59ae), color = Color(0xFF5F87A3), fontSize = 14.sp)
                 }
             }
         } else {

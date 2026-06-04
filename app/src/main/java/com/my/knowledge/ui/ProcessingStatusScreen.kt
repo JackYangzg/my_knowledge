@@ -22,6 +22,8 @@ import com.my.knowledge.data.db.entity.ArchiveRecommendationEntity
 import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.viewmodel.ProcessingStatusViewModel
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun ProcessingStatusScreen(
@@ -58,11 +60,11 @@ fun ProcessingStatusScreen(
                     tint = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("返回", fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "加工状态",
+                text = stringResource(R.string.auto_c2f69d5e),
                 fontSize = 28.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color(0xFF0F172A)
@@ -186,7 +188,7 @@ private fun ReviewCard(
             Spacer(modifier = Modifier.height(10.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 TextButton(onClick = onSkip) {
-                    Text("稍后", fontSize = 13.sp, color = Color(0xFFA3A3A3))
+                    Text(stringResource(R.string.auto_479fcc1c), fontSize = 13.sp, color = Color(0xFFA3A3A3))
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
@@ -195,7 +197,7 @@ private fun ReviewCard(
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5)),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
-                    Text("确认", fontSize = 13.sp)
+                    Text(stringResource(R.string.auto_b56d9ac6), fontSize = 13.sp)
                 }
             }
         }
@@ -332,7 +334,7 @@ private fun TaskCard(
 
             if (expanded) {
                 Spacer(modifier = Modifier.height(16.dp))
-                Text("加工详情", fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                Text(stringResource(R.string.auto_8316b0a2), fontSize = 13.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                 Spacer(modifier = Modifier.height(8.dp))
                 
                 // Pipeline Stages
@@ -353,7 +355,7 @@ private fun TaskCard(
 
                 if (logs.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(12.dp))
-                    Text("最近日志", fontSize = 12.sp, color = Color(0xFF5F87A3))
+                    Text(stringResource(R.string.auto_70f1aab1), fontSize = 12.sp, color = Color(0xFF5F87A3))
                     logs.take(3).forEach { log ->
                         Text(
                             "• [${log.status}] ${log.message}",
@@ -404,7 +406,7 @@ private fun TaskCard(
                             tint = Color(0xFF147EC5)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("重试", fontSize = 12.sp, color = Color(0xFF147EC5))
+                        Text(stringResource(R.string.auto_e2d53a6d), fontSize = 12.sp, color = Color(0xFF147EC5))
                     }
                 }
                 if (task.status == "pending" || task.status == "running") {
@@ -419,7 +421,7 @@ private fun TaskCard(
                             tint = Color(0xFFDC2626)
                         )
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("取消", fontSize = 12.sp, color = Color(0xFFDC2626))
+                        Text(stringResource(R.string.auto_4d0b4688), fontSize = 12.sp, color = Color(0xFFDC2626))
                     }
                 }
             }
@@ -546,7 +548,7 @@ private fun RecommendationCard(
                         tint = Color(0xFFA3A3A3)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("拒绝", fontSize = 13.sp, color = Color(0xFFA3A3A3))
+                    Text(stringResource(R.string.auto_03e210a6), fontSize = 13.sp, color = Color(0xFFA3A3A3))
                 }
                 Spacer(modifier = Modifier.width(8.dp))
                 Button(
@@ -561,7 +563,7 @@ private fun RecommendationCard(
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("确认归档", fontSize = 13.sp)
+                    Text(stringResource(R.string.auto_dd794381), fontSize = 13.sp)
                 }
             }
         }

@@ -20,6 +20,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.my.knowledge.viewmodel.RecycleBinViewModel
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun RecycleBinScreen(
@@ -60,7 +62,7 @@ fun RecycleBinScreen(
                     tint = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("返回上一层", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -69,7 +71,7 @@ fun RecycleBinScreen(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Column {
-                    Text("回收站", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_64ea8751), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                     Text("共 $totalCount 条已删除", fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
                 }
                 if (items.isNotEmpty()) {
@@ -82,7 +84,7 @@ fun RecycleBinScreen(
                             },
                             colors = CheckboxDefaults.colors(checkedColor = Color(0xFF147EC5))
                         )
-                        Text("全选", fontSize = 13.sp, color = Color(0xFF5F87A3))
+                        Text(stringResource(R.string.auto_3e44b2a9), fontSize = 13.sp, color = Color(0xFF5F87A3))
                     }
                 }
             }
@@ -111,7 +113,7 @@ fun RecycleBinScreen(
                         ) {
                             Icon(Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("恢复所选", fontSize = 13.sp, color = Color.White)
+                            Text(stringResource(R.string.auto_e0bde70d), fontSize = 13.sp, color = Color.White)
                         }
                         Button(
                             onClick = { showBatchDeleteDialog = true },
@@ -121,7 +123,7 @@ fun RecycleBinScreen(
                         ) {
                             Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("删除所选", fontSize = 13.sp, color = Color.White)
+                            Text(stringResource(R.string.auto_5d071a7a), fontSize = 13.sp, color = Color.White)
                         }
                     }
                 }
@@ -151,7 +153,7 @@ fun RecycleBinScreen(
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(64.dp),
                         contentAlignment = Alignment.Center
-                    ) { Text("回收站为空", color = Color(0xFFA3A3A3), fontSize = 15.sp) }
+                    ) { Text(stringResource(R.string.auto_fecda037), color = Color(0xFFA3A3A3), fontSize = 15.sp) }
                 }
             } else {
                 item { Spacer(modifier = Modifier.height(12.dp)) }
@@ -226,7 +228,7 @@ fun RecycleBinScreen(
         AlertDialog(
             onDismissRequest = { showBatchDeleteDialog = false },
             icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFDC2626)) },
-            title = { Text("永久删除", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.auto_a7fadbe1), fontWeight = FontWeight.Bold) },
             text = { Text("确定要永久删除所选的 $selectionCount 条知识条目吗？此操作不可恢复。") },
             confirmButton = {
                 Button(
@@ -235,10 +237,10 @@ fun RecycleBinScreen(
                         showBatchDeleteDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
-                ) { Text("永久删除", color = Color.White) }
+                ) { Text(stringResource(R.string.auto_a7fadbe1), color = Color.White) }
             },
             dismissButton = {
-                TextButton(onClick = { showBatchDeleteDialog = false }) { Text("取消") }
+                TextButton(onClick = { showBatchDeleteDialog = false }) { Text(stringResource(R.string.auto_4d0b4688)) }
             }
         )
     }
@@ -266,10 +268,10 @@ private fun RecycleBinListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
                     color = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("加载中…", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                Text(stringResource(R.string.auto_300ee3de), fontSize = 12.sp, color = Color(0xFFA3A3A3))
             }
             !hasMore -> Text(
-                "— 已经到底了 —",
+                stringResource(R.string.auto_049d09bf),
                 fontSize = 12.sp,
                 color = Color(0xFFA3A3A3)
             )

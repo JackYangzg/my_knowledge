@@ -39,6 +39,8 @@ import com.my.knowledge.domain.model.knowledgeEntityTopLevelKind
 import com.my.knowledge.domain.model.normalizeKnowledgeEntityType
 import com.my.knowledge.viewmodel.IntermediateDataViewModel
 import kotlinx.coroutines.launch
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -189,7 +191,7 @@ fun IntermediateDataScreen(
             Spacer(modifier = Modifier.height(8.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "中间处理数据",
+                    text = stringResource(R.string.auto_90a51271),
                     fontSize = 28.sp,
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF0F172A),
@@ -335,7 +337,7 @@ fun IntermediateDataScreen(
             title = { Text("删除该$label？") },
             text = {
                 Text(
-                    "该操作只会从「中间处理数据」列表中移除这一条，" +
+                    stringResource(R.string.auto_d2d08fd2) +
                         "不会删除来源知识条目。删除后再次生成知识脉络时，" +
                         "如果来源仍然存在，仍可能重新出现。"
                 )
@@ -345,11 +347,11 @@ fun IntermediateDataScreen(
                     performSingleDelete(req)
                     pendingSingleDelete = null
                 }) {
-                    Text("删除", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.auto_3755f56f), color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingSingleDelete = null }) { Text("取消") }
+                TextButton(onClick = { pendingSingleDelete = null }) { Text(stringResource(R.string.auto_4d0b4688)) }
             }
         )
     }
@@ -365,7 +367,7 @@ fun IntermediateDataScreen(
             title = { Text("删除选中的 ${selectedIds.size} 条$label？") },
             text = {
                 Text(
-                    "将一次性删除当前 Tab 选中的全部条目。来源知识条目不会被删除，" +
+                    stringResource(R.string.auto_1716d047) +
                         "但下次知识脉络重建时仍有可能重新出现。"
                 )
             },
@@ -374,11 +376,11 @@ fun IntermediateDataScreen(
                     performBulkDelete()
                     pendingBulkDelete = false
                 }) {
-                    Text("全部删除", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.auto_a5c2dc91), color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { pendingBulkDelete = false }) { Text("取消") }
+                TextButton(onClick = { pendingBulkDelete = false }) { Text(stringResource(R.string.auto_4d0b4688)) }
             }
         )
     }
@@ -389,7 +391,7 @@ fun IntermediateDataScreen(
     if (showKbMenu) {
         AlertDialog(
             onDismissRequest = { showKbMenu = false },
-            title = { Text("选择知识库范围") },
+            title = { Text(stringResource(R.string.auto_07b1aeaf)) },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                     Row(
@@ -410,7 +412,7 @@ fun IntermediateDataScreen(
                         )
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(
-                            "全部知识库",
+                            stringResource(R.string.auto_6a782196),
                             fontSize = 15.sp,
                             fontWeight = if (currentKbId == null) FontWeight.Bold else FontWeight.Normal,
                             color = Color(0xFF0F172A)
@@ -446,7 +448,7 @@ fun IntermediateDataScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showKbMenu = false }) { Text("关闭") }
+                TextButton(onClick = { showKbMenu = false }) { Text(stringResource(R.string.auto_6c14bd7f)) }
             }
         )
     }
@@ -1139,7 +1141,7 @@ private fun ExpandToggleRow(expanded: Boolean, remaining: Int, onToggle: () -> U
         contentPadding = PaddingValues(vertical = 4.dp)
     ) {
         if (expanded) {
-            Text("收起", fontSize = 12.sp, color = Color(0xFF64748B))
+            Text(stringResource(R.string.auto_5d581564), fontSize = 12.sp, color = Color(0xFF64748B))
             Spacer(modifier = Modifier.width(4.dp))
             Icon(
                 Icons.Default.ArrowDropDown,

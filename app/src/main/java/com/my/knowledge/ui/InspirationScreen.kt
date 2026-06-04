@@ -54,6 +54,8 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun InspirationScreen(
@@ -331,7 +333,7 @@ fun InspirationScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Color(0xFF0F172A))
                     }
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("灵感", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_ae2e58ab), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                     if (aiActionStatus != null) {
                         Spacer(modifier = Modifier.width(12.dp))
                         Surface(color = Color(0xFFEFF6FF), shape = RoundedCornerShape(4.dp)) {
@@ -422,7 +424,7 @@ fun InspirationScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(Icons.Default.Image, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF4B5563))
-                                Text("图片", fontSize = 12.sp, color = Color(0xFF4B5563))
+                                Text(stringResource(R.string.auto_be8da62e), fontSize = 12.sp, color = Color(0xFF4B5563))
                             }
                         }
                         Surface(
@@ -436,7 +438,7 @@ fun InspirationScreen(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Icon(Icons.Default.AttachFile, contentDescription = null, modifier = Modifier.size(15.dp), tint = Color(0xFF4B5563))
-                                Text("附件", fontSize = 12.sp, color = Color(0xFF4B5563))
+                                Text(stringResource(R.string.auto_99f6fe6c), fontSize = 12.sp, color = Color(0xFF4B5563))
                             }
                         }
                     }
@@ -452,7 +454,7 @@ fun InspirationScreen(
                         TextField(
                             value = title,
                             onValueChange = { viewModel.title = it },
-                            placeholder = { Text("标题", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD4D4D4)) },
+                            placeholder = { Text(stringResource(R.string.auto_748d7dc7), fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFFD4D4D4)) },
                             modifier = Modifier.fillMaxWidth(),
                             textStyle = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A)),
                             colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent)
@@ -472,7 +474,7 @@ fun InspirationScreen(
                                     viewModel.content = it.text
                                 }
                             },
-                            placeholder = { Text("先记下来，不必马上整理。", fontSize = 16.sp, color = Color(0xFFD4D4D4)) },
+                            placeholder = { Text(stringResource(R.string.auto_23e51578), fontSize = 16.sp, color = Color(0xFFD4D4D4)) },
                             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
                             textStyle = TextStyle(fontSize = 16.sp, lineHeight = 28.sp, color = Color(0xFF262626)),
                             colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent)
@@ -485,7 +487,7 @@ fun InspirationScreen(
                         if (content.isNotEmpty()) {
                             ComposeMarkdown(markdown = content, onLinkClick = { openFile(context, it) })
                         } else if (title.isEmpty()) {
-                            Text("无内容", fontSize = 16.sp, color = Color(0xFFD4D4D4))
+                            Text(stringResource(R.string.auto_de7dadfa), fontSize = 16.sp, color = Color(0xFFD4D4D4))
                         }
                     }
                     Spacer(modifier = Modifier.height(100.dp))
@@ -607,8 +609,8 @@ fun InspirationScreen(
         AlertDialog(
             onDismissRequest = { showNewConfirmDialog = false },
             icon = { Icon(Icons.Default.Add, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(24.dp)) },
-            title = { Text("新建灵感", fontWeight = FontWeight.Bold) },
-            text = { Text("当前灵感尚未保存，是否保存后新建？") },
+            title = { Text(stringResource(R.string.auto_b6b35361), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.auto_04fe85ef)) },
             confirmButton = {
                 Button(onClick = {
                     showNewConfirmDialog = false
@@ -618,9 +620,9 @@ fun InspirationScreen(
                         selectedLibrary = "灵感空间"
                         showEditor = true
                     }
-                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))) { Text("保存并新建", color = Color.White) }
+                }, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))) { Text(stringResource(R.string.auto_ce374873), color = Color.White) }
             },
-            dismissButton = { TextButton(onClick = { showNewConfirmDialog = false }) { Text("取消") } }
+            dismissButton = { TextButton(onClick = { showNewConfirmDialog = false }) { Text(stringResource(R.string.auto_4d0b4688)) } }
         )
     }
 
@@ -649,8 +651,8 @@ fun InspirationScreen(
                     modifier = Modifier.size(24.dp)
                 )
             },
-            title = { Text("返回上一级", fontWeight = FontWeight.Bold) },
-            text = { Text("当前灵感尚未保存到知识库，是否保存后返回？") },
+            title = { Text(stringResource(R.string.auto_f3ba9caa), fontWeight = FontWeight.Bold) },
+            text = { Text(stringResource(R.string.auto_35becb04)) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -666,7 +668,7 @@ fun InspirationScreen(
                         }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
-                ) { Text("保存", color = Color.White) }
+                ) { Text(stringResource(R.string.auto_fadf24db), color = Color.White) }
             },
             dismissButton = {
                 // Two buttons live in the dismiss slot because the
@@ -677,8 +679,8 @@ fun InspirationScreen(
                     TextButton(onClick = {
                         showExitConfirmDialog = false
                         showEditor = false
-                    }) { Text("不保存", color = Color(0xFFEF4444)) }
-                    TextButton(onClick = { showExitConfirmDialog = false }) { Text("取消") }
+                    }) { Text(stringResource(R.string.auto_95a2fe4a), color = Color(0xFFEF4444)) }
+                    TextButton(onClick = { showExitConfirmDialog = false }) { Text(stringResource(R.string.auto_4d0b4688)) }
                 }
             }
         )
@@ -699,7 +701,7 @@ private fun InspirationHomeScreen(
             .padding(top = 48.dp)
     ) {
         Text(
-            text = "灵感",
+            text = stringResource(R.string.auto_ae2e58ab),
             fontSize = 28.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF0F172A),
@@ -723,7 +725,7 @@ private fun InspirationHomeScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("灵感条目", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_b589cf12), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                     Text("${items.size} 条", fontSize = 13.sp, color = Color(0xFF64748B))
                 }
             }
@@ -739,8 +741,8 @@ private fun InspirationHomeScreen(
                             modifier = Modifier.padding(18.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Text("还没有灵感条目", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF111827))
-                            Text("新建后，条目会在这里集中展示，并自动汇总到上方的灵感脉络。", fontSize = 13.sp, lineHeight = 20.sp, color = Color(0xFF64748B))
+                            Text(stringResource(R.string.auto_b748221a), fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF111827))
+                            Text(stringResource(R.string.auto_032a01c0), fontSize = 13.sp, lineHeight = 20.sp, color = Color(0xFF64748B))
                         }
                     }
                 }
@@ -768,7 +770,7 @@ private fun InspirationHomeScreen(
             ) {
                 Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.White)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("新建灵感", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.auto_b6b35361), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         }
     }
@@ -794,7 +796,7 @@ private fun InspirationThreadCard(thread: InspirationThreadUi, itemCount: Int) {
                 }
                 Spacer(modifier = Modifier.width(10.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    Text("灵感脉络", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_ec9e36b8), fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
                     Text("基于 $itemCount 条灵感整理", fontSize = 12.sp, color = Color(0xFF64748B))
                 }
             }
@@ -890,7 +892,7 @@ private fun ThreadDiffSummary(diff: com.my.knowledge.viewmodel.InspirationThread
             .padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Text("本次脉络变化", fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF475569))
+        Text(stringResource(R.string.auto_5a0af1a0), fontSize = 11.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF475569))
         if (diff.newMainlineSegments.isNotEmpty()) {
             Text("+ 新增 ${diff.newMainlineSegments.size} 段主线", fontSize = 11.sp, color = Color(0xFF047857))
         }
@@ -939,7 +941,7 @@ private fun InspirationItemRow(item: KnowledgeItemEntity, onClick: () -> Unit) {
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Surface(shape = RoundedCornerShape(6.dp), color = Color(0xFFF1F5F9)) {
-                        Text("灵感", fontSize = 11.sp, color = Color(0xFF475569), modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
+                        Text(stringResource(R.string.auto_ae2e58ab), fontSize = 11.sp, color = Color(0xFF475569), modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp))
                     }
                     Text(formatInspirationTime(item.updatedAt), fontSize = 11.sp, color = Color(0xFF94A3B8))
                 }
@@ -958,7 +960,7 @@ fun VoiceRealtimePanel(state: VoiceRecognitionState, onStop: () -> Unit, modifie
                 Box(modifier = Modifier.size(10.dp).background(if (state.errorMessage == null) Color(0xFF22C55E) else Color(0xFFEF4444), CircleShape))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = state.statusMessage, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                TextButton(onClick = onStop) { Text("停止") }
+                TextButton(onClick = onStop) { Text(stringResource(R.string.auto_a17f70a8)) }
             }
             val displayText = state.errorMessage ?: state.partialTranscript.ifBlank { "正在等待语音..." }
             Text(text = displayText, fontSize = 14.sp, lineHeight = 21.sp, color = Color(0xFF334155))

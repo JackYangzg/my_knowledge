@@ -27,6 +27,8 @@ import com.my.knowledge.ui.component.MiniTag
 import com.my.knowledge.ui.component.SummaryCard
 import com.my.knowledge.viewmodel.KnowledgeHomeViewModel
 import com.my.knowledge.viewmodel.KnowledgeManageViewModel
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun KnowledgeManageScreen(
@@ -69,7 +71,7 @@ fun KnowledgeManageScreen(
                     tint = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("返回上一层", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -79,13 +81,13 @@ fun KnowledgeManageScreen(
             ) {
                 Column {
                     Text(
-                        text = "知识库管理",
+                        text = stringResource(R.string.auto_053fc4ec),
                         fontSize = 28.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color(0xFF0F172A)
                     )
                     Text(
-                        text = "查看和管理全部知识库",
+                        text = stringResource(R.string.auto_af04525e),
                         fontSize = 13.sp,
                         color = Color(0xFF5F87A3),
                         modifier = Modifier.padding(top = 4.dp)
@@ -104,7 +106,7 @@ fun KnowledgeManageScreen(
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("新建知识库", fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
+                    Text(stringResource(R.string.auto_f93ee39a), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color.White)
                 }
             }
         }
@@ -190,7 +192,7 @@ fun KnowledgeManageScreen(
                         modifier = Modifier.size(24.dp)
                     )
                 },
-                title = { Text("新建知识库", fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.auto_f93ee39a), fontWeight = FontWeight.Bold) },
                 text = {
                     Column {
                         OutlinedTextField(
@@ -199,8 +201,8 @@ fun KnowledgeManageScreen(
                                 createName = it
                                 createNameError = null
                             },
-                            label = { Text("知识库名称") },
-                            placeholder = { Text("例如：工作笔记、学习资料", color = Color(0xFFA3A3A3)) },
+                            label = { Text(stringResource(R.string.auto_82e28f0d)) },
+                            placeholder = { Text(stringResource(R.string.auto_ef91ee7d), color = Color(0xFFA3A3A3)) },
                             singleLine = true,
                             isError = createNameError != null,
                             supportingText = if (createNameError != null) {
@@ -213,8 +215,8 @@ fun KnowledgeManageScreen(
                         OutlinedTextField(
                             value = createDescription,
                             onValueChange = { createDescription = it },
-                            label = { Text("知识库描述") },
-                            placeholder = { Text("可选：简要描述知识库用途", color = Color(0xFFA3A3A3)) },
+                            label = { Text(stringResource(R.string.auto_912ab301)) },
+                            placeholder = { Text(stringResource(R.string.auto_fb0a5997), color = Color(0xFFA3A3A3)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp)
@@ -240,12 +242,12 @@ fun KnowledgeManageScreen(
                         enabled = true,
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF111827))
                     ) {
-                        Text("创建", color = Color.White)
+                        Text(stringResource(R.string.auto_fcbd0932), color = Color.White)
                     }
                 },
                 dismissButton = {
                     TextButton(onClick = { showCreateDialog = false }) {
-                        Text("取消")
+                        Text(stringResource(R.string.auto_4d0b4688))
                     }
                 }
             )
@@ -256,7 +258,7 @@ fun KnowledgeManageScreen(
             AlertDialog(
                 onDismissRequest = { showDeleteDialog = false },
                 icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEA580C)) },
-                title = { Text("删除知识库", fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.auto_e62a78b1), fontWeight = FontWeight.Bold) },
                 text = {
                     Column {
                         Text("确定要删除「${deleteTarget!!.name}」吗？")
@@ -272,7 +274,7 @@ fun KnowledgeManageScreen(
                                 checked = moveToUnfiled,
                                 onCheckedChange = { moveToUnfiled = it }
                             )
-                            Text("将知识移动到「未归类」", fontSize = 14.sp)
+                            Text(stringResource(R.string.auto_103e3d9c), fontSize = 14.sp)
                         }
                     }
                 },
@@ -285,7 +287,7 @@ fun KnowledgeManageScreen(
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
                     ) {
-                        Text("删除", color = Color.White)
+                        Text(stringResource(R.string.auto_3755f56f), color = Color.White)
                     }
                 },
                 dismissButton = {
@@ -293,7 +295,7 @@ fun KnowledgeManageScreen(
                         showDeleteDialog = false
                         deleteTarget = null
                     }) {
-                        Text("取消")
+                        Text(stringResource(R.string.auto_4d0b4688))
                     }
                 }
             )

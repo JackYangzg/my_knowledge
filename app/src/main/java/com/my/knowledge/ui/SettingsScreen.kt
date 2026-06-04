@@ -39,6 +39,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.net.HttpURLConnection
 import java.net.URL
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun SettingsScreen(onBack: () -> Unit) {
@@ -139,7 +141,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     tint = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("返回", fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -192,8 +194,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                             Icon(Icons.Default.BugReport, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(22.dp))
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("调试模式", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
-                                Text("AI 问一问展示后台组装上下文", fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 3.dp))
+                                Text(stringResource(R.string.auto_0ee20898), fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                                Text(stringResource(R.string.auto_2804e24e), fontSize = 12.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 3.dp))
                             }
                             Switch(
                                 checked = debugPromptEnabled,
@@ -271,8 +273,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                             Icon(Icons.Default.Settings, contentDescription = null, tint = Color(0xFF0284C7), modifier = Modifier.size(20.dp))
                             Spacer(modifier = Modifier.width(12.dp))
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("系统权限管理", fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1))
-                                Text("前往系统设置开启麦克风权限", fontSize = 12.sp, color = Color(0xFF0284C7))
+                                Text(stringResource(R.string.auto_876fcbec), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0369A1))
+                                Text(stringResource(R.string.auto_09db5d2c), fontSize = 12.sp, color = Color(0xFF0284C7))
                             }
                             Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = Color(0xFF0284C7))
                         }
@@ -362,7 +364,7 @@ fun VoiceProviderDropdown(
             )
             ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 DropdownMenuItem(
-                    text = { Text("volcengine (豆包语音)") },
+                    text = { Text(stringResource(R.string.auto_536c8267)) },
                     onClick = {
                         onValueChange("volcengine")
                         expanded = false
@@ -453,7 +455,7 @@ private fun SettingsHint() {
         Row(modifier = Modifier.padding(12.dp), verticalAlignment = Alignment.Top) {
             Icon(Icons.Filled.Info, contentDescription = null, tint = Color(0xFFEA580C), modifier = Modifier.size(16.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text("默认使用大模型加工知识。未配置 API Key 时，导入内容会停留在待处理队列，配置后可手动重试。", fontSize = 12.sp, color = Color(0xFF92400E))
+            Text(stringResource(R.string.auto_3c554377), fontSize = 12.sp, color = Color(0xFF92400E))
         }
     }
 }
@@ -471,7 +473,7 @@ private fun SaveButton(
                 modifier = Modifier.weight(1f).height(50.dp),
                 shape = RoundedCornerShape(16.dp)
             ) {
-                Text("测试接口", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.auto_0152e9cd), fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
             Button(
                 onClick = onSave,
@@ -481,7 +483,7 @@ private fun SaveButton(
             ) {
                 Icon(Icons.Default.Save, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("保存配置", fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.auto_817af187), fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
         }
         statusMessage?.let {

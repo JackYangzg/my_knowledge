@@ -43,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.my.knowledge.viewmodel.KnowledgeEditorViewModel
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 /**
  * Markdown editor dedicated to existing knowledge items. Distinct from
@@ -127,7 +129,7 @@ fun KnowledgeEditorScreen(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("保存", color = Color(0xFF147EC5), fontWeight = FontWeight.SemiBold)
+                Text(stringResource(R.string.auto_fadf24db), color = Color(0xFF147EC5), fontWeight = FontWeight.SemiBold)
             }
         }
 
@@ -145,7 +147,7 @@ fun KnowledgeEditorScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "标题",
+                    text = stringResource(R.string.auto_748d7dc7),
                     fontSize = 12.sp,
                     color = Color(0xFF64748B),
                     fontWeight = FontWeight.Medium
@@ -164,7 +166,7 @@ fun KnowledgeEditorScreen(
                 )
 
                 Text(
-                    text = "正文 (Markdown)",
+                    text = stringResource(R.string.auto_92633211),
                     fontSize = 12.sp,
                     color = Color(0xFF64748B),
                     fontWeight = FontWeight.Medium
@@ -188,7 +190,7 @@ fun KnowledgeEditorScreen(
                     shape = RoundedCornerShape(10.dp)
                 ) {
                     Text(
-                        text = "提示:支持标准 Markdown 语法(标题、列表、引用、链接)。" +
+                        text = stringResource(R.string.auto_ea35bac2) +
                             "保存后会立即生效,知识图谱和检索都会更新。",
                         fontSize = 11.sp,
                         color = Color(0xFF9A6A1F),
@@ -202,9 +204,9 @@ fun KnowledgeEditorScreen(
     if (showSaveConfirm) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { showSaveConfirm = false },
-            title = { Text("保存修改？", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.auto_fb472abc), fontWeight = FontWeight.Bold) },
             text = {
-                Text("将覆盖当前知识条目的内容,图谱和检索会同步更新。原内容会被永久替换。")
+                Text(stringResource(R.string.auto_ea1ac158))
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -213,12 +215,12 @@ fun KnowledgeEditorScreen(
                         onSaved()
                     }
                 }) {
-                    Text("保存", color = Color(0xFF147EC5), fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.auto_fadf24db), color = Color(0xFF147EC5), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showSaveConfirm = false }) {
-                    Text("取消")
+                    Text(stringResource(R.string.auto_4d0b4688))
                 }
             }
         )

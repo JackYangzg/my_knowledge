@@ -46,6 +46,8 @@ import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun KnowledgeViewerScreen(
@@ -103,7 +105,7 @@ fun KnowledgeViewerScreen(
                     tint = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("返回上一层", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
             }
             item?.let { currentItem ->
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -138,7 +140,7 @@ fun KnowledgeViewerScreen(
                                 modifier = Modifier.size(14.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("编辑", fontSize = 12.sp, color = Color(0xFF147EC5))
+                            Text(stringResource(R.string.auto_a7f814c0), fontSize = 12.sp, color = Color(0xFF147EC5))
                         }
                     }
                     MiniTag(fileTypeLabel(currentItem.sourceType))
@@ -259,7 +261,7 @@ private fun WikiMarkdownContent(
         if (sources.isNotEmpty()) {
             Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("引用原文", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_5b11946d), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
                     sources.forEach { source ->
                         InternalLinkText(
                             text = source,
@@ -460,7 +462,7 @@ private fun ProcessedWikiSection(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Default.Hub, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("由该知识加工生成", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                Text(stringResource(R.string.auto_60d89c2c), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
                 Spacer(modifier = Modifier.weight(1f))
                 Text("${items.size} 项", fontSize = 12.sp, color = Color(0xFF5F87A3))
             }
@@ -530,7 +532,7 @@ private fun PdfContentViewer(
         item {
             Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("PDF 预览", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_08be1e8e), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
                     previewError?.let {
                         Text(it, color = Color(0xFFDC2626), fontSize = 12.sp)
                     } ?: Text(
@@ -539,7 +541,7 @@ private fun PdfContentViewer(
                         color = Color(0xFF5F87A3)
                     )
                     TextButton(onClick = { localPath?.let { openFile(context, "file://$it") } }) {
-                        Text("打开原始 PDF", fontSize = 13.sp)
+                        Text(stringResource(R.string.auto_b7eecdbe), fontSize = 13.sp)
                     }
                 }
             }
@@ -556,7 +558,7 @@ private fun PdfContentViewer(
         item {
             Surface(shape = RoundedCornerShape(12.dp), color = Color(0xFFF7FBFF), modifier = Modifier.fillMaxWidth()) {
                 Column(modifier = Modifier.padding(12.dp)) {
-                    Text("解析文本", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
+                    Text(stringResource(R.string.auto_b8c3d2a6), fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF0F172A))
                     Text(
                         "共 ${item.contentMarkdown.length} 字符，已分块懒加载显示。",
                         fontSize = 12.sp,
@@ -590,7 +592,7 @@ private fun PdfContentViewer(
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))
                 ) {
-                    Text("继续加载更多解析文本", color = Color.White)
+                    Text(stringResource(R.string.auto_4a705f3b), color = Color.White)
                 }
             }
         }
@@ -671,14 +673,14 @@ private fun ImagePlaceholder(contentMarkdown: String) {
         )
         Spacer(modifier = Modifier.height(16.dp))
         Text(
-            "图片类型知识",
+            stringResource(R.string.auto_d50f96ec),
             fontSize = 18.sp,
             fontWeight = FontWeight.Bold,
             color = Color(0xFF0F172A)
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            "该知识为图像类型，内容已提取为文本描述",
+            stringResource(R.string.auto_676993cb),
             fontSize = 14.sp,
             color = Color(0xFFA3A3A3)
         )

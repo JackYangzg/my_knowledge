@@ -41,6 +41,8 @@ import com.my.knowledge.viewmodel.KnowledgeItemListViewModel
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.data.ai.ScopeType
 import kotlin.math.roundToInt
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun KnowledgeDetailScreen(
@@ -133,7 +135,7 @@ fun KnowledgeDetailScreen(
                     tint = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("返回上一层", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_94c32741), fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
             Row(
@@ -168,7 +170,7 @@ fun KnowledgeDetailScreen(
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("本库图谱", fontSize = 12.sp, color = Color(0xFF147EC5))
+                            Text(stringResource(R.string.auto_1503df87), fontSize = 12.sp, color = Color(0xFF147EC5))
                         }
                     }
                     // In-place import. Always visible (not gated on
@@ -264,7 +266,7 @@ fun KnowledgeDetailScreen(
                 OutlinedTextField(
                     value = searchQuery,
                     onValueChange = { searchQuery = it },
-                    placeholder = { Text("搜索知识...", color = Color(0xFFA3A3A3)) },
+                    placeholder = { Text(stringResource(R.string.auto_c5a0477b), color = Color(0xFFA3A3A3)) },
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
                     singleLine = true,
@@ -368,14 +370,14 @@ fun KnowledgeDetailScreen(
                 ) {
                     Column(modifier = Modifier.widthIn(min = 180.dp)) {
                         DropdownMenuItem(
-                            text = { Text("将知识移动到知识库") },
+                            text = { Text(stringResource(R.string.auto_dd985b01)) },
                             onClick = {
                                 showPopupMenu = false
                                 showMoveSelectionDialog = true
                             }
                         )
                         DropdownMenuItem(
-                            text = { Text("删除知识") },
+                            text = { Text(stringResource(R.string.auto_cea896db)) },
                             onClick = {
                                 showPopupMenu = false
                                 deleteTarget = popupTargetItem
@@ -395,7 +397,7 @@ fun KnowledgeDetailScreen(
                     showMoveSelectionDialog = false
                     popupTargetItem = null
                 },
-                title = { Text("选择目标知识库", fontWeight = FontWeight.Bold) },
+                title = { Text(stringResource(R.string.auto_f4595123), fontWeight = FontWeight.Bold) },
                 text = {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         allKnowledgeBases.filter { it.id != currentBaseId }.forEach { base ->
@@ -437,7 +439,7 @@ fun KnowledgeDetailScreen(
                     TextButton(onClick = {
                         showMoveSelectionDialog = false
                         popupTargetItem = null
-                    }) { Text("取消") }
+                    }) { Text(stringResource(R.string.auto_4d0b4688)) }
                 }
             )
         }
@@ -501,7 +503,7 @@ fun KnowledgeDetailScreen(
                 deleteTarget = null
             },
             icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFEA580C)) },
-            title = { Text("删除知识", fontWeight = FontWeight.Bold) },
+            title = { Text(stringResource(R.string.auto_cea896db), fontWeight = FontWeight.Bold) },
             text = { Text("确定要删除「${deleteTarget!!.title}」吗？删除后可从回收站恢复。") },
             confirmButton = {
                 Button(
@@ -512,7 +514,7 @@ fun KnowledgeDetailScreen(
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
                 ) {
-                    Text("删除", color = Color.White)
+                    Text(stringResource(R.string.auto_3755f56f), color = Color.White)
                 }
             },
             dismissButton = {
@@ -520,7 +522,7 @@ fun KnowledgeDetailScreen(
                     showDeleteDialog = false
                     deleteTarget = null
                 }) {
-                    Text("取消")
+                    Text(stringResource(R.string.auto_4d0b4688))
                 }
             }
         )
@@ -580,11 +582,11 @@ fun KnowledgeDetailScreen(
                             statusTarget = null
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))
-                    ) { Text("重试") }
+                    ) { Text(stringResource(R.string.auto_e2d53a6d)) }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { statusTarget = null }) { Text("关闭") }
+                TextButton(onClick = { statusTarget = null }) { Text(stringResource(R.string.auto_6c14bd7f)) }
             }
         )
     }
@@ -606,10 +608,10 @@ private fun ListFooter(hasMore: Boolean, isLoadingMore: Boolean) {
                     color = Color(0xFF147EC5)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("加载中…", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                Text(stringResource(R.string.auto_300ee3de), fontSize = 12.sp, color = Color(0xFFA3A3A3))
             }
             !hasMore -> Text(
-                "— 已经到底了 —",
+                stringResource(R.string.auto_049d09bf),
                 fontSize = 12.sp,
                 color = Color(0xFFA3A3A3)
             )

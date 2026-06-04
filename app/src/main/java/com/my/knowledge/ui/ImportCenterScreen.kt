@@ -54,6 +54,8 @@ import com.my.knowledge.viewmodel.ImportCenterViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.res.stringResource
+import com.my.knowledge.R
 
 @Composable
 fun ImportCenterScreen(
@@ -78,11 +80,11 @@ fun ImportCenterScreen(
             TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
                 Spacer(modifier = Modifier.size(4.dp))
-                Text("返回", fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text("导入中心", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text("查看来源、进度、失败任务和本地文件状态", fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
+            Text(stringResource(R.string.auto_2ff3cc93), fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
+            Text(stringResource(R.string.auto_00b4a995), fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
         }
 
         LazyColumn(
@@ -93,7 +95,7 @@ fun ImportCenterScreen(
             if (rows.isEmpty()) {
                 item {
                     Box(modifier = Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-                        Text("暂无导入来源", color = Color(0xFF5F87A3), fontSize = 14.sp)
+                        Text(stringResource(R.string.auto_bb9db662), color = Color(0xFF5F87A3), fontSize = 14.sp)
                     }
                 }
             } else {
@@ -112,8 +114,8 @@ fun ImportCenterScreen(
     if (deleteSourceId != null) {
         AlertDialog(
             onDismissRequest = { deleteSourceId = null },
-            title = { Text("删除来源") },
-            text = { Text("会取消相关任务、清理解析结果和本地来源文件，并将关联知识移入回收站。") },
+            title = { Text(stringResource(R.string.auto_ecafc815)) },
+            text = { Text(stringResource(R.string.auto_79bc3afb)) },
             confirmButton = {
                 Button(
                     onClick = {
@@ -121,10 +123,10 @@ fun ImportCenterScreen(
                         deleteSourceId = null
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626))
-                ) { Text("删除") }
+                ) { Text(stringResource(R.string.auto_3755f56f)) }
             },
             dismissButton = {
-                TextButton(onClick = { deleteSourceId = null }) { Text("取消") }
+                TextButton(onClick = { deleteSourceId = null }) { Text(stringResource(R.string.auto_4d0b4688)) }
             }
         )
     }
@@ -165,7 +167,7 @@ private fun ImportSourceCard(
                     trackColor = Color(0xFFEFF7FF)
                 )
             } else {
-                Text("尚未创建处理任务", fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                Text(stringResource(R.string.auto_147d229d), fontSize = 12.sp, color = Color(0xFFA3A3A3))
             }
 
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
