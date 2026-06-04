@@ -26,12 +26,9 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
-import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.sample
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
@@ -39,7 +36,6 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.UUID
 
@@ -1099,66 +1095,18 @@ class IngestOrchestrator(
         sampleMs: Long = PROGRESS_SAMPLE_MS,
     ): String = supervisorScope {
         val accumulator = StringBuilder()
-        // P0-2 throttling: a side-channel SharedFlow of "this many
-        // chars accumulated now" signals. Drop-oldest + 1 buffer
-        // means a burst of N chunks collapses to "the last count
-        // wins", which is what `sample()` wants — we're rate-limiting
-        // the writer, not the producer.
-        val lastSignalled = AtomicInteger(0)
-        val firstChunkSeen = AtomicBoolean(false)
-        val signals = MutableSharedFlow<Int>(
-            replay = 0,
-            extraBufferCapacity = 1,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        val throttler = SseProgressThrottler(
+            writeProgress = { count -> updateProgress(task, 50, step, logMessage(count)) },
+            everyN = everyN,
+            sampleMs = sampleMs,
         )
-        // Launch the throttled writer. Unconfined dispatch means
-        // it subscribes to `signals` synchronously, so the very
-        // first `tryEmit` is observed without an extra dispatcher
-        // hop. The shared sample() takes the latest value within
-        // each 500ms window.
-        val writer = launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-            try {
-                signals
-                    .sample(sampleMs)
-                    .collect { count ->
-                        // `runCatching` because we don't want a
-                        // transient Room failure (full disk, etc.)
-                        // to crash the main collection — losing one
-                        // progress tick is acceptable, losing the
-                        // entire LLM response is not.
-                        runCatching {
-                            updateProgress(task, 50, step, logMessage(count))
-                        }
-                    }
-            } catch (e: CancellationException) {
-                // Parent was cancelled — propagate so the
-                // supervisorScope sees a clean tear-down.
-                throw e
-            } catch (t: Throwable) {
-                // Swallow non-cancellation failures from the
-                // throttled writer: the main collection should
-                // still see the upstream errors.
-            }
-        }
         appendLog(task, "诊断:开始流式模型输出，progressEvery=$everyN, sampleMs=$sampleMs", "running", step)
         try {
             source.collect { chunk ->
                 accumulator.append(chunk)
-                if (firstChunkSeen.compareAndSet(false, true)) {
-                    signals.tryEmit(accumulator.length)
-                }
-                if (accumulator.length - lastSignalled.get() >= everyN) {
-                    lastSignalled.set(accumulator.length)
-                    signals.tryEmit(accumulator.length)
-                }
+                throttler.observe(accumulator.length)
             }
-            // Final signal: if the last chunk didn't align with the
-            // everyN boundary, we still want the "done" progress to
-            // be visible. `sample()` flushes the trailing value on
-            // upstream completion, so emitting one more signal here
-            // ensures the post-stream progress update lands within
-            // 500ms of the SSE `[DONE]`.
-            signals.tryEmit(accumulator.length)
+            throttler.flush(accumulator.length)
             appendLog(task, "诊断:流式模型输出完成，累计接收 ${accumulator.length} 字符", "running", step)
         } catch (e: CancellationException) {
             appendLog(task, "诊断:流式模型输出被取消：${e.message ?: "无附加信息"}", "running", step)
@@ -1167,7 +1115,7 @@ class IngestOrchestrator(
             appendLog(task, "诊断:流式模型输出异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
             throw t
         } finally {
-            writer.cancel()
+            throttler.close()
         }
         accumulator.toString()
     }
@@ -1201,37 +1149,11 @@ class IngestOrchestrator(
         logMessage: (Int) -> String,
         onRetry: suspend (com.my.knowledge.data.ai.AiRetryEvent) -> Unit = {},
     ): String {
-        // Local counter for the "every N tokens" gate. We count
-        // chunk-character-length on the consumer side. The
-        // granularity is coarser than the Flow-based path (which
-        // counts the actual accumulated length) but still within
-        // the spec's "every N tokens" intent.
-        val charCount = AtomicInteger(0)
-        val lastSignalled = AtomicInteger(0)
-        val firstChunkSeen = AtomicBoolean(false)
-        val signals = MutableSharedFlow<Int>(
-            replay = 0,
-            extraBufferCapacity = 1,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        val throttler = SseProgressThrottler(
+            writeProgress = { count -> updateProgress(task, 50, step, logMessage(count)) },
+            everyN = PROGRESS_EVERY_N_TOKENS,
+            sampleMs = PROGRESS_SAMPLE_MS,
         )
-        val writer = supervisorScope {
-            launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-                try {
-                    signals
-                        .sample(PROGRESS_SAMPLE_MS)
-                        .collect { count ->
-                            runCatching {
-                                updateProgress(task, 50, step, logMessage(count))
-                            }
-                        }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (t: Throwable) {
-                    // Swallow: don't fail the main stream on a
-                    // transient progress-write error.
-                }
-            }
-        }
         appendLog(
             task,
             "诊断:开始请求流式 JSON，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${schemaHint.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
@@ -1246,27 +1168,12 @@ class IngestOrchestrator(
                 temperature = temperature,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
-                onChunk = { delta ->
-                    val total = charCount.addAndGet(delta.length)
-                    if (firstChunkSeen.compareAndSet(false, true)) {
-                        signals.tryEmit(total)
-                    }
-                    if (total - lastSignalled.get() >= PROGRESS_EVERY_N_TOKENS) {
-                        lastSignalled.set(total)
-                        signals.tryEmit(total)
-                    }
-                },
+                onChunk = { delta -> throttler.observeDelta(delta.length) },
             )
-            // Trailing signal so the "done" progress lands
-            // within 500ms of the SSE [DONE]. sample() flushes
-            // the last value on upstream completion; we just
-            // need to make sure the last chunk is signalled
-            // even if it didn't align with the everyN boundary.
-            val finalCount = charCount.get()
-            if (finalCount > 0) signals.tryEmit(finalCount)
+            throttler.flush(throttler.totalCountForFlush())
             appendLog(
                 task,
-                "诊断:流式 JSON 请求完成，累计接收 $finalCount 字符，清洗后 ${result.length} 字符",
+                "诊断:流式 JSON 请求完成，累计接收 ${throttler.totalCountForFlush()} 字符，清洗后 ${result.length} 字符",
                 "running",
                 step
             )
@@ -1278,7 +1185,7 @@ class IngestOrchestrator(
             appendLog(task, "诊断:流式 JSON 请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
             throw t
         } finally {
-            writer.cancel()
+            throttler.close()
         }
     }
 
@@ -1291,31 +1198,11 @@ class IngestOrchestrator(
         logMessage: (Int) -> String,
         onRetry: suspend (com.my.knowledge.data.ai.AiRetryEvent) -> Unit = {},
     ): String {
-        val charCount = AtomicInteger(0)
-        val lastSignalled = AtomicInteger(0)
-        val firstChunkSeen = AtomicBoolean(false)
-        val signals = MutableSharedFlow<Int>(
-            replay = 0,
-            extraBufferCapacity = 1,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        val throttler = SseProgressThrottler(
+            writeProgress = { count -> updateProgress(task, 50, step, logMessage(count)) },
+            everyN = PROGRESS_EVERY_N_TOKENS,
+            sampleMs = PROGRESS_SAMPLE_MS,
         )
-        val writer = supervisorScope {
-            launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
-                try {
-                    signals
-                        .sample(PROGRESS_SAMPLE_MS)
-                        .collect { count ->
-                            runCatching {
-                                updateProgress(task, 50, step, logMessage(count))
-                            }
-                        }
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (t: Throwable) {
-                    // Swallow progress-write failures; the stream itself decides task success.
-                }
-            }
-        }
         appendLog(
             task,
             "诊断:开始请求流式文本，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
@@ -1329,19 +1216,10 @@ class IngestOrchestrator(
                 temperature = temperature,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
-                onChunk = { delta ->
-                    val total = charCount.addAndGet(delta.length)
-                    if (firstChunkSeen.compareAndSet(false, true)) {
-                        signals.tryEmit(total)
-                    }
-                    if (total - lastSignalled.get() >= PROGRESS_EVERY_N_TOKENS) {
-                        lastSignalled.set(total)
-                        signals.tryEmit(total)
-                    }
-                },
+                onChunk = { delta -> throttler.observeDelta(delta.length) },
             )
-            val finalCount = charCount.get()
-            if (finalCount > 0) signals.tryEmit(finalCount)
+            val finalCount = throttler.totalCountForFlush()
+            throttler.flush(finalCount)
             appendLog(
                 task,
                 "诊断:流式文本请求完成，累计接收 $finalCount 字符，清洗后 ${result.length} 字符",
@@ -1356,7 +1234,7 @@ class IngestOrchestrator(
             appendLog(task, "诊断:流式文本请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
             throw t
         } finally {
-            writer.cancel()
+            throttler.close()
         }
     }
 
