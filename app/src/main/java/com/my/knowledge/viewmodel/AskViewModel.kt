@@ -363,19 +363,19 @@ class AskViewModel(
             }
             ScopeType.KNOWLEDGE_BASE -> {
                 if (scopeId.isBlank()) emptyList()
-                else searchEngine.searchResults(question, scopeId, 8).firstOrNull() ?: emptyList()
+                else searchEngine.searchResults(question, scopeId, 8)
             }
             ScopeType.THREAD -> {
                 val thread = knowledgeRepository.getThreadByKb(scopeId)
                 if (thread == null) emptyList() else {
-                    searchEngine.searchResults(question, thread.knowledgeBaseId, 8).firstOrNull() ?: emptyList()
+                    searchEngine.searchResults(question, thread.knowledgeBaseId, 8)
                 }
             }
             ScopeType.GLOBAL -> {
                 // Cross-base retrieval: pass a null kbId so the search
                 // engine drops the per-base filter and ranks across the
                 // whole library.
-                searchEngine.searchResults(question, null, 16).firstOrNull() ?: emptyList()
+                searchEngine.searchResults(question, null, 16)
             }
             else -> {
                 emptyList()

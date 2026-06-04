@@ -9,6 +9,12 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SearchDao {
+    // ─── Item FTS / LIKE ─────────────────────────────────────────────
+    // These stay as Flow: AskViewModel chains them through
+    // `flatMapLatest` over a debounced query StateFlow, so reactivity
+    // is the actual contract — the FTS rewrite (PERF-7) only swapped
+    // the SQL, not the data shape.
+
     @Query("""
         SELECT knowledge_item.* FROM knowledge_item
         JOIN knowledge_item_fts ON knowledge_item.rowid = knowledge_item_fts.rowid
@@ -43,8 +49,17 @@ interface SearchDao {
     """)
     fun searchByKb(query: String, kbId: String): Flow<List<KnowledgeItemEntity>>
 
+    // ─── Result shapes for Ask pipeline ─────────────────────────────
+    // PERF-8: drop the Flow wrapper. Every caller of SearchEngine
+    // .searchResults treated the Flow as a one-shot (`firstOrNull()`),
+    // which means the per-row InvalidationTracker subscription that
+    // Room sets up for a Flow return type was pure overhead — it
+    // re-ran the query on every write to the table even though the
+    // caller never re-collected. A `suspend fun ... : List` is one
+    // query, no observer.
+
     @Query("""
-        SELECT 
+        SELECT
             ki.id AS itemId,
             kf.id AS fragmentId,
             ki.knowledgeBaseId AS knowledgeBaseId,
@@ -60,7 +75,7 @@ interface SearchDao {
         ORDER BY ki.updatedAt DESC
         LIMIT :limit
     """)
-    fun searchFragmentsAll(query: String, limit: Int): Flow<List<KnowledgeSearchResult>>
+    suspend fun searchFragmentsAll(query: String, limit: Int): List<KnowledgeSearchResult>
 
     @Query("""
         SELECT
@@ -80,7 +95,7 @@ interface SearchDao {
         ORDER BY ki.updatedAt DESC
         LIMIT :limit
     """)
-    fun ftsSearchFragmentsAll(query: String, limit: Int): Flow<List<KnowledgeSearchResult>>
+    suspend fun ftsSearchFragmentsAll(query: String, limit: Int): List<KnowledgeSearchResult>
 
     @Query("""
         SELECT
@@ -100,7 +115,7 @@ interface SearchDao {
         ORDER BY ki.updatedAt DESC
         LIMIT :limit
     """)
-    fun searchFragmentsByKb(query: String, kbId: String, limit: Int): Flow<List<KnowledgeSearchResult>>
+    suspend fun searchFragmentsByKb(query: String, kbId: String, limit: Int): List<KnowledgeSearchResult>
 
     @Query("""
         SELECT
@@ -121,15 +136,15 @@ interface SearchDao {
         ORDER BY ki.updatedAt DESC
         LIMIT :limit
     """)
-    fun ftsSearchFragmentsByKb(query: String, kbId: String, limit: Int): Flow<List<KnowledgeSearchResult>>
+    suspend fun ftsSearchFragmentsByKb(query: String, kbId: String, limit: Int): List<KnowledgeSearchResult>
 
     @Query("""
-        SELECT 
+        SELECT
             id AS itemId,
             NULL AS fragmentId,
             knowledgeBaseId AS knowledgeBaseId,
             title AS title,
-            CASE 
+            CASE
                 WHEN summary IS NOT NULL AND summary != '' THEN summary
                 ELSE excerpt
             END AS snippet,
@@ -142,15 +157,15 @@ interface SearchDao {
         ORDER BY updatedAt DESC
         LIMIT :limit
     """)
-    fun searchItemsAsResultsAll(query: String, limit: Int): Flow<List<KnowledgeSearchResult>>
+    suspend fun searchItemsAsResultsAll(query: String, limit: Int): List<KnowledgeSearchResult>
 
     @Query("""
-        SELECT 
+        SELECT
             id AS itemId,
             NULL AS fragmentId,
             knowledgeBaseId AS knowledgeBaseId,
             title AS title,
-            CASE 
+            CASE
                 WHEN summary IS NOT NULL AND summary != '' THEN summary
                 ELSE excerpt
             END AS snippet,
@@ -164,10 +179,10 @@ interface SearchDao {
         ORDER BY updatedAt DESC
         LIMIT :limit
     """)
-    fun searchItemsAsResultsByKb(query: String, kbId: String, limit: Int): Flow<List<KnowledgeSearchResult>>
+    suspend fun searchItemsAsResultsByKb(query: String, kbId: String, limit: Int): List<KnowledgeSearchResult>
 
     @Query("""
-        SELECT 
+        SELECT
             ke.itemId AS itemId,
             ke.fragmentId AS fragmentId,
             ke.knowledgeBaseId AS knowledgeBaseId,
@@ -182,10 +197,10 @@ interface SearchDao {
         ORDER BY ki.updatedAt DESC
         LIMIT :limit
     """)
-    fun semanticCandidatesAll(limit: Int): Flow<List<SemanticSearchCandidate>>
+    suspend fun semanticCandidatesAll(limit: Int): List<SemanticSearchCandidate>
 
     @Query("""
-        SELECT 
+        SELECT
             ke.itemId AS itemId,
             ke.fragmentId AS fragmentId,
             ke.knowledgeBaseId AS knowledgeBaseId,
@@ -201,5 +216,5 @@ interface SearchDao {
         ORDER BY ki.updatedAt DESC
         LIMIT :limit
     """)
-    fun semanticCandidatesByKb(kbId: String, limit: Int): Flow<List<SemanticSearchCandidate>>
+    suspend fun semanticCandidatesByKb(kbId: String, limit: Int): List<SemanticSearchCandidate>
 }

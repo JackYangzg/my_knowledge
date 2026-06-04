@@ -3,13 +3,11 @@ package com.my.knowledge.data.search
 import com.my.knowledge.data.db.dao.SearchDao
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.map
 import java.util.Locale
 
 interface SearchEngine {
     fun search(query: String, knowledgeBaseId: String? = null): Flow<List<KnowledgeItemEntity>>
-    fun searchResults(query: String, knowledgeBaseId: String? = null, limit: Int = 20): Flow<List<KnowledgeSearchResult>>
+    suspend fun searchResults(query: String, knowledgeBaseId: String? = null, limit: Int = 20): List<KnowledgeSearchResult>
 }
 
 class FtsSearchEngine(
@@ -26,13 +24,20 @@ class FtsSearchEngine(
         }
     }
 
-    override fun searchResults(
+    // PERF-8: searchResults used to be a `Flow<...>` that every caller
+    // consumed with `.firstOrNull()`. Wrapping a one-shot read in Flow
+    // forced Room to register an InvalidationTracker observer per
+    // table, re-running the query on every unrelated write. Now it's
+    // a plain suspend that returns the assembled ranking list — the
+    // fragment / item / semantic pieces are joined in-memory because
+    // they're three independent one-shots, not a stream of updates.
+    override suspend fun searchResults(
         query: String,
         knowledgeBaseId: String?,
         limit: Int
-    ): Flow<List<KnowledgeSearchResult>> {
+    ): List<KnowledgeSearchResult> {
         val useFts = query.length >= 2 && !query.contains("*")
-        val fragmentFlow = if (useFts) {
+        val fragments: List<KnowledgeSearchResult> = if (useFts) {
             if (knowledgeBaseId == null) {
                 searchDao.ftsSearchFragmentsAll("\"$query\"", limit)
             } else {
@@ -45,18 +50,19 @@ class FtsSearchEngine(
                 searchDao.searchFragmentsByKb(query, knowledgeBaseId, limit)
             }
         }
-        val itemFlow = if (knowledgeBaseId == null) {
+        val items: List<KnowledgeSearchResult> = if (knowledgeBaseId == null) {
             searchDao.searchItemsAsResultsAll(query, limit)
         } else {
             searchDao.searchItemsAsResultsByKb(query, knowledgeBaseId, limit)
         }
-        val semanticFlow = if (knowledgeBaseId == null) {
+        val semanticCandidates = if (knowledgeBaseId == null) {
             searchDao.semanticCandidatesAll(limit * 8)
         } else {
             searchDao.semanticCandidatesByKb(knowledgeBaseId, limit * 8)
-        }.map { candidates ->
+        }
+        val semantic: List<KnowledgeSearchResult> = run {
             val queryEmbedding = localEmbedding(query)
-            candidates.mapNotNull { candidate ->
+            semanticCandidates.mapNotNull { candidate ->
                 val score = cosine(queryEmbedding, parseEmbedding(candidate.embeddingJson))
                 if (score <= 0.05f) null else KnowledgeSearchResult(
                     itemId = candidate.itemId,
@@ -70,13 +76,11 @@ class FtsSearchEngine(
                 )
             }.sortedByDescending { it.score }.take(limit)
         }
-        return combine(fragmentFlow, itemFlow, semanticFlow) { fragments, items, semantic ->
-            (fragments + semantic + items)
-                .groupBy { it.itemId to it.fragmentId }
-                .map { (_, group) -> group.maxBy { it.score } }
-                .sortedWith(compareByDescending<KnowledgeSearchResult> { it.score }.thenBy { it.title })
-                .take(limit)
-        }
+        return (fragments + semantic + items)
+            .groupBy { it.itemId to it.fragmentId }
+            .map { (_, group) -> group.maxBy { it.score } }
+            .sortedWith(compareByDescending<KnowledgeSearchResult> { it.score }.thenBy { it.title })
+            .take(limit)
     }
 
     private fun localEmbedding(content: String): FloatArray {
