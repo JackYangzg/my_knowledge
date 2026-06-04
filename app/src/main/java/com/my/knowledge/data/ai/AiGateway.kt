@@ -10,6 +10,8 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -93,6 +95,25 @@ class AiGateway(
 ) : AiProvider {
 
     private val json = Json { ignoreUnknownKeys = true }
+
+    /**
+     * PERF-11: cap concurrent LLM HTTP calls to
+     * [MAX_CONCURRENT_LLM_CALLS] = 2. The orchestrator runs 4
+     * parallel ingest lanes (parse / analysis / generation /
+     * embedding), and the LLM-backed lanes would each open their
+     * own SSE connection without throttling — exhausting the
+     * upstream provider's rate limit and the device's socket
+     * pool. Fair Semaphore so requests are FIFO instead of
+     * last-acquirer-wins (avoids one lane starving another).
+     *
+     * This is the lowest-level choke point: every public method
+     * that hits the network (`chat` / `complete` /
+     * `chatJson` / `streamJson` / `analyzeImage` plus the
+     * `*Observed` variants) funnels through one of the three
+     * private helpers wrapped below. So a single Semaphore
+     * field covers the whole surface.
+     */
+    private val concurrencyLimiter = Semaphore(MAX_CONCURRENT_LLM_CALLS)
 
     override suspend fun chat(prompt: String, context: String): String {
         val config = configProvider()
@@ -339,49 +360,51 @@ class AiGateway(
         mimeType: String,
         title: String,
         ocrText: String
-    ): String = withContext(Dispatchers.IO) {
-        val config = configProvider()
-        val apiKey = config.imageAnalysisApiKey.trim()
-        val baseUrl = config.imageAnalysisBaseUrl.trim()
-        if (baseUrl.isBlank()) {
-            throw IllegalStateException("图片分析 Base URL 未配置")
-        }
-        if (apiKey.isBlank()) {
-            throw IllegalStateException("图片分析 API Key 未配置")
-        }
+    ): String = concurrencyLimiter.withPermit {
+        withContext(Dispatchers.IO) {
+            val config = configProvider()
+            val apiKey = config.imageAnalysisApiKey.trim()
+            val baseUrl = config.imageAnalysisBaseUrl.trim()
+            if (baseUrl.isBlank()) {
+                throw IllegalStateException("图片分析 Base URL 未配置")
+            }
+            if (apiKey.isBlank()) {
+                throw IllegalStateException("图片分析 API Key 未配置")
+            }
 
-        val prompt = buildImageAnalysisPrompt(title, ocrText)
-        val imageBase64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
-        val messages = buildJsonArray {
-            add(buildJsonObject {
-                put("role", JsonPrimitive("user"))
-                put("content", buildJsonArray {
-                    add(buildJsonObject {
-                        put("type", JsonPrimitive("text"))
-                        put("text", JsonPrimitive(prompt))
-                    })
-                    add(buildJsonObject {
-                        put("type", JsonPrimitive("image_url"))
-                        put("image_url", buildJsonObject {
-                            put("url", JsonPrimitive("data:$mimeType;base64,$imageBase64"))
+            val prompt = buildImageAnalysisPrompt(title, ocrText)
+            val imageBase64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+            val messages = buildJsonArray {
+                add(buildJsonObject {
+                    put("role", JsonPrimitive("user"))
+                    put("content", buildJsonArray {
+                        add(buildJsonObject {
+                            put("type", JsonPrimitive("text"))
+                            put("text", JsonPrimitive(prompt))
+                        })
+                        add(buildJsonObject {
+                            put("type", JsonPrimitive("image_url"))
+                            put("image_url", buildJsonObject {
+                                put("url", JsonPrimitive("data:$mimeType;base64,$imageBase64"))
+                            })
                         })
                     })
                 })
-            })
-        }
-        val requestBody = buildJsonObject {
-            put("model", JsonPrimitive(config.modelName))
-            put("messages", messages)
-            put("max_tokens", JsonPrimitive(1024))
-            put("temperature", JsonPrimitive(0))
-        }
-
-        try {
-            retryRemoteCall {
-                analyzeImageOnce(baseUrl, apiKey, requestBody.toString())
             }
-        } catch (e: Throwable) {
-            throw e.toImageAnalysisException(baseUrl)
+            val requestBody = buildJsonObject {
+                put("model", JsonPrimitive(config.modelName))
+                put("messages", messages)
+                put("max_tokens", JsonPrimitive(1024))
+                put("temperature", JsonPrimitive(0))
+            }
+
+            try {
+                retryRemoteCall {
+                    analyzeImageOnce(baseUrl, apiKey, requestBody.toString())
+                }
+            } catch (e: Throwable) {
+                throw e.toImageAnalysisException(baseUrl)
+            }
         }
     }
 
@@ -396,13 +419,15 @@ class AiGateway(
         temperature: Float = 0.7f,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
-    ): String = withContext(Dispatchers.IO) {
-        try {
-            retryRemoteCall(maxAttempts, onRetry) {
-                callApiOnce(config, systemPrompt, userMessage, temperature)
+    ): String = concurrencyLimiter.withPermit {
+        withContext(Dispatchers.IO) {
+            try {
+                retryRemoteCall(maxAttempts, onRetry) {
+                    callApiOnce(config, systemPrompt, userMessage, temperature)
+                }
+            } catch (e: Throwable) {
+                e.toAiErrorMessage(config.baseUrl)
             }
-        } catch (e: Throwable) {
-            return@withContext e.toAiErrorMessage(config.baseUrl)
         }
     }
 
@@ -495,7 +520,7 @@ class AiGateway(
         userMessage: String,
         temperature: Float,
         onDelta: suspend (String) -> Unit,
-    ) {
+    ) = concurrencyLimiter.withPermit {
         val requestBody = buildJsonObject {
             put("model", JsonPrimitive(config.modelName))
             put(
@@ -653,6 +678,14 @@ class AiGateway(
         const val AI_READ_TIMEOUT_MS = 300_000
         const val MAX_REMOTE_ATTEMPTS = 4
         const val MAX_REMOTE_RETRY_DELAY_MS = 30_000L
+        // PERF-11: hard cap on concurrent LLM HTTP calls. The
+        // orchestrator runs 4 ingest lanes; without throttling
+        // every lane opens its own SSE/POST connection, which
+        // trips upstream rate limits and exhausts the device
+        // socket pool. 2 is the sweet spot: one short lane +
+        // one long-running Stage-1/Stage-2 call, with two
+        // remaining lanes blocked on the semaphore.
+        const val MAX_CONCURRENT_LLM_CALLS = 2
     }
 
     private fun classifyHttpError(code: Int, body: String): String {
