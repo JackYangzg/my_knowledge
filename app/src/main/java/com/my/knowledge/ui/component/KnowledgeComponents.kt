@@ -23,39 +23,52 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.ui.KnowledgeInsight
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun KnowledgeDigestSection(onOpenContext: () -> Unit, onOpenFragments: () -> Unit) {
-    Column(modifier = Modifier.padding(top = 22.dp, start = 20.dp, end = 20.dp)) {
+    val spacing = LocalSpacing.current
+    val palette = LocalPalette.current
+    Column(modifier = Modifier.padding(top = spacing.xl, start = spacing.xl, end = spacing.xl)) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(stringResource(R.string.auto_e2ca3cf4), fontSize = 14.sp, fontWeight = FontWeight.Medium, color = Color(0xFF737373))
-                Text(stringResource(R.string.auto_1cad8496), fontSize = 12.sp, color = Color(0xFFA3A3A3))
+                Text(
+                    text = stringResource(R.string.auto_e2ca3cf4),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = palette.textSecondary
+                )
+                Text(
+                    text = stringResource(R.string.auto_1cad8496),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = palette.textTertiary
+                )
             }
-            Text(stringResource(R.string.auto_ed2172fd), fontSize = 12.sp, color = Color(0xFFA3A3A3))
+            Text(
+                text = stringResource(R.string.auto_ed2172fd),
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.textTertiary
+            )
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(spacing.sm))
 
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(spacing.md)
         ) {
             DigestCard(
                 modifier = Modifier.weight(1f),
@@ -86,41 +99,51 @@ fun DigestCard(
     bottomText: String,
     onClick: () -> Unit
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     Surface(
         onClick = onClick,
-        shape = RoundedCornerShape(16.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+        shape = RoundedCornerShape(spacing.lg),
+        color = palette.bgCard,
+        border = BorderStroke(1.dp, palette.borderBrand),
         shadowElevation = 2.dp,
         modifier = modifier.height(156.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(spacing.lg)
         ) {
             Box(
                 modifier = Modifier
                     .size(36.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(Color(0xFFEFF7FF))
-                    .border(1.dp, Color(0xFFCBE8FF), RoundedCornerShape(12.dp)),
+                    .clip(RoundedCornerShape(spacing.md))
+                    .background(palette.brandSubtle)
+                    .border(1.dp, palette.borderBrand, RoundedCornerShape(spacing.md)),
                 contentAlignment = Alignment.Center
             ) {
-                Text(iconText, fontSize = 18.sp, color = Color(0xFF147EC5), fontWeight = FontWeight.Bold)
+                Text(
+                    text = iconText,
+                    style = MaterialTheme.typography.titleLarge,
+                    color = palette.brand
+                )
             }
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(spacing.md))
             Text(
-                title,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Bold,
-                color = Color(0xFF0F172A),
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+                color = palette.textPrimary,
                 maxLines = 2,
-                lineHeight = 18.sp,
                 overflow = TextOverflow.Clip
             )
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(desc, fontSize = 12.sp, lineHeight = 18.sp, color = Color(0xFF5F87A3), maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(modifier = Modifier.height(spacing.xs + 2.dp))
+            Text(
+                text = desc,
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.textSecondary,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
             Spacer(modifier = Modifier.weight(1f))
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -128,16 +151,20 @@ fun DigestCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    bottomText,
-                    fontSize = 12.sp,
-                    color = Color(0xFF147EC5),
+                    text = bottomText,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = palette.brand,
                     maxLines = 2,
-                    lineHeight = 15.sp,
                     overflow = TextOverflow.Clip,
                     modifier = Modifier.weight(1f)
                 )
-                Spacer(modifier = Modifier.width(4.dp))
-                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
+                Spacer(modifier = Modifier.width(spacing.xs))
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = palette.brand
+                )
             }
         }
     }
@@ -145,50 +172,76 @@ fun DigestCard(
 
 @Composable
 fun SummaryCard(modifier: Modifier = Modifier, value: String, label: String) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+        shape = RoundedCornerShape(spacing.lg),
+        color = palette.bgCard,
+        border = BorderStroke(1.dp, palette.borderBrand),
         shadowElevation = 4.dp
     ) {
         Column(
-            modifier = Modifier.padding(vertical = 12.dp, horizontal = 8.dp),
+            modifier = Modifier.padding(vertical = spacing.md, horizontal = spacing.sm),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Text(value, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text(label, fontSize = 11.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 5.dp))
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineMedium,
+                color = palette.textPrimary
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.textSecondary,
+                modifier = Modifier.padding(top = 5.dp)
+            )
         }
     }
 }
 
 @Composable
 fun StatCard(modifier: Modifier = Modifier, value: String, label: String) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     Surface(
         modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        color = Color.White,
-        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+        shape = RoundedCornerShape(spacing.lg),
+        color = palette.bgCard,
+        border = BorderStroke(1.dp, palette.borderBrand),
         shadowElevation = 1.dp
     ) {
-        Column(modifier = Modifier.padding(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text(label, fontSize = 11.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 2.dp))
+        Column(
+            modifier = Modifier.padding(spacing.md),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = value,
+                style = MaterialTheme.typography.headlineMedium,
+                color = palette.textPrimary
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.textSecondary,
+                modifier = Modifier.padding(top = 2.dp)
+            )
         }
     }
 }
 
 @Composable
 fun MiniTag(text: String) {
+    val palette = LocalPalette.current
     Surface(
-        color = Color(0xFFEFF7FF),
-        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+        color = palette.brandSubtle,
+        border = BorderStroke(1.dp, palette.borderBrand),
         shape = RoundedCornerShape(999.dp)
     ) {
         Text(
             text = text,
-            fontSize = 10.sp,
-            color = Color(0xFF147EC5),
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.brand,
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
         )
     }
@@ -196,31 +249,44 @@ fun MiniTag(text: String) {
 
 @Composable
 fun InsightRow(insight: KnowledgeInsight) {
-    Column(modifier = Modifier.background(Color.White).padding(20.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = Color(0xFF147EC5), modifier = Modifier.size(16.dp))
-            Text(stringResource(R.string.auto_14d3a72c), fontSize = 13.sp, fontWeight = FontWeight.Medium, color = Color(0xFF147EC5))
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
+    Column(modifier = Modifier.background(palette.bgCard).padding(spacing.xl)) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            Icon(
+                imageVector = Icons.Default.AutoAwesome,
+                contentDescription = null,
+                tint = palette.brand,
+                modifier = Modifier.size(16.dp)
+            )
+            Text(
+                text = stringResource(R.string.auto_14d3a72c),
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.brand
+            )
         }
         Spacer(modifier = Modifier.height(10.dp))
         Text(
             text = insight.summary,
-            fontSize = 15.sp,
-            lineHeight = 24.sp,
-            color = Color(0xFF262626)
+            style = MaterialTheme.typography.bodyMedium,
+            color = palette.textPrimary
         )
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(spacing.md))
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             insight.keyTakeaways.forEach { point ->
                 Surface(
-                    color = Color(0xFFF7FBFF),
-                    border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+                    color = palette.bgPage,
+                    border = BorderStroke(1.dp, palette.borderBrand),
                     shape = CircleShape
                 ) {
                     Text(
-                        point,
-                        fontSize = 11.sp,
-                        color = Color(0xFF5F87A3),
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        text = point,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.textSecondary,
+                        modifier = Modifier.padding(horizontal = spacing.sm, vertical = 3.dp)
                     )
                 }
             }
@@ -241,6 +307,8 @@ fun KnowledgeItemRow(
     onClick: () -> Unit = {},
     onLongClick: (Offset) -> Unit = {}
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     var rowWindowOrigin by remember { mutableStateOf(Offset.Zero) }
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
     Surface(
@@ -261,10 +329,10 @@ fun KnowledgeItemRow(
                     }
                 )
             },
-        color = Color.White,
-        border = BorderStroke(0.5.dp, Color(0xFFE5E7EB))
+        color = palette.bgCard,
+        border = BorderStroke(0.5.dp, palette.borderDefault)
     ) {
-        Column(modifier = Modifier.padding(vertical = 10.dp, horizontal = 20.dp)) {
+        Column(modifier = Modifier.padding(vertical = 10.dp, horizontal = spacing.xl)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -276,37 +344,44 @@ fun KnowledgeItemRow(
                         onCheckedChange = onSelectionChange,
                         modifier = Modifier.size(24.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(spacing.sm))
                 }
                 Text(
                     text = item.title,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0F172A),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = palette.textPrimary,
                     modifier = Modifier.weight(1f),
-                    lineHeight = 20.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Row {
                     if (item.status == KnowledgeItemEntity.STATUS_FAILED) {
                         IconButton(onClick = onRetry, modifier = Modifier.size(24.dp)) {
-                            Icon(Icons.Default.Refresh, contentDescription = "重试", tint = Color(0xFF147EC5), modifier = Modifier.size(16.dp))
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "重试",
+                                tint = palette.brand,
+                                modifier = Modifier.size(16.dp)
+                            )
                         }
                     }
                     IconButton(onClick = onDelete, modifier = Modifier.size(24.dp)) {
-                        Icon(Icons.Default.Delete, contentDescription = "删除", tint = Color(0xFF9CA3AF), modifier = Modifier.size(16.dp))
+                        Icon(
+                            imageVector = Icons.Default.Delete,
+                            contentDescription = "删除",
+                            tint = palette.textMuted,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
             }
             Text(
                 text = item.excerpt,
-                fontSize = 12.sp,
-                lineHeight = 18.sp,
-                color = Color(0xFF5F87A3),
+                style = MaterialTheme.typography.bodySmall,
+                color = palette.textSecondary,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = spacing.xs)
             )
             Row(
                 modifier = Modifier
@@ -319,9 +394,18 @@ fun KnowledgeItemRow(
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(Icons.Default.Link, contentDescription = null, modifier = Modifier.size(12.dp), tint = Color(0xFFA3A3A3))
-                    Text(item.sourceType, fontSize = 11.sp, color = Color(0xFFA3A3A3))
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.Default.Link,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = palette.textTertiary
+                    )
+                    Text(
+                        text = item.sourceType,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = palette.textTertiary
+                    )
+                    Spacer(modifier = Modifier.width(spacing.sm))
                     StatusTag(
                         text = processingStatusLabel(item.status),
                         isError = item.status == KnowledgeItemEntity.STATUS_FAILED,
@@ -335,16 +419,17 @@ fun KnowledgeItemRow(
 
 @Composable
 private fun StatusTag(text: String, isError: Boolean, onClick: () -> Unit) {
+    val palette = LocalPalette.current
     Surface(
         onClick = onClick,
-        color = if (isError) Color(0xFFFEF2F2) else Color(0xFFEFF7FF),
-        border = BorderStroke(1.dp, if (isError) Color(0xFFFECACA) else Color(0xFFDBEEFF)),
+        color = if (isError) palette.semanticErrorBg else palette.brandSubtle,
+        border = BorderStroke(1.dp, if (isError) palette.semanticErrorBorder else palette.borderBrand),
         shape = RoundedCornerShape(999.dp)
     ) {
         Text(
             text = text,
-            fontSize = 10.sp,
-            color = if (isError) Color(0xFFDC2626) else Color(0xFF147EC5),
+            style = MaterialTheme.typography.labelSmall,
+            color = if (isError) palette.semanticError else palette.brand,
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
         )
     }
