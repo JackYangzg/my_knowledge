@@ -31,9 +31,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.my.knowledge.R
 import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.viewmodel.ProcessingStatusViewModel
 
@@ -59,11 +61,11 @@ fun ReviewQueueScreen(
             TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp), modifier = Modifier.height(24.dp)) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color(0xFF147EC5))
                 Spacer(modifier = Modifier.size(4.dp))
-                Text("返回", fontSize = 14.sp, color = Color(0xFF147EC5))
+                Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = Color(0xFF147EC5))
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text("Review Queue", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0F172A))
-            Text("处理低置信度、归档确认、实体合并和知识缺口", fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
+            Text(stringResource(R.string.auto_1191b28d), fontSize = 13.sp, color = Color(0xFF5F87A3), modifier = Modifier.padding(top = 4.dp))
         }
 
         LazyColumn(
@@ -74,7 +76,7 @@ fun ReviewQueueScreen(
             if (reviews.isEmpty()) {
                 item {
                     Surface(shape = RoundedCornerShape(12.dp), color = Color.White, modifier = Modifier.fillMaxWidth()) {
-                        Text("暂无待确认事项", modifier = Modifier.padding(28.dp), color = Color(0xFF5F87A3), fontSize = 14.sp)
+                        Text(stringResource(R.string.auto_405fb51f), modifier = Modifier.padding(28.dp), color = Color(0xFF5F87A3), fontSize = 14.sp)
                     }
                 }
             } else {
@@ -116,13 +118,13 @@ private fun ReviewQueueCard(
                 TextButton(onClick = onSkip) {
                     Icon(Icons.Default.SkipNext, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.size(4.dp))
-                    Text("跳过")
+                    Text(stringResource(R.string.auto_31a98593))
                 }
                 Spacer(modifier = Modifier.size(8.dp))
                 Button(onClick = onAccept, colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF147EC5))) {
                     Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(14.dp))
                     Spacer(modifier = Modifier.size(4.dp))
-                    Text("确认")
+                    Text(stringResource(R.string.auto_b56d9ac6))
                 }
             }
         }
