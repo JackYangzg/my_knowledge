@@ -14,12 +14,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import com.my.knowledge.ui.theme.LocalPalette
+import com.my.knowledge.ui.theme.LocalSpacing
 
 @Composable
 fun PageHeader(
@@ -28,11 +27,13 @@ fun PageHeader(
     action: @Composable (() -> Unit)? = null,
     back: @Composable (() -> Unit)? = null
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp)
-            .padding(top = 48.dp, bottom = 12.dp)
+            .padding(horizontal = spacing.lg)
+            .padding(top = spacing.huge, bottom = spacing.md)
     ) {
         Row(
             verticalAlignment = Alignment.Bottom,
@@ -43,18 +44,17 @@ fun PageHeader(
                 back?.invoke()
                 Text(
                     text = title,
-                    fontSize = 28.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF0F172A),
+                    style = MaterialTheme.typography.displayLarge,
+                    color = palette.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 hint?.let {
                     Text(
                         text = it,
-                        fontSize = 13.sp,
-                        color = Color(0xFF5F87A3),
-                        modifier = Modifier.padding(top = 4.dp)
+                        style = MaterialTheme.typography.bodySmall,
+                        color = palette.textSecondary,
+                        modifier = Modifier.padding(top = spacing.xs)
                     )
                 }
             }
@@ -72,16 +72,18 @@ fun QuietCell(
     right: @Composable (() -> Unit)? = null,
     onClick: () -> Unit = {}
 ) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     Surface(
         onClick = onClick,
-        color = Color.White,
+        color = palette.bgCard,
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             modifier = Modifier
-                .padding(horizontal = 20.dp, vertical = 14.dp),
+                .padding(horizontal = spacing.lg, vertical = spacing.md),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(spacing.md)
         ) {
             if (leftContent != null) {
                 leftContent()
@@ -89,26 +91,25 @@ fun QuietCell(
                 Box(
                     modifier = Modifier
                         .size(36.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(Color(0xFFEFF7FF))
-                        .border(1.dp, Color(0xFFCBE8FF), RoundedCornerShape(12.dp)),
+                        .clip(RoundedCornerShape(spacing.md))
+                        .background(palette.brandSubtle)
+                        .border(1.dp, palette.borderBrand, RoundedCornerShape(spacing.md)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = icon,
                         contentDescription = null,
                         modifier = Modifier.size(18.dp),
-                        tint = Color(0xFF147EC5)
+                        tint = palette.brand
                     )
                 }
             }
             Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(spacing.sm)) {
                     Text(
                         text = title,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = Color(0xFF0F172A),
+                        style = MaterialTheme.typography.titleSmall,
+                        color = palette.textPrimary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
@@ -117,11 +118,11 @@ fun QuietCell(
                 desc?.let {
                     Text(
                         text = it,
-                        fontSize = 12.sp,
-                        color = Color(0xFF5F87A3),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = palette.textSecondary,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(top = 4.dp)
+                        modifier = Modifier.padding(top = spacing.xs)
                     )
                 }
             }
@@ -129,7 +130,7 @@ fun QuietCell(
                 imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
                 contentDescription = null,
                 modifier = Modifier.size(16.dp),
-                tint = Color(0xFFD4D4D4)
+                tint = palette.textMuted
             )
         }
     }
@@ -142,25 +143,26 @@ fun Section(
     onMoreClick: () -> Unit = {},
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(modifier = Modifier.padding(top = 22.dp)) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
+    Column(modifier = Modifier.padding(top = spacing.xxl)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 8.dp),
+                .padding(horizontal = spacing.lg, vertical = spacing.sm),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.Bottom
         ) {
             Text(
                 text = title,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color(0xFF5F87A3)
+                style = MaterialTheme.typography.labelLarge,
+                color = palette.textSecondary
             )
             more?.let {
                 Text(
                     text = it,
-                    fontSize = 12.sp,
-                    color = Color(0xFF6AA8D0),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = palette.brand,
                     modifier = Modifier.clickable { onMoreClick() }
                 )
             }
@@ -168,8 +170,8 @@ fun Section(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.White)
-                .border(0.5.dp, Color(0xFFDBEEFF))
+                .background(palette.bgCard)
+                .border(0.5.dp, palette.borderBrand)
         ) {
             content()
         }
@@ -178,30 +180,33 @@ fun Section(
 
 @Composable
 fun SoftTag(text: String) {
+    val palette = LocalPalette.current
+    val spacing = LocalSpacing.current
     Surface(
-        color = Color(0xFFEFF7FF),
+        color = palette.brandSubtle,
         shape = CircleShape,
     ) {
         Text(
             text = text,
-            fontSize = 11.sp,
-            color = Color(0xFF147EC5),
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.brand,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = spacing.xs)
         )
     }
 }
 
 @Composable
 fun MiniTag(text: String) {
+    val palette = LocalPalette.current
     Surface(
-        color = Color(0xFFEFF7FF),
-        border = BorderStroke(1.dp, Color(0xFFDBEEFF)),
+        color = palette.brandSubtle,
+        border = BorderStroke(1.dp, palette.borderBrand),
         shape = RoundedCornerShape(999.dp)
     ) {
         Text(
             text = text,
-            fontSize = 10.sp,
-            color = Color(0xFF147EC5),
+            style = MaterialTheme.typography.labelSmall,
+            color = palette.brand,
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
         )
     }
