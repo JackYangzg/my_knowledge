@@ -31,9 +31,27 @@ interface ProcessingTaskDao {
     """)
     suspend fun claimTask(id: String, startedAt: Long): Int
 
+    @Query("""
+        SELECT * FROM processing_task
+        WHERE sourceId = :sourceId
+          AND status IN ('pending', 'pending_network')
+        ORDER BY priority DESC, createdAt ASC
+        LIMIT :limit
+    """)
+    suspend fun getPendingTaskCandidatesForSource(sourceId: String, limit: Int = 8): List<ProcessingTaskEntity>
+
     @Transaction
     suspend fun claimNextPendingTask(startedAt: Long): ProcessingTaskEntity? {
         for (task in getPendingTaskCandidates()) {
+            val claimed = claimTask(task.id, startedAt) > 0
+            if (claimed) return getById(task.id)
+        }
+        return null
+    }
+
+    @Transaction
+    suspend fun claimNextPendingTaskForSource(sourceId: String, startedAt: Long): ProcessingTaskEntity? {
+        for (task in getPendingTaskCandidatesForSource(sourceId)) {
             val claimed = claimTask(task.id, startedAt) > 0
             if (claimed) return getById(task.id)
         }

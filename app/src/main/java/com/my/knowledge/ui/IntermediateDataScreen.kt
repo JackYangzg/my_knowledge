@@ -34,6 +34,9 @@ import androidx.compose.ui.unit.sp
 import com.my.knowledge.data.db.entity.KnowledgeCommunityEntity
 import com.my.knowledge.data.db.entity.KnowledgeEntityEntity
 import com.my.knowledge.data.db.entity.KnowledgeRelationEntity
+import com.my.knowledge.domain.model.KNOWLEDGE_CONCEPT_TYPE_NAMES
+import com.my.knowledge.domain.model.knowledgeEntityTopLevelKind
+import com.my.knowledge.domain.model.normalizeKnowledgeEntityType
 import com.my.knowledge.viewmodel.IntermediateDataViewModel
 import kotlinx.coroutines.launch
 
@@ -874,32 +877,12 @@ private fun EntityGroupHeader(
 }
 
 private fun String.normalizedEntityType(): String =
-    trim().lowercase().ifBlank { "entity" }
+    normalizeKnowledgeEntityType(this)
 
-private fun String.topLevelEntityKind(): String {
-    val normalized = normalizedEntityType()
-    return if (normalized in conceptTypeNames) "concept" else "entity"
-}
+private fun String.topLevelEntityKind(): String =
+    knowledgeEntityTopLevelKind(this)
 
-private val conceptTypeNames = setOf(
-    "concept",
-    "method",
-    "technique",
-    "theory",
-    "principle",
-    "framework",
-    "problem",
-    "pattern",
-    "protocol",
-    "metric",
-    "algorithm",
-    "mechanism",
-    "model",
-    "process",
-    "heuristic",
-    "phenomenon",
-    "category"
-)
+private val conceptTypeNames = KNOWLEDGE_CONCEPT_TYPE_NAMES
 
 private fun String.entityKindLabel(): String = when (this) {
     "concept" -> "概念"

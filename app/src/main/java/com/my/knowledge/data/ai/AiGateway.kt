@@ -59,7 +59,7 @@ interface AiProvider {
      * The implementation is cooperative-cancellation aware: every
      * SSE line reads `coroutineContext.ensureActive()` first, so a
      * `cancel()` from a parent job tears the HTTP connection down
-     * within the next read instead of waiting out the 180s read
+     * within the next read instead of waiting out the read
      * timeout.
      *
      * Errors are NOT silently swallowed: a mid-stream EOF, an HTTP
@@ -138,6 +138,58 @@ class AiGateway(
         )
     }
 
+    suspend fun completeStreamObserved(
+        systemPrompt: String,
+        userMessage: String,
+        temperature: Float = 0.7f,
+        maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
+        onRetry: suspend (AiRetryEvent) -> Unit = {},
+        onChunk: (String) -> Unit = {},
+    ): String = withContext(Dispatchers.IO) {
+        val config = configProvider()
+        if (config.apiKey.isBlank()) {
+            return@withContext "[配置缺失] 请在设置中配置 API Key。"
+        }
+
+        try {
+            retryRemoteCall(maxAttempts, onRetry) {
+                val accumulator = StringBuilder()
+                streamSseOnce(
+                    config = config,
+                    systemPrompt = systemPrompt,
+                    userMessage = userMessage,
+                    temperature = temperature,
+                    onDelta = { delta ->
+                        accumulator.append(delta)
+                        onChunk(delta)
+                    },
+                )
+                val raw = accumulator.toString()
+                if (raw.isBlank()) {
+                    throw RetryableRemoteCallException("远端流式响应为空")
+                }
+                val cleaned = with(AiTextCleaner) { raw.cleanModelOutput() }
+                if (cleaned.isBlank() && raw.isNotBlank()) {
+                    "[AI 调用失败] 模型仅返回了思考过程，未给出实际内容。"
+                } else {
+                    cleaned
+                }
+            }
+        } catch (e: java.net.UnknownHostException) {
+            "[DNS 失败] 无法解析 ${config.baseUrl} 中的主机名，请检查 Base URL 或网络。"
+        } catch (e: java.net.ConnectException) {
+            "[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。"
+        } catch (e: java.net.SocketTimeoutException) {
+            "[超时] AI 服务 5 分钟内未返回结果，请稍后重试或减小输入长度。"
+        } catch (e: javax.net.ssl.SSLException) {
+            "[SSL 错误] 与 ${config.baseUrl} 的 TLS 握手失败：${e.localizedMessage ?: "未知"}"
+        } catch (e: RetryableRemoteCallException) {
+            "[AI 调用异常] ${e.localizedMessage ?: "远端请求失败"}"
+        } catch (e: Exception) {
+            "[AI 调用异常] ${e.localizedMessage ?: "未知错误"}"
+        }
+    }
+
     override fun completeStream(systemPrompt: String, userMessage: String): Flow<String> = flow {
         val config = configProvider()
         if (config.apiKey.isBlank()) {
@@ -156,12 +208,12 @@ class AiGateway(
         } catch (e: CancellationException) {
             // Cooperative cancellation: re-throw so the parent scope
             // sees the cancel cause. Swallowing this would leak
-            // the connection until readTimeout (180s).
+            // the connection until readTimeout.
             throw e
         } catch (e: java.net.ConnectException) {
             emit("[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。")
         } catch (e: java.net.SocketTimeoutException) {
-            emit("[超时] AI 服务 180 秒内未返回结果，请稍后重试或减小输入长度。")
+            emit("[超时] AI 服务 5 分钟内未返回结果，请稍后重试或减小输入长度。")
         } catch (e: Exception) {
             emit("[AI 调用异常] ${e.localizedMessage ?: "未知错误"}")
         }
@@ -243,6 +295,57 @@ class AiGateway(
         cleaned
     }
 
+    suspend fun streamJsonObserved(
+        systemPrompt: String,
+        userPrompt: String,
+        schemaHint: String,
+        temperature: Float = 0.2f,
+        maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
+        onRetry: suspend (AiRetryEvent) -> Unit = {},
+        onChunk: (String) -> Unit = {},
+    ): String = withContext(Dispatchers.IO) {
+        val config = configProvider()
+        if (config.apiKey.isBlank()) return@withContext ""
+        val effectiveSystem = "$systemPrompt\n\n只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n$schemaHint"
+        try {
+            retryRemoteCall(maxAttempts, onRetry) {
+                val accumulator = StringBuilder()
+                streamSseOnce(
+                    config = config,
+                    systemPrompt = effectiveSystem,
+                    userMessage = userPrompt,
+                    temperature = temperature,
+                    onDelta = { delta ->
+                        accumulator.append(delta)
+                        onChunk(delta)
+                    },
+                )
+                val raw = accumulator.toString()
+                if (raw.isBlank()) {
+                    throw RetryableRemoteCallException("远端流式 JSON 响应为空")
+                }
+                val cleaned = with(AiTextCleaner) { raw.cleanModelOutput() }
+                if (cleaned.isBlank() && raw.isNotBlank()) {
+                    "[AI 调用失败] 模型仅返回了思考过程，未给出实际内容。"
+                } else {
+                    cleaned
+                }
+            }
+        } catch (e: java.net.UnknownHostException) {
+            "[DNS 失败] 无法解析 ${config.baseUrl} 中的主机名，请检查 Base URL 或网络。"
+        } catch (e: java.net.ConnectException) {
+            "[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。"
+        } catch (e: java.net.SocketTimeoutException) {
+            "[超时] AI 服务 5 分钟内未返回结果，请稍后重试或减小输入长度。"
+        } catch (e: javax.net.ssl.SSLException) {
+            "[SSL 错误] 与 ${config.baseUrl} 的 TLS 握手失败：${e.localizedMessage ?: "未知"}"
+        } catch (e: RetryableRemoteCallException) {
+            "[AI 调用异常] ${e.localizedMessage ?: "远端请求失败"}"
+        } catch (e: Exception) {
+            "[AI 调用异常] ${e.localizedMessage ?: "未知错误"}"
+        }
+    }
+
     suspend fun analyze(prompt: String): String {
         val config = configProvider()
         if (config.apiKey.isBlank()) {
@@ -302,7 +405,7 @@ class AiGateway(
         } catch (e: java.net.ConnectException) {
             throw IllegalStateException("图片分析连接失败：无法连接到 $baseUrl", e)
         } catch (e: java.net.SocketTimeoutException) {
-            throw IllegalStateException("图片分析超时：AI 服务 180 秒内未返回结果", e)
+            throw IllegalStateException("图片分析超时：AI 服务 5 分钟内未返回结果", e)
         } catch (e: javax.net.ssl.SSLException) {
             throw IllegalStateException("图片分析 SSL 错误：${e.localizedMessage ?: "未知"}", e)
         } catch (e: RetryableRemoteCallException) {
@@ -331,7 +434,7 @@ class AiGateway(
         } catch (e: java.net.ConnectException) {
             "[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。"
         } catch (e: java.net.SocketTimeoutException) {
-            "[超时] AI 服务 180 秒内未返回结果，请稍后重试或减小输入长度。"
+            "[超时] AI 服务 5 分钟内未返回结果，请稍后重试或减小输入长度。"
         } catch (e: javax.net.ssl.SSLException) {
             "[SSL 错误] 与 ${config.baseUrl} 的 TLS 握手失败：${e.localizedMessage ?: "未知"}"
         } catch (e: RetryableRemoteCallException) {
@@ -413,7 +516,7 @@ class AiGateway(
      *
      * Cooperative cancellation: `coroutineContext.ensureActive()` is
      * called before every `readLine()` so a parent `Job.cancel()` is
-     * observed within the latency of the next read, not the 180s
+     * observed within the latency of the next read, not the
      * `readTimeout`. The connection is `disconnect()`ed in `finally`
      * so a cancelled reader doesn't leave a half-open socket waiting
      * on the server.
@@ -480,7 +583,7 @@ class AiGateway(
 
             // Manual read loop instead of `useLines { forEach }`:
             // Sequence.forEach doesn't check coroutine cancellation,
-            // which would mean a cancelled read spins until the 180s
+            // which would mean a cancelled read spins until the
             // timeout. ensureActive() is the cooperative-cancel hook
             // that lets cancel() tear the connection down within the
             // next read latency.
@@ -543,7 +646,7 @@ class AiGateway(
     private suspend fun <T> retryRemoteCall(
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
-        block: () -> T
+        block: suspend () -> T
     ): T {
         var last: Throwable? = null
         val attempts = maxAttempts.coerceAtLeast(1)
@@ -585,7 +688,7 @@ class AiGateway(
 
     private companion object {
         const val CONNECT_TIMEOUT_MS = 30_000
-        const val AI_READ_TIMEOUT_MS = 180_000
+        const val AI_READ_TIMEOUT_MS = 300_000
         const val MAX_REMOTE_ATTEMPTS = 4
         const val MAX_REMOTE_RETRY_DELAY_MS = 30_000L
     }

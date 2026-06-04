@@ -89,6 +89,10 @@ class FileBlockParserAlignmentTest {
         assertTrue(prompt.contains("All wiki pages generated from this source MUST include this filename"))
         assertTrue(prompt.contains("Project Schema and Routing"))
         assertTrue(prompt.contains("wiki/sources/raft.md"))
+        assertTrue(prompt.contains("wiki/papers/"))
+        assertTrue(prompt.contains("wiki/methods/"))
+        assertTrue(prompt.contains("Problem & Context"))
+        assertTrue(prompt.contains("source | entity | concept | paper | method"))
 
         val headIdx = prompt.indexOf("MANDATORY OUTPUT LANGUAGE")
         val tailIdx = prompt.lastIndexOf("MANDATORY OUTPUT LANGUAGE")

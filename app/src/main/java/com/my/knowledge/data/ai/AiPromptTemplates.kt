@@ -218,7 +218,7 @@ ${if (currentIndex.isNotBlank()) "## Current Wiki Index (for de-dup hints)\n$cur
     ): String {
         val sourceBaseName = fileName.substringBeforeLast('.', fileName)
         val summaryPath = "wiki/sources/$sourceBaseName.md"
-        val knownTypes = "source | entity | concept | comparison | query | synthesis | overview"
+        val knownTypes = "source | entity | concept | paper | method | comparison | query | synthesis | overview"
         val schemaBlock = if (schema.isNotBlank()) {
             """
 ## Project Schema and Routing (AUTHORITATIVE)
@@ -244,11 +244,13 @@ Use wiki/entities/ and wiki/concepts/ only when the schema does not provide a mo
             "## What to generate",
             "",
             "1. A source summary page at **$summaryPath** (MUST use this exact path)",
-            "2. Entity or schema-defined typed pages for key named things identified in the analysis. Prefer schema-defined directories when present; otherwise use wiki/entities/.",
-            "3. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
-            "4. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
-            "5. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
-            "6. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
+            "2. For academic papers, also create a paper page in **wiki/papers/** with OmegaWiki-style sections: Problem & Context, Key idea, Method, Experiment & Results, Limitations, Open questions, My take, Related.",
+            "3. Entity or schema-defined typed pages for key named things identified in the analysis. Prefer schema-defined directories when present; otherwise use wiki/entities/.",
+            "4. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
+            "5. For academic papers, method pages in **wiki/methods/** only for named, reusable, citable techniques. Do not duplicate every paper-specific method detail as a method page.",
+            "6. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
+            "7. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
+            "8. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
             "",
             "## Frontmatter Rules (CRITICAL — parser is strict)",
             "",
@@ -273,6 +275,13 @@ Use wiki/entities/ and wiki/concepts/ only when the schema does not provide a mo
             "  • related  — array of bare wiki page slugs: `related: [foo, bar-baz]`. Do NOT include",
             "               `wiki/`, `.md`, or `[[…]]` here — slugs only.",
             "  • sources  — array of source filenames; MUST include \"$fileName\".",
+            "",
+            "Paper pages should additionally include these frontmatter fields when known:",
+            "  • arxiv, s2_id, year, venue, authors, tldr, contribution_type, datasets, importance",
+            "  • contribution_type values should come from: method, theory, benchmark, analysis, application, system, position, survey",
+            "  • importance is an integer 1-5 based on citation/influence/novelty signals; use 3 when uncertain.",
+            "",
+            "Method pages should include a reusable technique summary, source_papers, aliases, and type when known.",
             "",
             "Concrete example of a complete, parseable page (everything between the two `---` lines",
             "is the frontmatter; the heading and prose below are the body):",

@@ -276,7 +276,7 @@ class IngestOrchestrator(
      * `ai.streamJson` / `ai.completeStream` cooperative-cancel hook
      * (`currentCoroutineContext().ensureActive()` per SSE line) then
      * tears the HTTP connection down on the very next read instead
-     * of waiting out the 180s `readTimeout`.
+     * of waiting out the HTTP `readTimeout`.
      *
      * **Scope note:** [runUntilIdle] runs up to 4 parallel lanes.
      * Last-write-wins means [cancel] only stops the most recent lane
@@ -365,17 +365,35 @@ class IngestOrchestrator(
                         continue
                     }
                     idlePolls = 0
-                    processed.incrementAndGet()
-                    activeTasks.incrementAndGet()
-                    try {
-                        runTask(task)
-                    } finally {
-                        activeTasks.decrementAndGet()
+                    var nextTask: ProcessingTaskEntity? = task
+                    while (nextTask != null && processed.get() < maxTasks) {
+                        val current = nextTask
+                        processed.incrementAndGet()
+                        activeTasks.incrementAndGet()
+                        val success = try {
+                            runTask(current)
+                        } finally {
+                            activeTasks.decrementAndGet()
+                        }
+                        nextTask = if (IngestQueuePolicy.shouldClaimNextSameSourceTask(current.taskType, success)) {
+                            claimNextSameSourceTask(current)
+                        } else {
+                            null
+                        }
                     }
                 }
             }
         }
         lanes.awaitAll()
+    }
+
+    private suspend fun claimNextSameSourceTask(task: ProcessingTaskEntity): ProcessingTaskEntity? {
+        val sourceId = task.sourceId ?: task.targetId
+        if (sourceId.isBlank()) return null
+        return db.processingTaskDao().claimNextPendingTaskForSource(
+            sourceId = sourceId,
+            startedAt = System.currentTimeMillis()
+        )
     }
 
     private suspend fun resetInterruptedTasks() {
@@ -410,7 +428,7 @@ class IngestOrchestrator(
         }
     }
 
-    private suspend fun runTask(task: ProcessingTaskEntity) {
+    private suspend fun runTask(task: ProcessingTaskEntity): Boolean {
         val startedAt = System.currentTimeMillis()
         // P0-2: pin the current coroutine's Job so [cancel] can stop
         // the in-flight LLM stream. Done at the very top of runTask
@@ -449,7 +467,7 @@ class IngestOrchestrator(
                     5,
                     "{}"
                 )
-                return
+                return true
             }
             when (task.taskType) {
                 "parse" -> parseTask(task)
@@ -458,6 +476,7 @@ class IngestOrchestrator(
                 "embedding" -> embeddingTask(task)
                 else -> markSuccess(task, "Unsupported task skipped", "{}")
             }
+            return true
         } catch (e: Exception) {
             val retry = task.retryCount + 1
             val now = System.currentTimeMillis()
@@ -487,6 +506,7 @@ class IngestOrchestrator(
                     db.sourceDocumentDao().updateStatus(it, SourceDocumentEntity.STATUS_FAILED, e.message, now)
                 }
             }
+            return false
         } finally {
             // P0-2: only clear the Job reference if it still points
             // at *this* runTask's coroutine. A nested runTask call
@@ -1002,19 +1022,34 @@ class IngestOrchestrator(
             path.startsWith("wiki/entities/") || path.contains("/entities/") -> "entity"
             path.startsWith("wiki/concepts/") || path.contains("/concepts/") -> "concept"
             path.startsWith("wiki/sources/") || path.contains("/sources/") -> "source"
+            path.startsWith("wiki/papers/") || path.contains("/papers/") -> "paper"
+            path.startsWith("wiki/methods/") || path.contains("/methods/") -> "method"
+            path.startsWith("wiki/queries/") || path.contains("/queries/") -> "query"
+            path.startsWith("wiki/comparisons/") || path.contains("/comparisons/") -> "comparison"
+            path.startsWith("wiki/synthesis/") || path.contains("/synthesis/") -> "synthesis"
             else -> "synthesis"
         }
         val sourceType = when {
             path.startsWith("wiki/entities/") || path.contains("/entities/") -> "wiki_entity"
             path.startsWith("wiki/concepts/") || path.contains("/concepts/") -> "wiki_concept"
+            path.startsWith("wiki/papers/") || path.contains("/papers/") -> "wiki_paper"
+            path.startsWith("wiki/methods/") || path.contains("/methods/") -> "wiki_method"
+            path.startsWith("wiki/queries/") || path.contains("/queries/") -> "wiki_query"
+            path.startsWith("wiki/comparisons/") || path.contains("/comparisons/") -> "wiki_comparison"
+            path.startsWith("wiki/synthesis/") || path.contains("/synthesis/") -> "wiki_synthesis"
             path.endsWith("/index.md") || path == "wiki/index.md" -> "wiki_index"
             path.endsWith("/overview.md") || path == "wiki/overview.md" -> "wiki_overview"
             path.endsWith("/log.md") || path == "wiki/log.md" -> "wiki_log"
             path.startsWith("wiki/sources/") || path.contains("/sources/") -> "wiki_source"
             else -> "wiki_ai_generated"
         }
-        val title = frontMatterValue(cleaned, "title")
-            ?: path.substringAfterLast("/").removeSuffix(".md")
+        val title = when {
+            path.endsWith("/index.md") || path == "wiki/index.md" -> "index.md"
+            path.endsWith("/overview.md") || path == "wiki/overview.md" -> "overview.md"
+            path.endsWith("/log.md") || path == "wiki/log.md" -> "log.md"
+            else -> frontMatterValue(cleaned, "title")
+                ?: path.substringAfterLast("/").removeSuffix(".md")
+        }
         return WikiPageDraft(
             type = type,
             title = title,
@@ -1164,6 +1199,7 @@ class IngestOrchestrator(
         task: ProcessingTaskEntity,
         step: String,
         logMessage: (Int) -> String,
+        onRetry: suspend (com.my.knowledge.data.ai.AiRetryEvent) -> Unit = {},
     ): String {
         // Local counter for the "every N tokens" gate. We count
         // chunk-character-length on the consumer side. The
@@ -1198,16 +1234,18 @@ class IngestOrchestrator(
         }
         appendLog(
             task,
-            "诊断:开始请求流式 JSON，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${schemaHint.length} 字符, readTimeout=180000ms",
+            "诊断:开始请求流式 JSON，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${schemaHint.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
             "running",
             step
         )
         return try {
-            val result = ai.streamJson(
+            val result = ai.streamJsonObserved(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
                 schemaHint = schemaHint,
                 temperature = temperature,
+                maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+                onRetry = onRetry,
                 onChunk = { delta ->
                     val total = charCount.addAndGet(delta.length)
                     if (firstChunkSeen.compareAndSet(false, true)) {
@@ -1238,6 +1276,84 @@ class IngestOrchestrator(
             throw e
         } catch (t: Throwable) {
             appendLog(task, "诊断:流式 JSON 请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
+            throw t
+        } finally {
+            writer.cancel()
+        }
+    }
+
+    private suspend fun streamTextWithThrottledProgress(
+        systemPrompt: String,
+        userPrompt: String,
+        temperature: Float,
+        task: ProcessingTaskEntity,
+        step: String,
+        logMessage: (Int) -> String,
+        onRetry: suspend (com.my.knowledge.data.ai.AiRetryEvent) -> Unit = {},
+    ): String {
+        val charCount = AtomicInteger(0)
+        val lastSignalled = AtomicInteger(0)
+        val firstChunkSeen = AtomicBoolean(false)
+        val signals = MutableSharedFlow<Int>(
+            replay = 0,
+            extraBufferCapacity = 1,
+            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+        )
+        val writer = supervisorScope {
+            launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+                try {
+                    signals
+                        .sample(PROGRESS_SAMPLE_MS)
+                        .collect { count ->
+                            runCatching {
+                                updateProgress(task, 50, step, logMessage(count))
+                            }
+                        }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (t: Throwable) {
+                    // Swallow progress-write failures; the stream itself decides task success.
+                }
+            }
+        }
+        appendLog(
+            task,
+            "诊断:开始请求流式文本，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
+            "running",
+            step
+        )
+        return try {
+            val result = ai.completeStreamObserved(
+                systemPrompt = systemPrompt,
+                userMessage = userPrompt,
+                temperature = temperature,
+                maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+                onRetry = onRetry,
+                onChunk = { delta ->
+                    val total = charCount.addAndGet(delta.length)
+                    if (firstChunkSeen.compareAndSet(false, true)) {
+                        signals.tryEmit(total)
+                    }
+                    if (total - lastSignalled.get() >= PROGRESS_EVERY_N_TOKENS) {
+                        lastSignalled.set(total)
+                        signals.tryEmit(total)
+                    }
+                },
+            )
+            val finalCount = charCount.get()
+            if (finalCount > 0) signals.tryEmit(finalCount)
+            appendLog(
+                task,
+                "诊断:流式文本请求完成，累计接收 $finalCount 字符，清洗后 ${result.length} 字符",
+                "running",
+                step
+            )
+            result
+        } catch (e: CancellationException) {
+            appendLog(task, "诊断:流式文本请求被取消：${e.message ?: "无附加信息"}", "running", step)
+            throw e
+        } catch (t: Throwable) {
+            appendLog(task, "诊断:流式文本请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
             throw t
         } finally {
             writer.cancel()
@@ -1292,12 +1408,15 @@ class IngestOrchestrator(
         // out of the persisted wiki content even if a future
         // AiGateway.change forgets to do it at the boundary.
         //
-        appendLog(task, "诊断:generation 使用非流式模型调用，等待完整 FILE 块响应，readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS", "running", "调用 AI 生成 wiki 页面")
+        appendLog(task, "诊断:generation 使用流式模型调用，边接收 FILE 块边更新进度，readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS", "running", "调用 AI 生成 wiki 页面")
         val response = try {
-            ai.completeObserved(
+            streamTextWithThrottledProgress(
                 systemPrompt = systemPrompt,
-                userMessage = userPrompt,
-                maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+                userPrompt = userPrompt,
+                temperature = 0.1f,
+                task = task,
+                step = "调用 AI 生成 wiki 页面",
+                logMessage = { count -> "generation 流式接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
@@ -1308,10 +1427,10 @@ class IngestOrchestrator(
                 }
             )
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:generation 非流式模型调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成 wiki 页面")
+            appendLog(task, "诊断:generation 流式模型调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成 wiki 页面")
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:generation 非流式模型调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成 wiki 页面")
+            appendLog(task, "诊断:generation 流式模型调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成 wiki 页面")
             throw t
         }
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
@@ -1451,17 +1570,19 @@ class IngestOrchestrator(
 
         appendLog(
             task,
-            "诊断:analysis 使用非流式 JSON 调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${ANALYSIS_SCHEMA.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS",
+            "诊断:analysis 使用流式 JSON 调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${ANALYSIS_SCHEMA.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS",
             "running",
             "调用 AI 生成结构化分析"
         )
         val cleaned = try {
-            ai.chatJsonObserved(
+            streamJsonWithThrottledProgress(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
                 schemaHint = ANALYSIS_SCHEMA,
                 temperature = 0.1f,
-                maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+                task = task,
+                step = "调用 AI 生成结构化分析",
+                logMessage = { count -> "analysis 流式接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
@@ -1472,15 +1593,15 @@ class IngestOrchestrator(
                 }
             )
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:analysis 非流式 JSON 调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成结构化分析")
+            appendLog(task, "诊断:analysis 流式 JSON 调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成结构化分析")
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:analysis 非流式 JSON 调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成结构化分析")
+            appendLog(task, "诊断:analysis 流式 JSON 调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成结构化分析")
             throw t
         }
         appendLog(
             task,
-            "诊断:analysis 非流式 JSON 返回 ${cleaned.length} 字符",
+            "诊断:analysis 流式 JSON 返回 ${cleaned.length} 字符",
             "running",
             "调用 AI 生成结构化分析"
         )
@@ -1630,12 +1751,14 @@ class IngestOrchestrator(
                 chunk = chunk,
                 globalDigest = globalDigest
             )
-            val raw = ai.chatJsonObserved(
+            val raw = streamJsonWithThrottledProgress(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
                 schemaHint = ANALYSIS_SCHEMA,
                 temperature = 0.1f,
-                maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+                task = task,
+                step = "分块 ${chunk.index}/${chunks.size} 分析中",
+                logMessage = { count -> "分块 ${chunk.index}/${chunks.size} 流式接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
@@ -2073,7 +2196,7 @@ class IngestOrchestrator(
             val type = it.sourceType.removePrefix("wiki_")
             val summaryText = it.summary?.takeIf { s -> s.isNotBlank() }?.let { s -> ": ${s.take(50)}" } ?: ""
             "- ${it.title} ($type)$summaryText"
-        }
+        }.take(CURRENT_INDEX_PROMPT_CHARS)
     }
 
     private fun buildAnalysisUserMessage(source: SourceDocumentEntity, content: String): String =
@@ -2111,7 +2234,7 @@ class IngestOrchestrator(
         appendLine()
         appendLine("## Original Source Content")
         appendLine()
-        appendLine(sourceContent.take(50_000).ifBlank { "(empty file)" })
+        appendLine(sourceContent.take(STAGE2_SOURCE_EXCERPT_CHARS).ifBlank { "(empty file)" })
         appendLine()
         appendLine("---")
         appendLine()
@@ -2475,8 +2598,10 @@ class IngestOrchestrator(
 
         const val INGEST_IDLE_POLLS: Int = 4
         const val INGEST_IDLE_POLL_MS: Long = 250L
-        private const val INGEST_AI_REMOTE_ATTEMPTS: Int = 1
-        private const val AI_READ_TIMEOUT_MS: Int = 180_000
+        private const val INGEST_AI_REMOTE_ATTEMPTS: Int = 2
+        private const val AI_READ_TIMEOUT_MS: Int = 300_000
+        private const val CURRENT_INDEX_PROMPT_CHARS: Int = 20_000
+        private const val STAGE2_SOURCE_EXCERPT_CHARS: Int = 24_000
 
         /**
          * P0-2: throttling constants for the SSE-driven progress
@@ -2499,18 +2624,16 @@ class IngestOrchestrator(
 
         // ── P0-3: long-source path tunables ─────────────────────────────
         //
-        // The source budget is the per-LLM-call character ceiling
-        // (including the system / user prompt + the response).
+        // The source budget is the per-LLM-call source-text ceiling.
         // Sources at or below this threshold stay on the original
         // single-call path; anything above gets chunked.
         //
-        // TODO(P1): wire this to `ModelConfig.maxContextSize` once
-        //   the field is added. For now the 50K default matches the
-        //   historical `parsed.markdown.take(50_000)` ceiling that
-        //   the chunked path is replacing, so the threshold itself
-        //   doesn't change behaviour for any source that was
-        //   previously fitted into one LLM call.
-        const val LONG_SOURCE_BUDGET_CHARS: Int = 50_000
+        // The previous 50K ceiling often produced one huge remote
+        // request that spent minutes before the first useful token.
+        // 30K pushes borderline documents into the checkpointed
+        // chunk path earlier, which is smoother and recoverable
+        // after timeout / abort.
+        const val LONG_SOURCE_BUDGET_CHARS: Int = 30_000
 
         // Per-chunk target / min / max. The target is `budget * 0.55`
         // clamped into [LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX],
@@ -2538,6 +2661,8 @@ class IngestOrchestrator(
 | entity | wiki/entities/ | Named things: people, organizations, products, tools, datasets, systems, projects, places, source works |
 | concept | wiki/concepts/ | Ideas, methods, techniques, mechanisms, theories, principles, frameworks, problems |
 | source | wiki/sources/ | Source summaries for imported files, articles, PDFs, images, notes |
+| paper | wiki/papers/ | Academic papers with OmegaWiki-style problem/method/results/limitations/take sections |
+| method | wiki/methods/ | Reusable, named, citable techniques extracted from papers or technical sources |
 | query | wiki/queries/ | Open questions under active investigation |
 | comparison | wiki/comparisons/ | Side-by-side analysis of related pages |
 | synthesis | wiki/synthesis/ | Cross-cutting summaries and conclusions |

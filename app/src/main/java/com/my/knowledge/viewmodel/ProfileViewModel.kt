@@ -3,6 +3,7 @@ package com.my.knowledge.viewmodel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.file.LocalFileStore
+import com.my.knowledge.domain.model.isKnowledgeConceptType
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.domain.repository.ProfileStats
 import kotlinx.coroutines.flow.combine
@@ -60,8 +61,8 @@ class ProfileViewModel(
                     knowledgeBaseId = base.id,
                     knowledgeBaseName = base.name,
                     itemCount = base.itemCount,
-                    entityCount = kbEntities.count { it.type != "concept" },
-                    conceptCount = kbEntities.count { it.type == "concept" },
+                    entityCount = kbEntities.count { !isKnowledgeConceptType(it.type) },
+                    conceptCount = kbEntities.count { isKnowledgeConceptType(it.type) },
                     relationCount = relationsByKb[base.id].orEmpty().size,
                     communityCount = communitiesByKb[base.id].orEmpty().size,
                     topTerms = kbEntities.sortedByDescending { it.weight }.take(5).map { it.name }

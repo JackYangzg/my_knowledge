@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.work.*
 import com.my.knowledge.worker.ArchiveRecommendWorker
 import com.my.knowledge.worker.IngestWorker
+import com.my.knowledge.worker.IngestRuntime
 import com.my.knowledge.worker.LlmInspirationThreadWorker
 import com.my.knowledge.worker.SummaryWorker
 import com.my.knowledge.worker.TagWorker
@@ -129,6 +130,8 @@ class ProcessingTaskScheduler(
     }
 
     fun scheduleIngestQueue() {
+        IngestRuntime.start(appContext)
+
         val request = OneTimeWorkRequestBuilder<IngestWorker>()
             .setConstraints(
                 Constraints.Builder()
@@ -146,6 +149,7 @@ class ProcessingTaskScheduler(
 
     suspend fun cancelIngestQueue() {
         withContext(Dispatchers.IO) {
+            IngestRuntime.cancel()
             WorkManager.getInstance(appContext).cancelUniqueWork("ingest_queue").result.get()
         }
     }

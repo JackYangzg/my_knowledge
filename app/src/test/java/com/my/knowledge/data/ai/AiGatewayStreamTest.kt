@@ -26,7 +26,7 @@ import java.net.HttpURLConnection
  *
  * Background: pre-P0-2, the orchestrator's `analysisTask` called
  * `ai.chatJson` which uses `HttpURLConnection.readText()` to slurp
- * the full response. That blocked for up to 180s with no token
+ * the full response. That blocked until readTimeout with no token
  * feedback, and `cancel()` only kicked in at the readTimeout
  * boundary. P0-2 introduced `ai.streamJson` (SSE-based, accumulates
  * in-memory) and refactored `completeStream` to use cooperative
@@ -45,7 +45,7 @@ import java.net.HttpURLConnection
  *   3. **Cooperative cancellation** — when a parent Job is
  *      cancelled, the in-flight `streamJson` call throws
  *      [CancellationException] within a few hundred ms (NOT
- *      180s). The contract is "断流立即抛 CancellationException".
+ *      read timeout). The contract is "断流立即抛 CancellationException".
  *   4. **Stream error propagation** — a mid-stream disconnect
  *      (SocketPolicy.DISCONNECT_AFTER_REQUEST) propagates as an
  *      exception, never as a silent empty string. The spec
@@ -250,6 +250,30 @@ class AiGatewayStreamTest {
     }
 
     @Test
+    fun `chatJson retries socket abort and returns second response`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setSocketPolicy(SocketPolicy.DISCONNECT_AT_START),
+        )
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(HttpURLConnection.HTTP_OK)
+                .setHeader("Content-Type", "application/json")
+                .setBody(jsonResponseBody("""{"ok":true}""")),
+        )
+        val gateway = newGateway()
+
+        val result = gateway.chatJson(
+            systemPrompt = "system",
+            userPrompt = "user",
+            schemaHint = "schema",
+        )
+
+        assertEquals("""{"ok":true}""", result)
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
     fun `observed complete honors single attempt for ingest callers`() = runTest {
         server.enqueue(
             MockResponse()
@@ -271,9 +295,35 @@ class AiGatewayStreamTest {
         assertEquals(1, server.requestCount)
     }
 
+    @Test
+    fun `observed streaming complete retries HTTP 500 and returns second stream`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(HttpURLConnection.HTTP_INTERNAL_ERROR)
+                .setBody("""{"error":{"message":"temporary upstream failure"}}"""),
+        )
+        enqueueSseResponse(listOf("FILE", " blocks"))
+        val gateway = newGateway()
+        var retryEvents = 0
+        val chunks = mutableListOf<String>()
+
+        val result = gateway.completeStreamObserved(
+            systemPrompt = "system",
+            userMessage = "user",
+            maxAttempts = 2,
+            onRetry = { retryEvents += 1 },
+            onChunk = { chunks += it },
+        )
+
+        assertEquals("FILE blocks", result)
+        assertEquals(1, retryEvents)
+        assertEquals(listOf("FILE", " blocks"), chunks)
+        assertEquals(2, server.requestCount)
+    }
+
     // -----------------------------------------------------------------
     // 4. Cooperative cancellation — parent cancel() must propagate
-    //    into the SSE read loop within a few hundred ms, not 180s.
+    //    into the SSE read loop within a few hundred ms, not the read timeout.
     // -----------------------------------------------------------------
     // @Ignore: this test is structurally correct but currently
     // hangs the JVM under `runTest`'s virtual time clock because
@@ -290,7 +340,7 @@ class AiGatewayStreamTest {
     @Test
     @org.junit.Ignore("Blocked on virtual-time vs real-IO conflict; see comment above.")
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    fun `streamJson propagates cooperative cancellation within 1s, not 180s`() = runTest {
+    fun `streamJson propagates cooperative cancellation within 1s, not read timeout`() = runTest {
         // A response that holds the socket open with no body
         // and never closes — the gateway's readLine() will block
         // on input until the parent Job cancels it. KEEP_OPEN
@@ -323,7 +373,7 @@ class AiGatewayStreamTest {
         // Cancel and assert the call returns promptly. The
         // HttpURLConnection's read is interruptible via
         // disconnect() (the gateway's finally block), so this
-        // should land in <1s even with the 180s readTimeout.
+        // should land in <1s even with a long readTimeout.
         val cancelStart = System.currentTimeMillis()
         parentJob.cancel()
         val joinResult = withTimeoutOrNull(2_000) { parentJob.join() }

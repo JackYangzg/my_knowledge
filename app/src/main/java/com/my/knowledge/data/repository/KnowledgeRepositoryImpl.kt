@@ -42,6 +42,7 @@ import com.my.knowledge.data.db.entity.AiConversationEntity
 import com.my.knowledge.data.ai.AiPromptTemplates
 import com.my.knowledge.data.ingest.WikiPageCompiler
 import com.my.knowledge.data.ingest.WikiPageDraft
+import com.my.knowledge.domain.model.isKnowledgeConceptType
 import com.my.knowledge.domain.repository.BackfillResult
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.domain.repository.ProfileStats
@@ -1196,9 +1197,10 @@ class KnowledgeRepositoryImpl(
         combine(
             kbDao.observeActiveBaseCount(),
             itemDao.observeActiveItemCount(),
-            graphDao.observeEntityCount(),
-            graphDao.observeConceptCount()
-        ) { baseCount, itemCount, entityCount, conceptCount ->
+            graphDao.observeAllEntities()
+        ) { baseCount, itemCount, entities ->
+            val conceptCount = entities.count { isKnowledgeConceptType(it.type) }
+            val entityCount = entities.size - conceptCount
             ProfileStats(baseCount, itemCount, entityCount, conceptCount)
         }
 
