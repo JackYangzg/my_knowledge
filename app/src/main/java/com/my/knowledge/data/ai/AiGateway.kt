@@ -168,40 +168,25 @@ class AiGateway(
         temperature: Float = 0.7f,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
-        onChunk: (String) -> Unit = {},
-    ): String = withContext(Dispatchers.IO) {
+        @Suppress("UNUSED_PARAMETER") onChunk: (String) -> Unit = {},
+    ): String {
         val config = configProvider()
         if (config.apiKey.isBlank()) {
-            return@withContext "[配置缺失] 请在设置中配置 API Key。"
+            return "[配置缺失] 请在设置中配置 API Key。"
         }
-
-        try {
-            retryRemoteCall(maxAttempts, onRetry) {
-                val accumulator = StringBuilder()
-                streamSseOnce(
-                    config = config,
-                    systemPrompt = systemPrompt,
-                    userMessage = userMessage,
-                    temperature = temperature,
-                    onDelta = { delta ->
-                        accumulator.append(delta)
-                        onChunk(delta)
-                    },
-                )
-                val raw = accumulator.toString()
-                if (raw.isBlank()) {
-                    throw RetryableRemoteCallException("远端流式响应为空")
-                }
-                val cleaned = with(AiTextCleaner) { raw.cleanModelOutput() }
-                if (cleaned.isBlank() && raw.isNotBlank()) {
-                    "[AI 调用失败] 模型仅返回了思考过程，未给出实际内容。"
-                } else {
-                    cleaned
-                }
-            }
-        } catch (e: Throwable) {
-            return@withContext e.toAiErrorMessage(config.baseUrl)
-        }
+        // ARCH-8: non-streaming path. `onChunk` is kept in the
+        // signature for source compatibility but is no longer
+        // invoked — the full response is delivered as the return
+        // value. Callers that relied on per-token progress should
+        // migrate to a different code path.
+        return callApi(
+            config = config,
+            systemPrompt = systemPrompt,
+            userMessage = userMessage,
+            temperature = temperature,
+            maxAttempts = maxAttempts,
+            onRetry = onRetry,
+        )
     }
 
     override fun completeStream(systemPrompt: String, userMessage: String): Flow<String> = flow {
@@ -211,26 +196,18 @@ class AiGateway(
             return@flow
         }
 
-        try {
-            streamSseOnce(
-                config = config,
-                systemPrompt = systemPrompt,
-                userMessage = userMessage,
-                temperature = 0.7f,
-                onDelta = { delta -> this@flow.emit(delta) },
-            )
-        } catch (e: CancellationException) {
-            // Cooperative cancellation: re-throw so the parent scope
-            // sees the cancel cause. Swallowing this would leak
-            // the connection until readTimeout.
-            throw e
-        } catch (e: java.net.ConnectException) {
-            emit("[连接失败] 无法连接到 ${config.baseUrl}，请检查网络和 Base URL 配置。")
-        } catch (e: java.net.SocketTimeoutException) {
-            emit("[超时] AI 服务 5 分钟内未返回结果，请稍后重试或减小输入长度。")
-        } catch (e: Exception) {
-            emit("[AI 调用异常] ${e.localizedMessage ?: "未知错误"}")
-        }
+        // ARCH-8: non-streaming path. The Flow<String> contract is
+        // preserved by emitting the full response as a single value.
+        // Callers that collected the final value are unaffected;
+        // callers that expected per-token emissions (e.g. throttled
+        // progress writers) need to migrate off this entry point.
+        val result = callApi(
+            config = config,
+            systemPrompt = systemPrompt,
+            userMessage = userMessage,
+            temperature = 0.7f,
+        )
+        emit(result)
     }.flowOn(Dispatchers.IO)
 
     override suspend fun chatJson(
@@ -274,39 +251,26 @@ class AiGateway(
         userPrompt: String,
         schemaHint: String,
         temperature: Float,
-        onChunk: (String) -> Unit
-    ): String = withContext(Dispatchers.IO) {
+        @Suppress("UNUSED_PARAMETER") onChunk: (String) -> Unit
+    ): String {
         val config = configProvider()
-        if (config.apiKey.isBlank()) return@withContext ""
+        if (config.apiKey.isBlank()) return ""
         // Same suffix the non-streaming `chatJson` appends — keeping
         // the two paths' prompt shape identical is what makes
         // "streamJson is equivalent to chatJson" a true statement.
         val effectiveSystem = "$systemPrompt\n\n只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n$schemaHint"
-        val accumulator = StringBuilder()
-        // JSON-mode streaming MUST buffer the full body before
-        // parsing — a partial JSON document is unrecoverable, and
-        // calling `cleanModelOutput` on a half-formed string would
-        // leave dangling `<think>` half-tags. So we accumulate
-        // everything and only apply text cleaning at the end.
-        streamSseOnce(
+        // ARCH-8: non-streaming path. JSON mode never exposed per-chunk
+        // progress (the whole body had to be buffered before parsing
+        // because a partial JSON document is unrecoverable), so
+        // dropping the SSE loop is a pure latency win — one HTTP
+        // round-trip instead of many tiny SSE deltas. `onChunk` is
+        // kept in the signature for source compatibility.
+        return callApi(
             config = config,
             systemPrompt = effectiveSystem,
             userMessage = userPrompt,
             temperature = temperature,
-            onDelta = { delta ->
-                accumulator.append(delta)
-                onChunk(delta)
-            },
         )
-        val raw = accumulator.toString()
-        val cleaned = with(AiTextCleaner) { raw.cleanModelOutput() }
-        // Mirror chatJson's "thinking-only" guard so the orchestrator
-        // sees the same failure shape (an error string starting with
-        // `[`) regardless of which entry point it called.
-        if (cleaned.isBlank() && raw.isNotBlank()) {
-            return@withContext "[AI 调用失败] 模型仅返回了思考过程，未给出实际内容。"
-        }
-        cleaned
     }
 
     suspend fun streamJsonObserved(
@@ -316,38 +280,22 @@ class AiGateway(
         temperature: Float = 0.2f,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
-        onChunk: (String) -> Unit = {},
-    ): String = withContext(Dispatchers.IO) {
+        @Suppress("UNUSED_PARAMETER") onChunk: (String) -> Unit = {},
+    ): String {
         val config = configProvider()
-        if (config.apiKey.isBlank()) return@withContext ""
+        if (config.apiKey.isBlank()) return ""
         val effectiveSystem = "$systemPrompt\n\n只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n$schemaHint"
-        try {
-            retryRemoteCall(maxAttempts, onRetry) {
-                val accumulator = StringBuilder()
-                streamSseOnce(
-                    config = config,
-                    systemPrompt = effectiveSystem,
-                    userMessage = userPrompt,
-                    temperature = temperature,
-                    onDelta = { delta ->
-                        accumulator.append(delta)
-                        onChunk(delta)
-                    },
-                )
-                val raw = accumulator.toString()
-                if (raw.isBlank()) {
-                    throw RetryableRemoteCallException("远端流式 JSON 响应为空")
-                }
-                val cleaned = with(AiTextCleaner) { raw.cleanModelOutput() }
-                if (cleaned.isBlank() && raw.isNotBlank()) {
-                    "[AI 调用失败] 模型仅返回了思考过程，未给出实际内容。"
-                } else {
-                    cleaned
-                }
-            }
-        } catch (e: Throwable) {
-            return@withContext e.toAiErrorMessage(config.baseUrl)
-        }
+        // ARCH-8: non-streaming path. Same rationale as streamJson —
+        // JSON mode always needed the full body before parsing, so
+        // dropping the SSE loop is a pure latency win.
+        return callApi(
+            config = config,
+            systemPrompt = effectiveSystem,
+            userMessage = userPrompt,
+            temperature = temperature,
+            maxAttempts = maxAttempts,
+            onRetry = onRetry,
+        )
     }
 
     suspend fun analyze(prompt: String): String {
