@@ -245,17 +245,32 @@ class KnowledgeRepositoryImpl(
         val now = System.currentTimeMillis()
         if (softDelete) {
             itemDao.softDelete(id, now)
-            item.sourceId?.let { sourceId ->
+            val touchedIds = item.sourceId?.let { sourceId ->
                 cleanupIntermediateDataForSource(sourceId, now, softDeleteGeneratedItems = true)
-            }
+            } ?: emptySet()
+            // PERF-5 + CASCADE-1: scoped rebuild fed with both the
+            // original item and the wiki_* pages that just got
+            // soft-deleted. The graph rows' `sourceItemIdsJson`
+            // references the wiki pages (not the original note), so
+            // without the wiki page IDs in the input set
+            // `rebuildGraphForBaseAffected` cannot find them and
+            // would leak entity/relation/community rows that
+            // IntermediateDataViewModel still observes.
+            itemDao.updateItemCount(item.knowledgeBaseId)
+            refreshOverviewForBase(item.knowledgeBaseId)
+            rebuildGraphForBaseAffected(item.knowledgeBaseId, touchedIds + id)
         } else {
             permanentDeleteItem(id)
+            itemDao.updateItemCount(item.knowledgeBaseId)
+            refreshOverviewForBase(item.knowledgeBaseId)
+            // PERF-5: scoped rebuild — the original item is now
+            // hard-deleted, so affectedItems is empty; the rebuild
+            // only runs the graph cleanup pass against the original
+            // item's id. Wiki pages survive the hard delete by
+            // design, so the graph rows that reference them stay
+            // valid and don't need clearing.
+            rebuildGraphForBaseAffected(item.knowledgeBaseId, setOf(id))
         }
-        itemDao.updateItemCount(item.knowledgeBaseId)
-        refreshOverviewForBase(item.knowledgeBaseId)
-        // PERF-5: scoped rebuild — one item changed, no need to
-        // re-derive every page in the KB.
-        rebuildGraphForBaseAffected(item.knowledgeBaseId, setOf(id))
     }
 
     override suspend fun permanentDeleteItem(id: String) {
@@ -287,7 +302,7 @@ class KnowledgeRepositoryImpl(
         sourceId: String,
         now: Long,
         softDeleteGeneratedItems: Boolean
-    ) {
+    ): Set<String> {
         taskDao.deleteBySource(sourceId)
         taskLogDao.deleteByTarget("source_document", sourceId)
         reviewItemDao.skipBySource(sourceId, now)
@@ -296,6 +311,7 @@ class KnowledgeRepositoryImpl(
         analysisResultDao.deleteBySource(sourceId)
 
         val generatedItems = itemDao.getAllBySourceId(sourceId)
+        val touchedItemIds = generatedItems.map { it.id }.toMutableSet()
         generatedItems.forEach { generated ->
             recommendationDao.deleteByItemId(generated.id)
             taskDao.deleteByTarget("knowledge_item", generated.id)
@@ -313,6 +329,7 @@ class KnowledgeRepositoryImpl(
             }
         }
         sourceDocumentDao.markDeleted(sourceId, now)
+        return touchedItemIds
     }
 
     override suspend fun restoreItem(id: String) {
@@ -345,11 +362,68 @@ class KnowledgeRepositoryImpl(
     }
 
     override suspend fun permanentDeleteItems(ids: List<String>) {
+        if (ids.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val sourceIdsProcessed = mutableSetOf<String>()
+        // KB → set of itemIds we are about to hard-delete in that KB.
+        // The scoped graph rebuild needs both the original item ids
+        // and the wiki_* page ids that share each item's sourceId,
+        // because the graph rows' `sourceItemIdsJson` references the
+        // wiki pages, not the user-visible note. Without the wiki
+        // page ids the rebuild's affected-detection phase finds
+        // nothing and leaks the dangling graph rows.
+        val kbAffectedIds = mutableMapOf<String, MutableSet<String>>()
+        val itemsToHardDelete = mutableListOf<String>()
+
         ids.forEach { id ->
+            val item = itemDao.getByIdIncludeDeleted(id)
             taskDao.deleteByTarget("knowledge_item", id)
             recommendationDao.deleteByItemId(id)
+            fragmentDao.deleteByItemId(id)
+            taskLogDao.deleteByTarget("knowledge_item", id)
+            item?.sourceId?.let { sourceId ->
+                if (sourceIdsProcessed.add(sourceId)) {
+                    val touched = cleanupIntermediateDataForSource(
+                        sourceId = sourceId,
+                        now = now,
+                        softDeleteGeneratedItems = false
+                    )
+                    if (item.knowledgeBaseId.isNotBlank()) {
+                        kbAffectedIds.getOrPut(item.knowledgeBaseId) { mutableSetOf() }
+                            .addAll(touched)
+                    }
+                }
+            }
+            // AI conversation / message / ask_citation cleanup is
+            // per-knowledge-item; the singular `permanentDeleteItem`
+            // already does this and we mirror that here so the
+            // batch path doesn't leak Ask transcripts the way the
+            // old stub did.
+            val conversationIds = conversationDao.getIdsByScope("knowledge_item", id)
+            conversationIds.forEach { convId ->
+                messageDao.deleteByConversation(convId)
+                askCitationDao.deleteByConversation(convId)
+            }
+            conversationDao.deleteByScope("knowledge_item", id)
+
+            if (item != null && item.knowledgeBaseId.isNotBlank()) {
+                kbAffectedIds.getOrPut(item.knowledgeBaseId) { mutableSetOf() }.add(id)
+            }
+            itemsToHardDelete.add(id)
         }
-        itemDao.hardDeleteItems(ids)
+        itemDao.hardDeleteItems(itemsToHardDelete)
+
+        // PERF-5 + CASCADE-1: scoped rebuild for every KB we touched
+        // so the affected graph rows (entity / relation / community)
+        // get cleared. With the fix to `rebuildGraphForBaseAffected`,
+        // the rebuild handles the "no surviving items" case by
+        // running the affected-detection pass against the input ids
+        // and returning before the re-derivation step.
+        kbAffectedIds.forEach { (kbId, kbItemIds) ->
+            itemDao.updateItemCount(kbId)
+            refreshOverviewForBase(kbId)
+            rebuildGraphForBaseAffected(kbId, kbItemIds)
+        }
     }
 
     override suspend fun moveItemToBase(itemId: String, targetKbId: String) {
@@ -793,9 +867,18 @@ class KnowledgeRepositoryImpl(
         // already been reassigned to the target KB by the time
         // we run, but the source KB's graph rows still point at
         // the old itemId and must be re-derived.
+        //
+        // Do NOT early-return when the items are all soft-deleted.
+        // The soft-delete path is the common caller (the user just
+        // tapped Delete on a knowledge entry), and the graph rows
+        // that reference the now-tombstoned items still need to be
+        // cleared before IntermediateDataViewModel observes them as
+        // "active". The re-derivation phase below does need at
+        // least one surviving item to feed into the rebuild, so we
+        // keep the affectedItems list as the re-derivation's input
+        // and gate on it AFTER the graph cleanup.
         val affectedItems = itemDao.getAllByIds(itemIdSet.toList())
             .filter { it.deletedAt == null }
-        if (affectedItems.isEmpty()) return
 
         val allEntities = graphDao.getAllEntitiesByKb(kbId)
         val allRelations = graphDao.getAllRelationsByKb(kbId)
@@ -829,13 +912,18 @@ class KnowledgeRepositoryImpl(
             .map { it.id }
             .toMutableSet()
 
-        if (affectedEntityIds.isEmpty() && affectedRelationIds.isEmpty() && affectedCommunityIds.isEmpty()) {
-            // Nothing to do — the affected items have no graph footprint.
-            return
-        }
         if (affectedEntityIds.isNotEmpty()) graphDao.deleteEntities(affectedEntityIds.toList(), now)
         if (affectedRelationIds.isNotEmpty()) graphDao.deleteRelations(affectedRelationIds.toList(), now)
         if (affectedCommunityIds.isNotEmpty()) graphDao.deleteCommunities(affectedCommunityIds.toList(), now)
+
+        // If we cleared some graph rows AND there are no surviving
+        // items in this batch, the soft-delete path has finished
+        // its job: the items that contributed those graph rows are
+        // gone, and we have nothing alive to feed into a
+        // re-derivation. The move path always passes an alive item
+        // (it has just been reassigned to a different KB), so this
+        // branch only fires for the soft-delete path.
+        if (affectedItems.isEmpty()) return
 
         val survivingEntities = allEntities.filterNot { it.id in affectedEntityIds }
         val survivingRelations = allRelations.filterNot { it.id in affectedRelationIds }
