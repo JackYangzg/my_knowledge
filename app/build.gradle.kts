@@ -41,6 +41,10 @@ android {
     }
     buildFeatures {
         compose = true
+        // P1-N2: LlmHttpClient gates the OkHttp logging interceptor
+        // on BuildConfig.DEBUG. AGP 9.x disables BuildConfig
+        // generation by default, so opt back in.
+        buildConfig = true
     }
 }
 
@@ -62,6 +66,10 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.okhttp)
+    // P1-N2: HttpLoggingInterceptor is debug-only — release builds
+    // get a smaller APK and no risk of leaking the Bearer token /
+    // response body into logcat.
+    debugImplementation(libs.okhttp.logging)
     implementation(libs.jsoup)
     implementation(libs.pdfbox.android)
     implementation(libs.mlkit.text.recognition)

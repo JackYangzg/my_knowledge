@@ -22,6 +22,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -463,23 +466,18 @@ class AiGateway(
         }
 
         val url = URL("${config.baseUrl.trimEnd('/')}/chat/completions")
-        val connection = url.openConnection() as HttpURLConnection
-        try {
-            connection.requestMethod = "POST"
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("Authorization", "Bearer ${config.apiKey}")
-            connection.doOutput = true
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = AI_READ_TIMEOUT_MS
-
-            val bodyBytes = requestBody.toString().toByteArray(Charsets.UTF_8)
-            connection.outputStream.use { it.write(bodyBytes) }
-
-            val responseCode = connection.responseCode
-            val responseText = if (responseCode in 200..299) {
-                connection.inputStream.bufferedReader().readText()
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer ${config.apiKey}")
+            .build()
+        LlmHttpClient.instance.newCall(request).execute().use { response ->
+            val responseCode = response.code
+            val responseText = if (response.isSuccessful) {
+                response.body?.string() ?: ""
             } else {
-                val errorText = connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+                val errorText = response.body?.string() ?: "Unknown error"
                 val classified = classifyHttpError(responseCode, errorText)
                 if (responseCode.isRetryableHttpStatus()) {
                     throw RetryableRemoteCallException(classified)
@@ -494,8 +492,6 @@ class AiGateway(
                 return "[AI 调用失败] 模型仅返回了思考过程，未给出实际内容。"
             }
             return cleaned
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -552,78 +548,70 @@ class AiGateway(
         }
 
         val url = URL("${config.baseUrl.trimEnd('/')}/chat/completions")
-        val connection = url.openConnection() as HttpURLConnection
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody.toString().toRequestBody(JSON_MEDIA_TYPE))
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer ${config.apiKey}")
+            .header("Accept", "text/event-stream")
+            .build()
         try {
-            connection.requestMethod = "POST"
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("Authorization", "Bearer ${config.apiKey}")
-            connection.setRequestProperty("Accept", "text/event-stream")
-            connection.doOutput = true
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = AI_READ_TIMEOUT_MS
-            connection.outputStream.use { it.write(requestBody.toString().toByteArray(Charsets.UTF_8)) }
-
-            val responseCode = connection.responseCode
-            if (responseCode !in 200..299) {
-                val errorText = connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
-                val classified = classifyHttpError(responseCode, errorText)
-                if (responseCode.isRetryableHttpStatus()) {
-                    throw RetryableRemoteCallException(classified)
+            LlmHttpClient.instance.newCall(request).execute().use { response ->
+                val responseCode = response.code
+                if (!response.isSuccessful) {
+                    val errorText = response.body?.string() ?: "Unknown error"
+                    val classified = classifyHttpError(responseCode, errorText)
+                    if (responseCode.isRetryableHttpStatus()) {
+                        throw RetryableRemoteCallException(classified)
+                    }
+                    // Non-retryable: surface the classified error to the
+                    // caller. The orchestrator's exception path will
+                    // mark the task failed (or, if it's a "shouldFail
+                    // immediately" case, bubble it to the user as a
+                    // review item).
+                    throw IllegalStateException(classified)
                 }
-                // Non-retryable: surface the classified error to the
-                // caller. The orchestrator's exception path will
-                // mark the task failed (or, if it's a "shouldFail
-                // immediately" case, bubble it to the user as a
-                // review item).
-                throw IllegalStateException(classified)
-            }
 
-            // Manual read loop instead of `useLines { forEach }`:
-            // Sequence.forEach doesn't check coroutine cancellation,
-            // which would mean a cancelled read spins until the
-            // timeout. ensureActive() is the cooperative-cancel hook
-            // that lets cancel() tear the connection down within the
-            // next read latency.
-            val reader = connection.inputStream.bufferedReader()
-            reader.use { r ->
-                while (true) {
-                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                    val line = r.readLine() ?: break
-                    val payload = line.trim().removePrefix("data:").trim()
-                    if (payload.isBlank()) continue
-                    if (payload == "[DONE]") break
-                    val delta = parseStreamDelta(payload)
-                    if (!delta.isNullOrBlank()) onDelta(delta)
+                // Manual read loop instead of `useLines { forEach }`:
+                // Sequence.forEach doesn't check coroutine cancellation,
+                // which would mean a cancelled read spins until the
+                // timeout. ensureActive() is the cooperative-cancel hook
+                // that lets cancel() tear the connection down within the
+                // next read latency.
+                val reader = response.body?.byteStream()?.bufferedReader()
+                reader?.use { r ->
+                    while (true) {
+                        kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                        val line = r.readLine() ?: break
+                        val payload = line.trim().removePrefix("data:").trim()
+                        if (payload.isBlank()) continue
+                        if (payload == "[DONE]") break
+                        val delta = parseStreamDelta(payload)
+                        if (!delta.isNullOrBlank()) onDelta(delta)
+                    }
                 }
             }
         } catch (e: CancellationException) {
             // Don't wrap or transform — let the coroutine machinery
             // see the original cause for structured concurrency.
             throw e
-        } finally {
-            connection.disconnect()
         }
     }
 
     private fun analyzeImageOnce(baseUrl: String, apiKey: String, requestBody: String): String {
         val url = URL("${baseUrl.trimEnd('/')}/chat/completions")
-        val connection = url.openConnection() as HttpURLConnection
-        try {
-            connection.requestMethod = "POST"
-            connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("Authorization", "Bearer $apiKey")
-            connection.doOutput = true
-            connection.connectTimeout = CONNECT_TIMEOUT_MS
-            connection.readTimeout = AI_READ_TIMEOUT_MS
-            connection.outputStream.use {
-                it.write(requestBody.toByteArray(Charsets.UTF_8))
-            }
-
-            val responseCode = connection.responseCode
-            val responseText = if (responseCode in 200..299) {
-                connection.inputStream.bufferedReader().readText()
+        val request = Request.Builder()
+            .url(url)
+            .post(requestBody.toRequestBody(JSON_MEDIA_TYPE))
+            .header("Content-Type", "application/json")
+            .header("Authorization", "Bearer $apiKey")
+            .build()
+        LlmHttpClient.instance.newCall(request).execute().use { response ->
+            val responseCode = response.code
+            val responseText = if (response.isSuccessful) {
+                response.body?.string() ?: ""
             } else {
-                val errorText = connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+                val errorText = response.body?.string() ?: "Unknown error"
                 val classified = classifyHttpError(responseCode, errorText)
                 if (responseCode.isRetryableHttpStatus()) {
                     throw RetryableRemoteCallException(classified)
@@ -635,8 +623,6 @@ class AiGateway(
                 throw IllegalStateException(parsed.ifBlank { "图片分析接口返回空结果" })
             }
             return parsed
-        } finally {
-            connection.disconnect()
         }
     }
 
@@ -688,6 +674,11 @@ class AiGateway(
         const val AI_READ_TIMEOUT_MS = 300_000
         const val MAX_REMOTE_ATTEMPTS = 4
         const val MAX_REMOTE_RETRY_DELAY_MS = 30_000L
+        // P1-N2: OkHttp needs an explicit MediaType on the request
+        // body — `application/json; charset=utf-8` matches what the
+        // legacy HttpURLConnection path sent, so server-side
+        // parsers see the same Content-Type header.
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         // PERF-11: hard cap on concurrent LLM HTTP calls. The
         // orchestrator runs 4 ingest lanes; without throttling
         // every lane opens its own SSE/POST connection, which
