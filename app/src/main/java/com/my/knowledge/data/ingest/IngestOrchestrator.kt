@@ -2034,19 +2034,24 @@ class IngestOrchestrator(
 
     /**
      * Deterministic merge for wiki pages. Listing pages use section-aware
-     * union; other pages use [WikiPageCompiler.merge]. AI merge is avoided
-     * on the hot path to keep the KB write lock short.
+     * union; entity/concept pages use section-aware union with
+     * free-text-vs-bullet discrimination; everything else falls through
+     * to [WikiPageCompiler.merge]. AI merge is avoided on the hot path
+     * to keep the KB write lock short.
      */
     private fun mergeWikiPageMarkdown(existingMarkdown: String, draft: WikiPageDraft): String {
-        val isListingPage = draft.sourceType == "wiki_index" || draft.sourceType == "wiki_overview"
-        return if (isListingPage) {
-            mergeListingPage(
+        return when (draft.sourceType) {
+            "wiki_index", "wiki_overview" -> mergeListingPage(
                 existing = existingMarkdown,
                 incoming = draft.markdown,
                 pageTitle = draft.title,
             )
-        } else {
-            wikiCompiler.merge(existingMarkdown, draft.markdown, draft.title)
+            "wiki_entity", "wiki_concept" -> mergeEntityPageMarkdown(
+                existing = existingMarkdown,
+                incoming = draft.markdown,
+                pageTitle = draft.title,
+            )
+            else -> wikiCompiler.merge(existingMarkdown, draft.markdown, draft.title)
         }
     }
 
@@ -2111,6 +2116,114 @@ class IngestOrchestrator(
             rebuiltBody.toString().trimEnd('\n') + "\n"
         }
     }
+
+    /**
+     * Section-aware merge for `wiki_entity` and `wiki_concept` pages.
+     *
+     * MERGE-1 / PR-M1: the previous code path (`wikiCompiler.merge`)
+     * did a full-body replace, which is the root cause of "实体和概念
+     * 消失": re-ingesting a source that mentions X with a slightly
+     * different `## 概述` for X overwrote the page and dropped the
+     * `## 关联概念` / `## 来源` / `## 出现位置` lines that older
+     * sources had contributed.
+     *
+     * Per-section behaviour:
+     * - **bullet sections** (`关联概念` / `来源` / `出现位置` /
+     *   `关联实体` / `关联文档`): union via [normalizeBulletKey]
+     *   dedup, identical to [mergeListingPage]
+     * - **free-text sections** (`概述` / `别名` / `类型`): preserve
+     *   the historical text and append the new text underneath
+     *   (separated by a blank line) when it actually differs. This
+     *   is the conservative "don't drop history" policy the design
+     *   doc recommends for sections where "is the new version a
+     *   superset?" is hard to judge from markdown alone
+     *
+     * `SECTION_ALIASES` collapses the most common source-side
+     * variations (e.g. "相关概念" → "关联概念") so the two LLM
+     * sources don't accidentally create two separate sections.
+     */
+    private fun mergeEntityPageMarkdown(existing: String, incoming: String, pageTitle: String): String {
+        if (existing.isBlank()) return incoming
+        if (incoming.isBlank()) return existing
+        val merged = wikiCompiler.merge(existing, incoming, pageTitle)
+        val (exFm, exBody) = splitFrontMatter(existing)
+        val (_, inBody) = splitFrontMatter(incoming)
+        val (mFm, _) = splitFrontMatter(merged)
+        val exSections = parseSections(exBody)
+        val inSections = parseSections(inBody)
+        // Normalise aliased section titles so both LLM outputs map
+        // onto the same canonical bucket.
+        val exCanonical = exSections.mapKeys { (k, _) -> canonicalSectionTitle(k) }
+        val inCanonical = inSections.mapKeys { (k, _) -> canonicalSectionTitle(k) }
+        val sectionOrder = LinkedHashMap<String, Unit>()
+        exCanonical.keys.forEach { sectionOrder[it] = Unit }
+        inCanonical.keys.forEach { sectionOrder[it] = Unit }
+        val rebuiltBody = StringBuilder()
+        for (title in sectionOrder.keys) {
+            val exBullets = exCanonical[title].orEmpty()
+            val inBullets = inCanonical[title].orEmpty()
+            if (isFreeTextSection(title)) {
+                val exText = exBullets.joinToString("\n").trim()
+                val inText = inBullets.joinToString("\n").trim()
+                if (exText.isBlank() && inText.isBlank()) continue
+                rebuiltBody.append("## ").append(title).append('\n')
+                if (exText.isNotBlank()) {
+                    rebuiltBody.append(exText).append('\n')
+                }
+                if (inText.isNotBlank() && inText != exText) {
+                    if (exText.isNotBlank()) rebuiltBody.append('\n')
+                    rebuiltBody.append(inText).append('\n')
+                }
+                rebuiltBody.append('\n')
+            } else {
+                val combined = LinkedHashMap<String, String>()
+                for (bullet in exBullets) combined[normalizeBulletKey(bullet)] = bullet
+                for (bullet in inBullets) combined.putIfAbsent(normalizeBulletKey(bullet), bullet)
+                val bullets = combined.values.filter { it.isNotBlank() }
+                if (bullets.isNotEmpty()) {
+                    rebuiltBody.append("## ").append(title).append('\n')
+                    bullets.forEach { bullet -> rebuiltBody.append(bullet).append('\n') }
+                    rebuiltBody.append('\n')
+                }
+            }
+        }
+        val fm = mFm ?: exFm
+        return if (fm != null) {
+            fm.trimEnd('\n') + "\n\n" + rebuiltBody.toString().trimEnd('\n') + "\n"
+        } else {
+            rebuiltBody.toString().trimEnd('\n') + "\n"
+        }
+    }
+
+    /**
+     * Free-text sections: per-line history is the user-visible
+     * representation, and union would look like garbage. We keep
+     * the old text verbatim and append the new text only when it
+     * actually contributes a different sentence.
+     */
+    private fun isFreeTextSection(title: String): Boolean = title in FREE_TEXT_SECTIONS
+
+    private fun canonicalSectionTitle(title: String): String =
+        SECTION_ALIASES[title.trim()] ?: title.trim()
+
+    private val FREE_TEXT_SECTIONS = setOf(
+        "概述", "描述", "简介", "类型", "别名", "定义",
+        "Description", "Summary", "Type", "Alias", "Definition",
+    )
+
+    private val SECTION_ALIASES = mapOf(
+        "相关概念" to "关联概念",
+        "概念关联" to "关联概念",
+        "相关实体" to "关联实体",
+        "相关文档" to "关联文档",
+        "出现段落" to "出现位置",
+        "来源文档" to "来源",
+        "参考资料" to "来源",
+        "References" to "来源",
+        "Related Concepts" to "关联概念",
+        "Related Entities" to "关联实体",
+        "Occurrences" to "出现位置",
+    )
 
     private data class FrontMatterBody(val frontMatter: String?, val body: String)
 
