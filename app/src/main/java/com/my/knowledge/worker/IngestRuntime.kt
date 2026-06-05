@@ -49,6 +49,12 @@ object IngestRuntime {
     @Volatile
     private var loop: IngestRuntimeLoop? = null
 
+    // Cached app context so [cancel] can tear the FG service down
+    // even when called from a coroutine that no longer has the
+    // original `context` reference.
+    @Volatile
+    private var lastAppContext: Context? = null
+
     /**
      * N3 (RELIAB-1 PR-N3): expose wake/wifi lock acquisition result
      * to the UI layer so the user can see when battery-optimization
@@ -69,8 +75,28 @@ object IngestRuntime {
     )
     val lockStatus: StateFlow<LockStatus> = _lockStatus.asStateFlow()
 
+    /**
+     * RELIAB-1 PR-N1: live pending-count surfaced to the foreground
+     * service so the notification text can update on each item. The
+     * orchestrator (PR-N2) will call [reportPending] after each
+     * `runUntilIdle` decrement; this PR only adds the surface.
+     */
+    private val _pendingCount = MutableStateFlow(0)
+    val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
+
+    fun reportPending(count: Int) {
+        _pendingCount.value = count
+    }
+
     fun start(context: Context) {
         val appContext = context.applicationContext
+        lastAppContext = appContext
+        // RELIAB-1 PR-N1: promote to FG service *before* the
+        // idempotent re-entry check, because even a no-op re-entry
+        // (active loop just polls again) must keep the process
+        // boosted while the screen is off. Re-starting an already
+        // running FG service is a cheap no-op (system dedupes by id).
+        IngestForegroundService.start(appContext, pendingCount = _pendingCount.value)
         val active = loop
         if (active?.isActive() == true) {
             // Idempotent re-entry: the active loop sees the new
@@ -96,6 +122,19 @@ object IngestRuntime {
     fun cancel() {
         loop?.cancel()
         loop = null
+        // RELIAB-1 PR-N1: dismiss the FG notification so the user
+        // sees the import stop, and so the service doesn't leak
+        // past the loop's lifetime. The `stopService` call is safe
+        // even if no service was running (system no-ops).
+        IngestForegroundService.stop(appContextForService())
+    }
+
+    private fun appContextForService(): android.content.Context {
+        // Reuse the most recent appContext captured by `start` /
+        // `runOnce`; if neither ran yet this is a no-op since the
+        // service isn't started.
+        return lastAppContext
+            ?: throw IllegalStateException("IngestRuntime.appContext not initialized; call start() before cancel()")
     }
 
     private fun rerunActiveLoop() {
@@ -105,8 +144,20 @@ object IngestRuntime {
     }
 
     private suspend fun runOnceInLocks(appContext: Context) {
-        withIngestRuntimeLocks(appContext) {
-            runOrchestratorOnce(appContext)
+        try {
+            withIngestRuntimeLocks(appContext) {
+                runOrchestratorOnce(appContext)
+            }
+        } finally {
+            _lockStatus.value = LockStatus(wakeLockHeld = false, wifiLockHeld = false)
+            // RELIAB-1 PR-N1: collapse the FG service once no more
+            // work is queued. We only stop when the loop has been
+            // torn down (i.e. a fresh `start()` is required to
+            // resume), otherwise a still-active loop would lose
+            // its Doze protection mid-flight.
+            if (loop == null) {
+                IngestForegroundService.stop(appContext)
+            }
         }
     }
 
