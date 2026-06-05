@@ -458,4 +458,14 @@
     <string name="auto_d8217a5f">最近导入的内容有哪些值得归档？</string>
     <string name="auto_6dc82a6b">最近内部日志（</string>
     <string name="auto_70f1aab1">最近日志</string>
+
+    <!-- P0-2: externalized hardcoded UI strings (P0-2 partial: RecycleBinScreen + IngestForegroundService) -->
+    <string name="recycle_bin_count">共 %1$d 条已删除</string>
+    <string name="recycle_bin_selected">已选 %1$d 项</string>
+    <string name="recycle_bin_delete_time">删除时间: %1$s</string>
+    <string name="recycle_bin_restore_cd">恢复</string>
+    <string name="recycle_bin_permanent_delete_confirm">确定要永久删除所选的 %1$d 条知识条目吗？此操作不可恢复。</string>
+    <string name="ingest_service_channel_name">知识库导入</string>
+    <string name="ingest_service_title">正在整理知识库</string>
+    <string name="ingest_service_pending">剩余 %1$d 条</string>
 </resources>

@@ -78,7 +78,7 @@ fun RecycleBinScreen(
             ) {
                 Column {
                     Text(stringResource(R.string.auto_64ea8751), fontSize = 26.sp, fontWeight = FontWeight.Bold, color = palette.textPrimary)
-                    Text("共 $totalCount 条已删除", style = MaterialTheme.typography.labelLarge, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
+                    Text(stringResource(R.string.recycle_bin_count, totalCount), style = MaterialTheme.typography.labelLarge, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
                 }
                 if (items.isNotEmpty()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -109,7 +109,7 @@ fun RecycleBinScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("已选 $selectionCount 项", style = MaterialTheme.typography.labelLarge, color = palette.textPrimary)
+                    Text(stringResource(R.string.recycle_bin_selected, selectionCount), style = MaterialTheme.typography.labelLarge, color = palette.textPrimary)
                     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                         Button(
                             onClick = { viewModel.restoreSelected() },
@@ -199,7 +199,7 @@ fun RecycleBinScreen(
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
                                 Text(
-                                    "删除时间: ${formatTimestamp(item.deletedAt ?: 0)}", style = MaterialTheme.typography.labelSmall,
+                                    stringResource(R.string.recycle_bin_delete_time, formatTimestamp(item.deletedAt ?: 0)), style = MaterialTheme.typography.labelSmall,
                                     color = palette.textTertiary,
                                     modifier = Modifier.padding(top = 2.dp)
                                 )
@@ -208,7 +208,7 @@ fun RecycleBinScreen(
                                 onClick = { viewModel.restoreItem(item.id) },
                                 modifier = Modifier.size(32.dp)
                             ) {
-                                Icon(Icons.Default.Restore, contentDescription = "恢复", tint = palette.brand, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Default.Restore, contentDescription = stringResource(R.string.recycle_bin_restore_cd), tint = palette.brand, modifier = Modifier.size(18.dp))
                             }
                         }
                     }
@@ -226,7 +226,7 @@ fun RecycleBinScreen(
             onDismissRequest = { showBatchDeleteDialog = false },
             icon = { Icon(Icons.Default.Delete, contentDescription = null, tint = palette.semanticError) },
             title = { Text(stringResource(R.string.auto_a7fadbe1), fontWeight = FontWeight.Bold) },
-            text = { Text("确定要永久删除所选的 $selectionCount 条知识条目吗？此操作不可恢复。") },
+            text = { Text(stringResource(R.string.recycle_bin_permanent_delete_confirm, selectionCount)) },
             confirmButton = {
                 Button(
                     onClick = {

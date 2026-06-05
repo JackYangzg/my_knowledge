@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
+import com.my.knowledge.R
 
 /**
  * RELIAB-1 PR-N1: foreground service that keeps the ingest process
@@ -53,7 +54,7 @@ class IngestForegroundService : Service() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "知识库导入",
+            getString(R.string.ingest_service_channel_name),
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
             setSound(null, null)
@@ -66,8 +67,8 @@ class IngestForegroundService : Service() {
     private fun buildNotification(pendingCount: Int): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle("正在整理知识库")
-            .setContentText("剩余 $pendingCount 条")
+            .setContentTitle(getString(R.string.ingest_service_title))
+            .setContentText(getString(R.string.ingest_service_pending, pendingCount))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -109,12 +110,13 @@ class IngestForegroundService : Service() {
          * each item completion (wired in PR-N2 / RELIAB-1).
          */
         fun notify(context: Context, pendingCount: Int) {
-            val manager = appContext(context).getSystemService(Context.NOTIFICATION_SERVICE)
+            val ctx = appContext(context)
+            val manager = ctx.getSystemService(Context.NOTIFICATION_SERVICE)
                 as NotificationManager
-            val notification = NotificationCompat.Builder(appContext(context), CHANNEL_ID)
+            val notification = NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
-                .setContentTitle("正在整理知识库")
-                .setContentText("剩余 $pendingCount 条")
+                .setContentTitle(ctx.getString(R.string.ingest_service_title))
+                .setContentText(ctx.getString(R.string.ingest_service_pending, pendingCount))
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
