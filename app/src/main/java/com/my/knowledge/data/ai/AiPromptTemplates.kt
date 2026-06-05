@@ -116,10 +116,7 @@ ${if (schemaHint.isNotBlank()) "The JSON must conform to this schema (field name
     - `related_concepts`: names of concepts from the `concepts` array
     - `related_entities`: names of other entities from the `entities` array
     - `confidence`: 0.0-1.0
-  - **Hard extraction rule (P1, fixed)**: 哪怕来源只有一段话 / 一句话,也要至少提取 1 个
-    实体或概念,优先提取**主语**(谁/什么做了什么)和**核心术语**(被讨论的概念、工具、
-    方法、原则)。宁可提取一个模糊的实体,也不要返回空数组——空数组会直接让下游
-    Wiki 知识图谱缺失节点。用户体感是"导入了一篇文章,中间处理数据全是空"。
+  - HARD: at least 1 entity AND at least 1 concept, even for short sources. Empty arrays break the downstream graph.
   - DO NOT include abstract ideas, methods, or theories as entities.
 - `concepts`: extract 1-8 key ideas, methods, mechanisms, principles, or frameworks. Each entry:
     - `name`: stable descriptive noun phrase in $language
@@ -131,9 +128,6 @@ ${if (schemaHint.isNotBlank()) "The JSON must conform to this schema (field name
     - `related_entities`: names of entities from the `entities` array
     - `related_concepts`: names of other concepts from the `concepts` array
     - `confidence`: 0.0-1.0
-  - **Hard extraction rule (P1, fixed)**: 即使来源没有"系统讲方法论",也要从主题词中
-    提取 1-3 个核心概念(被讨论的主题 / 试图解决的问题 / 用的方法)。空数组会让
-    knowledge graph 缺节点。
   - DO NOT include vague or generic concepts (e.g. "介绍", "背景", "应用", "总结", section titles).
 - `relations`: list of edges between `entities` and/or `concepts` referenced by their `name`. Each entry:
     - `source`: source node name (must match an entity or concept name)
@@ -156,28 +150,6 @@ ${if (schemaHint.isNotBlank()) "The JSON must conform to this schema (field name
 - `confidence`: overall confidence in the analysis (0.0-1.0).
 - `needHumanReview`: true if anything is ambiguous.
 - `reviewReasons`: list of short reasons in $language (empty if needHumanReview is false).
-
-## Why `entityType` / `conceptCategory` are FREE-FORM, not enums
-
-The downstream UI groups entities / concepts by their semantic type
-(e.g. "人物", "组织", "地点", "算法", "理论", "方法") and the graph
-canvas colors them by the same bucket. Forcing a tight enum here would
-make the LLM either invent bogus values that get sanitized away, or
-under-classify (calling every algorithm a "Tool", every paper a
-"Product"). Free-form is the right call: a small normalization table
-on the consumer side maps both English and Chinese semantic types
-to UI buckets, so the user sees meaningful grouping.
-
-## Anti-empty-array guard (P1, fixed)
-
-The previous version of this prompt told the model to return AT LEAST 3
-entries "when the source names concrete people/..." — that conditional
-("when the source names ...") caused small / vague sources to return
-`[]`. The user-facing symptom was a knowledge graph with no nodes at
-all even after a successful import. This version drops the conditional
-and asks for 1-10 entities / 1-8 concepts unconditionally. There is no
-local entity/concept supplement: if you return empty arrays, the app
-will preserve those empty arrays and surface the gap for review.
 
 ## Hard rules
 1. Output ONLY the JSON object. No preamble, no code fence, no trailing prose.

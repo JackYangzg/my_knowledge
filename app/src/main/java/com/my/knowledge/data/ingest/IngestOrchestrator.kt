@@ -1,5 +1,6 @@
 package com.my.knowledge.data.ingest
 
+import android.util.Log
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.entity.AnalysisResultEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
@@ -450,31 +451,74 @@ class IngestOrchestrator(
             }
             return true
         } catch (e: Exception) {
+            // Persisted `errorMessage` only carries `e.message`,
+            // which for SQLite errors omits the stack trace. The
+            // task row alone is not enough to diagnose a "SQL logic
+            // error / OS error -2" — the stack tells us which DAO
+            // call (and therefore which FTS sync trigger) failed.
+            // Logcat is the only place that record survives.
+            Log.e(
+                "IngestOrchestrator",
+                "stage=${task.taskType} taskId=${task.id} sourceId=${task.sourceId}",
+                e
+            )
+            // The original exception may have left the SQLite
+            // connection in an error state — any DB write we now
+            // attempt (task status update, log row, state-machine
+            // transition) can re-throw `IllegalStateException` /
+            // `SQLiteException`. None of those secondary writes
+            // are allowed to escape this catch and crash the
+            // process; the task row is the source of truth and a
+            // missed write is recoverable on next start.
             val retry = task.retryCount + 1
             val now = System.currentTimeMillis()
-            val failImmediately = shouldFailImmediately(task, e)
+            val failImmediately = runCatching { shouldFailImmediately(task, e) }.getOrDefault(false)
             val willRetry = !failImmediately && retry < task.maxRetry
-            db.processingTaskDao().update(
-                task.copy(
-                    status = if (willRetry) "pending" else "failed",
-                    retryCount = retry,
-                    errorMessage = e.message,
-                    updatedAt = now,
-                    finishedAt = if (willRetry) null else now
+            runCatching {
+                db.processingTaskDao().update(
+                    task.copy(
+                        status = if (willRetry) "pending" else "failed",
+                        retryCount = retry,
+                        errorMessage = e.message,
+                        updatedAt = now,
+                        finishedAt = if (willRetry) null else now
+                    )
                 )
-            )
-            appendLog(
-                task,
-                if (willRetry) {
-                    "${taskLabel(task.taskType)}请求失败，已进入任务重试 ${retry}/${task.maxRetry}：${e.message ?: "未知错误"}"
-                } else {
-                    "${taskLabel(task.taskType)}失败：${e.message ?: "未知错误"}"
-                },
-                if (willRetry) "pending" else "failed"
-            )
-            task.sourceId?.let {
-                if (!willRetry) {
-                    ingestStateMachine.transitionToFailed(it, e.message, now)
+            }.onFailure { secondary ->
+                Log.e(
+                    "IngestOrchestrator",
+                    "secondary failure updating processing_task after primary error",
+                    secondary
+                )
+            }
+            runCatching {
+                appendLog(
+                    task,
+                    if (willRetry) {
+                        "${taskLabel(task.taskType)}请求失败，已进入任务重试 ${retry}/${task.maxRetry}：${e.message ?: "未知错误"}"
+                    } else {
+                        "${taskLabel(task.taskType)}失败：${e.message ?: "未知错误"}"
+                    },
+                    if (willRetry) "pending" else "failed"
+                )
+            }.onFailure { secondary ->
+                Log.e(
+                    "IngestOrchestrator",
+                    "secondary failure appending task log after primary error",
+                    secondary
+                )
+            }
+            if (!willRetry) {
+                task.sourceId?.let {
+                    runCatching {
+                        ingestStateMachine.transitionToFailed(it, e.message, now)
+                    }.onFailure { secondary ->
+                        Log.e(
+                            "IngestOrchestrator",
+                            "secondary failure transitioning source to failed",
+                            secondary
+                        )
+                    }
                 }
             }
             return false
@@ -1573,9 +1617,11 @@ class IngestOrchestrator(
             val systemPrompt = buildChunkAnalysisSystemPrompt(
                 purpose = purpose,
                 schema = "",
-                index = currentIndex,
+                index = if (chunk.index <= 1) currentIndex else currentIndex.take(CURRENT_INDEX_PROMPT_CHARS_REST),
                 language = detectedLanguage,
-                chunkTotal = chunks.size
+                chunkTotal = chunks.size,
+                chunkIndex = chunk.index,
+                globalDigest = globalDigest
             )
             val userPrompt = buildChunkAnalysisUserPrompt(
                 sourceIdentity = sourceIdentity,
@@ -1653,47 +1699,6 @@ class IngestOrchestrator(
         store.clear(checkpointFile)
         updateProgress(task, 80, "分块分析完成", "合并 ${chunks.size} 段结果，识别实体 / 概念 / 关系")
         return merged
-    }
-
-    /**
-     * P0-3: build the chunk-level system prompt. Mirrors
-     * `buildChunkAnalysisSystemPrompt` in llm_wiki's ingest.ts,
-     * but constrained to the JSON-mode contract `chatJson` expects
-     * (the schema is the regular [ANALYSIS_SCHEMA] — we just ask
-     * the model to fill in only what this chunk supports).
-     */
-    private fun buildChunkAnalysisSystemPrompt(
-        purpose: String,
-        schema: String,
-        index: String,
-        language: String,
-        chunkTotal: Int
-    ): String {
-        val sb = StringBuilder()
-        sb.append("You are analyzing chunk of a long source document for a personal wiki.\n")
-        sb.append("Do not output chain-of-thought, hidden reasoning, or a thinking transcript.\n")
-        sb.append("Analyze ONLY the current MAIN CHUNK. Use overlap and digest for context only.\n")
-        sb.append("Keep stable names consistent with the existing wiki and prior digest.\n")
-        sb.append("\n")
-        sb.append(com.my.knowledge.data.ai.AiPromptTemplates.languageDirective(language))
-        sb.append("\n\n")
-        sb.append("This document is split into $chunkTotal semantic chunks with paragraph/section boundaries and overlap.\n")
-        sb.append("Output JSON ONLY — no markdown, no prose, no commentary.\n")
-        sb.append("Focus your extraction on the MAIN CHUNK below. Use prior digest and overlap ONLY to:\n")
-        sb.append("  - keep entity / concept names consistent with earlier chunks,\n")
-        sb.append("  - decide whether a concept introduced in overlap is \"new\" or \"already known\".\n")
-        sb.append("Emit empty arrays for entities / concepts / relations / claims / gaps when the chunk truly has nothing to add.\n")
-        sb.append("\nStable project context follows. It changes rarely and should be treated as background:\n")
-        if (purpose.isNotBlank()) {
-            sb.append("## Wiki Purpose\n").append(purpose).append("\n\n")
-        }
-        if (schema.isNotBlank()) {
-            sb.append("## Wiki Schema\n").append(schema).append("\n\n")
-        }
-        if (index.isNotBlank()) {
-            sb.append("## Current Wiki Index\n").append(index.take(40_000)).append("\n")
-        }
-        return sb.toString()
     }
 
     /**
@@ -2423,7 +2428,7 @@ class IngestOrchestrator(
     private fun String.escapeYaml(): String =
         replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
 
-    private companion object {
+    companion object {
         private val pageWriteMutexes = ConcurrentHashMap<String, Mutex>()
         private fun wikiPageLockKey(kbId: String, sourceType: String, title: String): String =
             "${kbId.ifBlank { "_unfiled" }}:${sourceType.trim().lowercase()}:${title.trim().lowercase()}"
@@ -2433,7 +2438,8 @@ class IngestOrchestrator(
         // no longer owns the lane loop.
         private const val INGEST_AI_REMOTE_ATTEMPTS: Int = 2
         private const val AI_READ_TIMEOUT_MS: Int = 300_000
-        private const val CURRENT_INDEX_PROMPT_CHARS: Int = 20_000
+        private const val CURRENT_INDEX_PROMPT_CHARS: Int = 5_000
+        private const val CURRENT_INDEX_PROMPT_CHARS_REST: Int = 2_000
         private const val STAGE2_SOURCE_EXCERPT_CHARS: Int = 24_000
 
         /**
@@ -2522,30 +2528,12 @@ into `conceptCategory`. Both are optional; if missing, the graph
 rebuild falls back to "entity" / "concept" and the UI groups them
 under the default bucket.
 """
-        // P1: 实体 / 概念 的"语义类型"字段 (`type` / `category`) 不再强制 enum。
-        //
-        // 历史: 旧版 schema hint 写的是
-        //   entities.type:    "Person|Organization|Product|Dataset|Tool|System|Project|Place"
-        //   concepts.category:"Theory|Method|Technique|Phenomenon|Principle|Framework|Problem"
-        // 强 enum 让 LLM 频繁给出 enum 外的合理值(例:"Algorithm"、"Paper"、"Software"、
-        // "API"、"Framework")——这些值下游会被 sanitize 抹平,导致:
-        //   1) Wiki page frontmatter 出现 `type: Algorithm`(跟 generationPrompt 中
-        //      规定的 `source|entity|concept|...` enum 冲突);
-        //   2) KnowledgeRepositoryImpl.normalizeWikiGraphType 强制把 wiki_entity
-        //      节点的 type 写成 "entity"——所有实体一个桶,UI 的"中间处理数据"页
-        //      按 type 分组就完全没意义;
-        //   3) 概念的 `category` 字段被 WikiPageCompiler.parseNamedObjects 漏读
-        //      (它读 `type` 不读 `category`),分类信息直接丢失。
-        //
-        // 1:1 对齐 llm_wiki: schema 描述"是什么",Wiki page frontmatter `type` 只
-        // 描述"页面在 wiki 里的角色",两者解耦。LLM 用语义类型自由描述实体/概念,
-        // 由 KnowledgeRepositoryImpl 的归一化逻辑 + UI 的 nodeColor / 标签
-        // 映射表把它们渲染到正确的视觉桶里。
-        //
-        // 双字段兼容: `entityType` 优先,`type` 作为 fallback;`conceptCategory` 优先,
-        // `category` 作为 fallback——这样老 LLM 输出(只给 `type`/`category`)和老
-        // wiki page(frontmatter 只有 `type: entity`)都不会断。
-        private const val ANALYSIS_SCHEMA = """
+        // P1: 实体 / 概念 的"语义类型"字段 (`type` / `category`) 不再强制 enum;
+        // P1+ARCH-7/PR1: `type` / `category` 别名也已删除——下游
+        //   KnowledgeRepositoryImpl.parseRelations / WikiPageCompiler.parseNamedObjects
+        //   只读 `entityType` / `conceptCategory`,老 LLM 输出若仍带 `type` /
+        //   `category` 会被静默忽略,不会断解析。
+        internal const val ANALYSIS_SCHEMA = """
 {
   "title": "string",
   "summary": "string",
@@ -2554,12 +2542,10 @@ under the default bucket.
     {
       "name":"string",
       "entityType":"string (free-form: e.g. Person, Organization, Algorithm, Paper, Software, Tool, Dataset, API, Framework, Place, Event...)",
-      "type":"DEPRECATED: prefer entityType. Kept as alias for backward compat.",
       "aliases":["string"],
       "description":"string",
       "role_in_source":"central|supporting|peripheral",
       "evidence":"string",
-      "source_refs":["fragmentId"],
       "related_concepts":["string"],
       "related_entities":["string"],
       "confidence":0.9
@@ -2569,7 +2555,6 @@ under the default bucket.
     {
       "name":"string",
       "conceptCategory":"string (free-form: e.g. Theory, Method, Technique, Phenomenon, Principle, Framework, Problem, Pattern, Protocol, Metric...)",
-      "category":"DEPRECATED: prefer conceptCategory. Kept as alias for backward compat.",
       "definition":"string",
       "why_it_matters":"string",
       "source_context":"string",
@@ -2577,12 +2562,11 @@ under the default bucket.
       "related_concepts":["string"],
       "examples":["string"],
       "limitations":["string"],
-      "source_refs":["fragmentId"],
       "confidence":0.9
     }
   ],
-  "relations": [{"source":"string","target":"string","type":"supports|contradicts|extends|uses|part_of|related_to","reason":"string","evidenceFragmentIds":["string"],"confidence":0.8}],
-  "claims": [{"claim":"string","evidence":"string","evidenceFragmentIds":["string"],"confidence":0.8}],
+  "relations": [{"source":"string","target":"string","type":"supports|contradicts|extends|uses|part_of|related_to","reason":"string","confidence":0.8}],
+  "claims": [{"claim":"string","evidence":"string","confidence":0.8}],
   "gaps": [{"gap":"string","whyItMatters":"string","suggestedAction":"ask_user|web_research|connect_nodes|validate_claim"}],
   "pageRecommendations": [{"path":"wiki/entities/name.md","type":"entity|concept|source|paper|method|synthesis","title":"string","action":"create|update","reason":"string"}],
   "archiveRecommendation": {"targetKnowledgeBaseId":null,"targetKnowledgeBaseName":"","confidence":0.75,"reason":"string","suggestCreateNewBase":false,"newBaseName":null},
@@ -2592,6 +2576,51 @@ under the default bucket.
 }
 """
     }
+}
+
+/**
+ * ARCH-7 / PR1 §3.3: split the chunk-level system prompt. Chunk 1
+ * gets the full preamble + Wiki Purpose / Current Wiki Index (caller
+ * pre-truncates via [CURRENT_INDEX_PROMPT_CHARS]). Chunks 2..N get a
+ * compact prefix that carries the prior chunk digest but drops the
+ * index (caller pre-truncates via [CURRENT_INDEX_PROMPT_CHARS_REST]).
+ */
+internal fun buildChunkAnalysisSystemPrompt(
+    purpose: String,
+    schema: String,
+    index: String,
+    language: String,
+    chunkTotal: Int,
+    chunkIndex: Int,
+    globalDigest: String
+): String {
+    val sb = StringBuilder()
+    sb.append(com.my.knowledge.data.ai.AiPromptTemplates.languageDirective(language))
+    sb.append("\n\n")
+    if (chunkIndex <= 1) {
+        sb.append("You are analyzing chunk 1 of $chunkTotal of a long source document for a personal wiki.\n")
+        sb.append("Do not output chain-of-thought, hidden reasoning, or a thinking transcript.\n")
+        sb.append("Output JSON ONLY — no markdown, no prose, no commentary.\n")
+        sb.append("Emit empty arrays for entities / concepts / relations / claims / gaps when the chunk truly has nothing to add.\n")
+        sb.append("\nStable project context follows. It changes rarely and should be treated as background:\n")
+        if (purpose.isNotBlank()) {
+            sb.append("## Wiki Purpose\n").append(purpose).append("\n\n")
+        }
+        if (schema.isNotBlank()) {
+            sb.append("## Wiki Schema\n").append(schema).append("\n\n")
+        }
+        if (index.isNotBlank()) {
+            sb.append("## Current Wiki Index\n").append(index).append("\n")
+        }
+    } else {
+        sb.append("Continue analyzing chunk $chunkIndex of $chunkTotal of the same source document for a personal wiki.\n")
+        sb.append("Maintain stable names consistent with the prior digest and the existing wiki.\n")
+        sb.append("Do not output chain-of-thought, hidden reasoning, or a thinking transcript.\n")
+        sb.append("Output JSON ONLY — no markdown, no prose, no commentary.\n")
+        sb.append("Emit empty arrays for entities / concepts / relations / claims / gaps when the chunk truly has nothing to add.\n")
+        sb.append("\n## Prior Chunk Digest\n").append(globalDigest.ifBlank { "(No prior digest yet.)" }).append("\n")
+    }
+    return sb.toString()
 }
 
 /**
