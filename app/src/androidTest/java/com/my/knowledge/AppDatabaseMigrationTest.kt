@@ -325,6 +325,194 @@ class AppDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migration11To12_addsChainAndGapTablesAndBackfillsFromThreadGaps() {
+        // FRAG-1 v11 -> v12: adds starredAt/chainId columns, the new
+        // `knowledge_fragment_chain` and `knowledge_fragment_gap` tables,
+        // and backfills one chain + N gap rows per legacy `knowledge_thread`
+        // row by parsing the legacy `gapsJson` string array.
+        val dbName = "migration-11-12-test"
+        helper.createDatabase(dbName, 11).apply {
+            // v11 knowledge_thread — same shape as the entity.
+            execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `knowledge_thread` (
+                    `id` TEXT NOT NULL,
+                    `knowledgeBaseId` TEXT NOT NULL,
+                    `description` TEXT NOT NULL,
+                    `coreQuestion` TEXT NOT NULL,
+                    `mainlineJson` TEXT NOT NULL,
+                    `relationsJson` TEXT NOT NULL,
+                    `gapsJson` TEXT NOT NULL,
+                    `nextSuggestionsJson` TEXT NOT NULL,
+                    `inputHash` TEXT,
+                    `version` INTEGER NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent()
+            )
+            // v11 knowledge_item (no starredAt yet).
+            execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `knowledge_item` (
+                    `id` TEXT NOT NULL,
+                    `knowledgeBaseId` TEXT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `contentMarkdown` TEXT NOT NULL,
+                    `excerpt` TEXT NOT NULL,
+                    `sourceType` TEXT NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `contentHash` TEXT NOT NULL,
+                    `sourceTraceJson` TEXT NOT NULL,
+                    `confidence` REAL NOT NULL,
+                    `summary` TEXT,
+                    `tagsJson` TEXT NOT NULL,
+                    `rawNoteId` TEXT,
+                    `importance` INTEGER NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    `processedAt` INTEGER,
+                    `archivedAt` INTEGER,
+                    `deletedAt` INTEGER,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent()
+            )
+            // v11 knowledge_fragment (no chainId yet).
+            execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `knowledge_fragment` (
+                    `id` TEXT NOT NULL,
+                    `itemId` TEXT NOT NULL,
+                    `knowledgeBaseId` TEXT NOT NULL,
+                    `content` TEXT NOT NULL,
+                    `summary` TEXT,
+                    `tagsJson` TEXT NOT NULL,
+                    `sourceRef` TEXT,
+                    `sourceManifestId` TEXT,
+                    `startOffset` INTEGER NOT NULL,
+                    `endOffset` INTEGER NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    `sourceId` TEXT,
+                    `parsedContentId` TEXT,
+                    `knowledgeItemId` TEXT,
+                    `orderIndex` INTEGER NOT NULL,
+                    `heading` TEXT,
+                    `tokenCount` INTEGER NOT NULL,
+                    `embeddingId` TEXT,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent()
+            )
+
+            // Seed: 1 thread with 3 gap strings + 1 thread with empty gaps.
+            // The 3 gap strings cover three of the 8 GapType substring rules
+            // (MISSING_SYNTHESIS / NO_RELATIONS / MISSING_TAGS).
+            execSQL(
+                "INSERT INTO `knowledge_thread` " +
+                    "(`id`, `knowledgeBaseId`, `description`, `coreQuestion`, `mainlineJson`, " +
+                    " `relationsJson`, `gapsJson`, `nextSuggestionsJson`, `version`, " +
+                    " `createdAt`, `updatedAt`) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                arrayOf(
+                    "thread-1", "kb-1",
+                    "知识库概述: example topic",
+                    "what is the main question",
+                    "[]", "[]",
+                    "[\"缺少 index / overview / log 合成页\", \"知识之间没有形成显式引用或同主题关联\", \"超过半数知识缺少标签\"]",
+                    "[]", 1,
+                    1_700_000_000_000L, 1_700_000_000_000L,
+                )
+            )
+            execSQL(
+                "INSERT INTO `knowledge_thread` " +
+                    "(`id`, `knowledgeBaseId`, `description`, `coreQuestion`, `mainlineJson`, " +
+                    " `relationsJson`, `gapsJson`, `nextSuggestionsJson`, `version`, " +
+                    " `createdAt`, `updatedAt`) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                arrayOf(
+                    "thread-2", "kb-1",
+                    "completed thread",
+                    "no gaps",
+                    "[]", "[]",
+                    "[]", "[]", 1,
+                    1_700_000_000_000L, 1_700_000_000_000L,
+                )
+            )
+
+            // Seed at least one row in knowledge_item and knowledge_fragment
+            // so post-migration smoke checks (column added) work against
+            // non-empty data.
+            execSQL(
+                "INSERT INTO `knowledge_item` " +
+                    "(`id`, `knowledgeBaseId`, `title`, `contentMarkdown`, `excerpt`, " +
+                    " `sourceType`, `status`, `contentHash`, `sourceTraceJson`, `confidence`, " +
+                    " `tagsJson`, `importance`, `createdAt`, `updatedAt`) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                arrayOf(
+                    "item-1", "kb-1", "title", "body", "excerpt",
+                    "wiki_entity", "archived", "hash-1", "[]", 0.9,
+                    "[]", 1, 1_700_000_000_000L, 1_700_000_000_000L,
+                )
+            )
+            execSQL(
+                "INSERT INTO `knowledge_fragment` " +
+                    "(`id`, `itemId`, `knowledgeBaseId`, `content`, `tagsJson`, " +
+                    " `startOffset`, `endOffset`, `createdAt`, `orderIndex`, `tokenCount`) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                arrayOf(
+                    "frag-1", "item-1", "kb-1", "content", "[]",
+                    0, 10, 1_700_000_000_000L, 1, 4,
+                )
+            )
+
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            dbName,
+            12,
+            false,
+            AppDatabase.MIGRATION_11_12
+        )
+
+        // New columns exist on the existing tables.
+        assertTrue(migrated.hasColumn("knowledge_item", "starredAt"))
+        assertTrue(migrated.hasColumn("knowledge_fragment", "chainId"))
+        // New tables exist.
+        assertTrue(migrated.hasTable("knowledge_fragment_chain"))
+        assertTrue(migrated.hasTable("knowledge_fragment_gap"))
+
+        // Backfill: thread-1 (3 gaps) -> 1 chain NEED_REVIEW + 3 gap rows.
+        // thread-2 (0 gaps)  -> 1 chain DISTILL_READY + 0 gap rows.
+        assertEquals(2, migrated.countOf("knowledge_fragment_chain"))
+        assertEquals(3, migrated.countOf("knowledge_fragment_gap"))
+
+        // Verify the chain rows carry the right status.
+        val chainStatuses = mutableListOf<Pair<String, String>>()
+        migrated.query("SELECT id, status FROM knowledge_fragment_chain ORDER BY id ASC").use { c ->
+            while (c.moveToNext()) {
+                chainStatuses.add(c.getString(0) to c.getString(1))
+            }
+        }
+        assertEquals(
+            listOf("thread-1" to "NEED_REVIEW", "thread-2" to "DISTILL_READY"),
+            chainStatuses
+        )
+
+        // Verify gap rows: 3 rows all on thread-1, gapType values match
+        // the 8-GapType substring classifier.
+        val gapTypes = mutableListOf<String>()
+        migrated.query("SELECT gapType FROM knowledge_fragment_gap ORDER BY id ASC").use { c ->
+            while (c.moveToNext()) gapTypes.add(c.getString(0))
+        }
+        assertEquals(listOf("MISSING_SYNTHESIS", "NO_RELATIONS", "MISSING_TAGS"), gapTypes)
+
+        migrated.close()
+    }
+
     private fun androidx.sqlite.db.SupportSQLiteDatabase.countOf(table: String): Int {
         // FTS4 with `content=` external content tables don't expose
         // a normal rowid count, so we use the docid column directly.

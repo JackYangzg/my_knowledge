@@ -35,7 +35,8 @@ data class KnowledgeItemEntity(
     val updatedAt: Long,
     val processedAt: Long?,
     val archivedAt: Long? = null,
-    val deletedAt: Long?
+    val deletedAt: Long?,
+    val starredAt: Long? = null
 ) {
     companion object {
         /** Initial draft, not yet saved as knowledge item */
@@ -56,5 +57,7 @@ data class KnowledgeItemEntity(
         const val STATUS_FAILED = "failed"
         /** Soft deleted */
         const val STATUS_DELETED = "deleted"
+        /** Distillation ready (FRAG-1): chain has no gaps, eligible for LLM distill into wiki_synthesis */
+        const val STATUS_DISTILL_READY = "distill_ready"
     }
 }

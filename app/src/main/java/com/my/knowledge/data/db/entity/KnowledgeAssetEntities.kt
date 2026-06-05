@@ -12,7 +12,8 @@ import androidx.room.PrimaryKey
         Index("sourceManifestId"),
         Index("sourceId"),
         Index("parsedContentId"),
-        Index("knowledgeItemId")
+        Index("knowledgeItemId"),
+        Index("chainId")
     ]
 )
 data class KnowledgeFragmentEntity(
@@ -33,7 +34,9 @@ data class KnowledgeFragmentEntity(
     val orderIndex: Int = 0,
     val heading: String? = null,
     val tokenCount: Int = 0,
-    val embeddingId: String? = null
+    val embeddingId: String? = null,
+    /** FRAG-1: 关联到 fragment chain。v1 简化: chainId == threadId。 */
+    val chainId: String? = null
 )
 
 @Entity(

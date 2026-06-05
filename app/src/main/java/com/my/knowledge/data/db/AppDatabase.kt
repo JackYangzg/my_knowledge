@@ -32,9 +32,11 @@ import com.my.knowledge.data.db.entity.*
         SourceDocumentEntity::class,
         ParsedContentEntity::class,
         AnalysisResultEntity::class,
-        ReviewItemEntity::class
+        ReviewItemEntity::class,
+        KnowledgeFragmentChainEntity::class,
+        KnowledgeFragmentGapEntity::class
     ],
-    version = 11,
+    version = 12,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -58,6 +60,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun parsedContentDao(): ParsedContentDao
     abstract fun analysisResultDao(): AnalysisResultDao
     abstract fun reviewItemDao(): ReviewItemDao
+    abstract fun fragmentChainDao(): KnowledgeFragmentChainDao
+    abstract fun fragmentGapDao(): KnowledgeFragmentGapDao
 
     companion object {
         private const val DATABASE_NAME = "knowledge_db"
@@ -73,7 +77,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
-                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
                 .addCallback(FtsDiacriticsCallback)
                 .build()
         }
@@ -333,6 +337,207 @@ abstract class AppDatabase : RoomDatabase() {
     val MIGRATION_10_11 = object : Migration(10, 11) {
         override fun migrate(db: SupportSQLiteDatabase) {
             rebuildFtsWithDiacritics(db, includeLegacyFragmentTriggers = true)
+        }
+    }
+
+    /**
+     * v11 -> v12: FRAG-1 knowledge fragment curation. Adds:
+     *  - `starredAt` column to `knowledge_item` (for the distill product item)
+     *  - `chainId` column to `knowledge_fragment` (v1: chainId == threadId)
+     *  - `knowledge_fragment_chain` table (status single source of truth)
+     *  - `knowledge_fragment_gap` table (8 GapType enum mapped 1:1 from
+     *    `ThreadEvolutionRunner.detectGaps`)
+     *
+     * Backfill (per P3 of FRAG-1 design): scans every `knowledge_thread` row,
+     * materialises one chain per thread (id = thread.id, status =
+     * `NEED_REVIEW` if gapsJson is non-empty else `DISTILL_READY`), and
+     * parses gapsJson into structured gap rows. The legacy `gapsJson` field
+     * is preserved verbatim and continues to be readable; UI side flips to
+     * the structured table from FRAG-1.3 onward.
+     */
+    val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `knowledge_item` ADD COLUMN `starredAt` INTEGER DEFAULT NULL")
+            db.execSQL("ALTER TABLE `knowledge_fragment` ADD COLUMN `chainId` TEXT DEFAULT NULL")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_fragment_chainId` ON `knowledge_fragment` (`chainId`)")
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `knowledge_fragment_chain` (
+                    `id` TEXT NOT NULL,
+                    `knowledgeBaseId` TEXT NOT NULL,
+                    `threadId` TEXT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `goalSummary` TEXT NOT NULL,
+                    `confidence` REAL NOT NULL,
+                    `entityCount` INTEGER NOT NULL,
+                    `sourceCount` INTEGER NOT NULL,
+                    `gapCount` INTEGER NOT NULL,
+                    `status` TEXT NOT NULL,
+                    `distilledItemId` TEXT,
+                    `createdAt` INTEGER NOT NULL,
+                    `updatedAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_knowledge_fragment_chain_threadId` ON `knowledge_fragment_chain` (`threadId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_fragment_chain_knowledgeBaseId_status` ON `knowledge_fragment_chain` (`knowledgeBaseId`, `status`)")
+
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `knowledge_fragment_gap` (
+                    `id` TEXT NOT NULL,
+                    `chainId` TEXT NOT NULL,
+                    `gapType` TEXT NOT NULL,
+                    `priority` TEXT NOT NULL,
+                    `description` TEXT NOT NULL,
+                    `suggestion` TEXT NOT NULL,
+                    `resolved` INTEGER NOT NULL DEFAULT 0,
+                    `resolvedByItemId` TEXT,
+                    `resolvedByUserText` TEXT,
+                    `resolvedAt` INTEGER,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_fragment_gap_chainId_resolved` ON `knowledge_fragment_gap` (`chainId`, `resolved`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_fragment_gap_gapType` ON `knowledge_fragment_gap` (`gapType`)")
+
+            backfillFragmentChainsAndGaps(db)
+        }
+
+        /**
+         * Walk every `knowledge_thread` row, write one chain row and N
+         * gap rows. We use raw SQL with `JSON_EACH` so the migration
+         * stays self-contained (no DAO call, no classpath dependency
+         * on the gap detector / suggestion generator at migration
+         * time). The substring rules mirror
+         * `ThreadEvolutionRunner.detectGaps` (FRAG-1 design §1.6) and
+         * `generateSuggestions` (ThreadEvolutionRunner.kt:378). New
+         * ingest / reanalysis code uses the structured
+         * `KnowledgeFragmentGapEntity` table directly; the substring
+         * parser below only runs on the v11 -> v12 upgrade path.
+         */
+        private fun backfillFragmentChainsAndGaps(db: SupportSQLiteDatabase) {
+            val now = System.currentTimeMillis()
+            db.query("SELECT id, knowledgeBaseId, description, gapsJson FROM knowledge_thread").use { cursor ->
+                while (cursor.moveToNext()) {
+                    val threadId = cursor.getString(0) ?: continue
+                    val kbId = cursor.getString(1) ?: continue
+                    val description = cursor.getString(2) ?: ""
+                    val gapsJson = cursor.getString(3) ?: "[]"
+
+                    val gapStrings = parseJsonStringArray(gapsJson)
+                    val status = if (gapStrings.isEmpty()) "DISTILL_READY" else "NEED_REVIEW"
+
+                    db.execSQL(
+                        """
+                        INSERT OR IGNORE INTO `knowledge_fragment_chain`
+                            (id, knowledgeBaseId, threadId, title, goalSummary, confidence,
+                             entityCount, sourceCount, gapCount, status, distilledItemId,
+                             createdAt, updatedAt)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+                        """.trimIndent(),
+                        arrayOf(
+                            threadId,
+                            kbId,
+                            threadId,
+                            description.take(80).ifBlank { "知识脉络" },
+                            description,
+                            0.0f,
+                            0,
+                            0,
+                            gapStrings.size,
+                            status,
+                            now,
+                            now,
+                        )
+                    )
+
+                    gapStrings.forEachIndexed { index, gapString ->
+                        val (gapType, priority, suggestion) = classifyGap(gapString)
+                        db.execSQL(
+                            """
+                            INSERT OR IGNORE INTO `knowledge_fragment_gap`
+                                (id, chainId, gapType, priority, description, suggestion,
+                                 resolved, resolvedByItemId, resolvedByUserText, resolvedAt, createdAt)
+                            VALUES (?, ?, ?, ?, ?, ?, 0, NULL, NULL, NULL, ?)
+                            """.trimIndent(),
+                            arrayOf(
+                                "${threadId}_gap_$index",
+                                threadId,
+                                gapType,
+                                priority,
+                                gapString,
+                                suggestion,
+                                now,
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        /**
+         * Minimal JSON string-array parser. We only need to split
+         * `["str1","str2",...]` — no nested objects, no escape
+         * handling beyond the obvious `\"` and `\\`. Inputs come from
+         * `ThreadEvolutionRunner`, which writes literal Chinese
+         * strings with double-quote-escaped commas; that is the only
+         * shape we ever see in the DB.
+         */
+        private fun parseJsonStringArray(json: String): List<String> {
+            val trimmed = json.trim()
+            if (!trimmed.startsWith("[") || !trimmed.endsWith("]")) return emptyList()
+            val inner = trimmed.substring(1, trimmed.length - 1)
+            if (inner.isBlank()) return emptyList()
+            return inner.split(",").mapNotNull { raw ->
+                val unquoted = raw.trim().removePrefix("\"").removeSuffix("\"")
+                val unescaped = unquoted.replace("\\\"", "\"").replace("\\\\", "\\")
+                unescaped.ifBlank { null }
+            }
+        }
+
+        /**
+         * Substring classifier mirroring
+         * `ThreadEvolutionRunner.detectGaps` (8 rules) and
+         * `generateSuggestions` (FRAG-1 design §1.6 mapping table).
+         * Returns `(GapType, Priority, Suggestion)`. The fallback
+         * bucket is the same as the original "缺标签" path so legacy
+         * rows with a custom string still land on a sensible row.
+         */
+        private fun classifyGap(description: String): Triple<String, String, String> {
+            return when {
+                description.contains("合成页") || description.contains("index") || description.contains("overview") -> Triple(
+                    "MISSING_SYNTHESIS", "HIGH", "补充 index / overview / log 合成页形成主线"
+                )
+                description.contains("低置信度") || description.contains("复核") -> Triple(
+                    "LOW_CONFIDENCE", "HIGH", "人工复核低置信度知识条目"
+                )
+                description.contains("主线") || description.contains("标签聚类") -> Triple(
+                    "NO_MAINLINE", "MEDIUM", "补充更明确的标签以形成主线"
+                )
+                description.contains("标签") -> Triple(
+                    "MISSING_TAGS", "MEDIUM", "为超过半数缺少标签的知识补充标签"
+                )
+                description.contains("摘要") -> Triple(
+                    "MISSING_SUMMARY", "LOW", "为缺少摘要的知识补充摘要"
+                )
+                description.contains("关系") || description.contains("引用") || description.contains("同主题") -> Triple(
+                    "NO_RELATIONS", "HIGH", "建立知识之间的显式引用或同主题关联"
+                )
+                description.contains("wiki 页面") || description.contains("wiki") -> Triple(
+                    "NO_WIKI_PAGES", "HIGH", "先完成知识加工产出 wiki 页面"
+                )
+                description.contains("尚无") || description.contains("空") -> Triple(
+                    "KB_EMPTY", "HIGH", "导入首批知识条目以启动脉络"
+                )
+                else -> Triple(
+                    "MISSING_TAGS", "MEDIUM", "完善知识条目元数据以提高脉络完整度"
+                )
+            }
         }
     }
 
