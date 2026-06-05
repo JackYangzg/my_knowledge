@@ -3,6 +3,7 @@ package com.my.knowledge.worker
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.PowerManager
+import android.util.Log
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.ingest.IngestOrchestrator
@@ -11,6 +12,9 @@ import com.my.knowledge.ui.DependencyProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -34,6 +38,8 @@ import kotlinx.coroutines.sync.withLock
  * standing up the real `AppDatabase`.
  */
 object IngestRuntime {
+    private const val TAG = "IngestRuntime"
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val runMutex = Mutex()
 
@@ -42,6 +48,26 @@ object IngestRuntime {
     // was inlined in the singleton and untestable.
     @Volatile
     private var loop: IngestRuntimeLoop? = null
+
+    /**
+     * N3 (RELIAB-1 PR-N3): expose wake/wifi lock acquisition result
+     * to the UI layer so the user can see when battery-optimization
+     * or OEM background-killers are stripping our locks. The state
+     * updates synchronously inside [withIngestRuntimeLocks], so the
+     * Flow re-emits at the start and end of every `runOnce` pass.
+     */
+    data class LockStatus(
+        val wakeLockHeld: Boolean,
+        val wifiLockHeld: Boolean,
+        val wakeLockError: String? = null,
+        val wifiLockError: String? = null,
+        val updatedAt: Long = System.currentTimeMillis(),
+    )
+
+    private val _lockStatus = MutableStateFlow(
+        LockStatus(wakeLockHeld = false, wifiLockHeld = false)
+    )
+    val lockStatus: StateFlow<LockStatus> = _lockStatus.asStateFlow()
 
     fun start(context: Context) {
         val appContext = context.applicationContext
@@ -105,9 +131,35 @@ object IngestRuntime {
             ?.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "my_knowledge:IngestRuntimeWifi")
             ?.apply { setReferenceCounted(false) }
 
+        // N3: log + record lock-acquisition failures so the operator
+        // can see when OEM doze / battery-optimization is stripping
+        // our locks. Previously `runCatching{}` silently swallowed
+        // these and the worker kept running without any protection.
+        // Note: `isHeld` is queried on the original `wakeLock`/`wifiLock`
+        // reference (not on the runCatching result) because the lambda
+        // returns `Unit?` and doesn't carry the WakeLock object.
+        val wakeResult = runCatching { wakeLock?.acquire(INGEST_RUNTIME_LOCK_TIMEOUT_MS) }
+        val wakeError = wakeResult.exceptionOrNull()?.let { "wake lock failed: ${it.message}" }
+        val wakeLockHeld = wakeError == null && wakeLock?.isHeld == true
+        if (wakeError != null) {
+            Log.w(TAG, wakeError)
+        }
+
+        val wifiResult = runCatching { wifiLock?.acquire() }
+        val wifiError = wifiResult.exceptionOrNull()?.let { "wifi lock failed: ${it.message}" }
+        val wifiLockHeld = wifiError == null && wifiLock?.isHeld == true
+        if (wifiError != null) {
+            Log.w(TAG, wifiError)
+        }
+
+        _lockStatus.value = LockStatus(
+            wakeLockHeld = wakeLockHeld,
+            wifiLockHeld = wifiLockHeld,
+            wakeLockError = wakeError,
+            wifiLockError = wifiError,
+        )
+
         try {
-            runCatching { wakeLock?.acquire(INGEST_RUNTIME_LOCK_TIMEOUT_MS) }
-            runCatching { wifiLock?.acquire() }
             block()
         } finally {
             runCatching {
@@ -116,6 +168,12 @@ object IngestRuntime {
             runCatching {
                 if (wakeLock?.isHeld == true) wakeLock.release()
             }
+            _lockStatus.value = LockStatus(
+                wakeLockHeld = false,
+                wifiLockHeld = false,
+                wakeLockError = wakeError,
+                wifiLockError = wifiError,
+            )
         }
     }
 
