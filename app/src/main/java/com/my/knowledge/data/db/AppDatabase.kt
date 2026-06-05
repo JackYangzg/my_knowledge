@@ -36,7 +36,7 @@ import com.my.knowledge.data.db.entity.*
         AnalysisResultEntity::class,
         ReviewItemEntity::class
     ],
-    version = 10,
+    version = 11,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -75,7 +75,8 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
-                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
+                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11)
+                .addCallback(FtsDiacriticsCallback)
                 .build()
         }
 
@@ -306,6 +307,173 @@ abstract class AppDatabase : RoomDatabase() {
                 """
                 INSERT INTO `knowledge_fragment_fts`(rowid, content, summary, tagsJson)
                 SELECT rowid, content, summary, tagsJson FROM `knowledge_fragment`
+                """.trimIndent()
+            )
+        }
+    }
+
+    /**
+     * v10 -> v11: PERF-10 FTS `remove_diacritics=1`. The default
+     * `tokenize=unicode61` keeps accents in the index, so a search
+     * for "cafe" misses "café". `remove_diacritics=1` is a SQLite
+     * FTS4 option that strips diacritics at index time and at query
+     * time, so the two become equivalent (same for "naïve" /
+     * "naive", "São Paulo" / "Sao Paulo", etc.). It also matters
+     * for CJK — unicode61's `categories` default already folds CJK
+     * into the basic letter class, so a stray combining mark
+     * doesn't break phrase queries anymore.
+     *
+     * FTS4 options are immutable on a virtual table, so we DROP and
+     * reCREATE both `knowledge_item_fts` and `knowledge_fragment_fts`
+     * (and their sync triggers) and re-backfill from the live
+     * source tables. The DB also still carries the three
+     * hand-rolled triggers (`knowledge_fragment_ai/_ad/_au`) that
+     * MIGRATION_9_10 added for v9->v10 upgrades; those reference
+     * the old `rowid` form and would cause double-inserts on top
+     * of Room's `docid`-based sync triggers, so we drop them too.
+     */
+    val MIGRATION_10_11 = object : Migration(10, 11) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            rebuildFtsWithDiacritics(db, includeLegacyFragmentTriggers = true)
+        }
+    }
+
+    /**
+     * Fresh-install fix-up. The `@Fts4` annotation has no way to
+     * express `remove_diacritics=1` (it's not part of the
+     * [androidx.room.FtsOptions] API), so Room's auto-DDL creates
+     * both FTS tables without it. We run the same DROP / reCREATE
+     * routine on `onCreate` so a v11 install has the option set
+     * from the first byte. Empty tables, so the backfill is a
+     * no-op.
+     */
+    private object FtsDiacriticsCallback : RoomDatabase.Callback() {
+        override fun onCreate(db: SupportSQLiteDatabase) {
+            super.onCreate(db)
+            rebuildFtsWithDiacritics(db, includeLegacyFragmentTriggers = false)
+        }
+    }
+
+    /**
+     * DROP both FTS tables + all 11 sync triggers (4 Room + 3
+     * legacy for fragment + 4 for item), then reCREATE the tables
+     * with `tokenize=unicode61 remove_diacritics=1` and re-emit
+     * Room's 4 sync triggers per table, then backfill.
+     *
+     * Kept as a companion-private helper so MIGRATION_10_11 (DBs
+     * that may carry the legacy triggers) and FtsDiacriticsCallback
+     * (fresh installs, no legacy triggers) call the same code
+     * path — one place to keep the trigger names in sync.
+     */
+    private fun rebuildFtsWithDiacritics(
+        db: SupportSQLiteDatabase,
+        includeLegacyFragmentTriggers: Boolean,
+    ) {
+        // Drop all 8 Room-generated sync triggers (4 per FTS table).
+        listOf(
+            "room_fts_content_sync_knowledge_item_fts_BEFORE_UPDATE",
+            "room_fts_content_sync_knowledge_item_fts_BEFORE_DELETE",
+            "room_fts_content_sync_knowledge_item_fts_AFTER_UPDATE",
+            "room_fts_content_sync_knowledge_item_fts_AFTER_INSERT",
+            "room_fts_content_sync_knowledge_fragment_fts_BEFORE_UPDATE",
+            "room_fts_content_sync_knowledge_fragment_fts_BEFORE_DELETE",
+            "room_fts_content_sync_knowledge_fragment_fts_AFTER_UPDATE",
+            "room_fts_content_sync_knowledge_fragment_fts_AFTER_INSERT",
+        ).forEach { db.execSQL("DROP TRIGGER IF EXISTS `$it`") }
+
+        // Drop the 3 legacy hand-rolled triggers from MIGRATION_9_10
+        // if the DB is a v9->v10->v11 upgrade. They reference the
+        // old `rowid` form and would cause double-inserts on top of
+        // Room's `docid`-based triggers.
+        if (includeLegacyFragmentTriggers) {
+            listOf("knowledge_fragment_ai", "knowledge_fragment_ad", "knowledge_fragment_au")
+                .forEach { db.execSQL("DROP TRIGGER IF EXISTS `$it`") }
+        }
+
+        // Drop the FTS tables themselves. Order matters — if the
+        // triggers above already errored, this catches the
+        // residual.
+        db.execSQL("DROP TABLE IF EXISTS `knowledge_item_fts`")
+        db.execSQL("DROP TABLE IF EXISTS `knowledge_fragment_fts`")
+
+        // ReCREATE with remove_diacritics=1.
+        db.execSQL(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS `knowledge_item_fts` USING fts4(
+                `title`,
+                `contentMarkdown`,
+                `summary`,
+                tokenize=unicode61 remove_diacritics=1,
+                content=`knowledge_item`
+            )
+            """.trimIndent()
+        )
+        db.execSQL(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS `knowledge_fragment_fts` USING fts4(
+                `content`,
+                `summary`,
+                `tagsJson`,
+                tokenize=unicode61 remove_diacritics=1,
+                content=`knowledge_fragment`
+            )
+            """.trimIndent()
+        )
+
+        // Re-emit Room's 4 sync triggers per FTS table. Definitions
+        // match what Room would auto-generate from the @Fts4
+        // annotation (see app/schemas/.../10.json).
+        listOf(
+            "knowledge_item_fts" to "knowledge_item" to listOf("title", "contentMarkdown", "summary"),
+            "knowledge_fragment_fts" to "knowledge_fragment" to listOf("content", "summary", "tagsJson"),
+        ).forEach { (ftsToSource, columns) ->
+            val (ftsName, sourceName) = ftsToSource
+            val columnList = columns.joinToString(", ") { "`$it`" }
+            val columnValues = columns.joinToString(", ") { "NEW.`$it`" }
+            val oldColumnValues = columns.joinToString(", ") { "OLD.`$it`" }
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_${ftsName}_BEFORE_UPDATE`
+                BEFORE UPDATE ON `$sourceName`
+                BEGIN
+                    DELETE FROM `$ftsName` WHERE `docid`=OLD.`rowid`;
+                END
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_${ftsName}_BEFORE_DELETE`
+                BEFORE DELETE ON `$sourceName`
+                BEGIN
+                    DELETE FROM `$ftsName` WHERE `docid`=OLD.`rowid`;
+                END
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_${ftsName}_AFTER_UPDATE`
+                AFTER UPDATE ON `$sourceName`
+                BEGIN
+                    INSERT INTO `$ftsName`(`docid`, $columnList)
+                    VALUES (NEW.`rowid`, $columnValues);
+                END
+                """.trimIndent()
+            )
+            db.execSQL(
+                """
+                CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_${ftsName}_AFTER_INSERT`
+                AFTER INSERT ON `$sourceName`
+                BEGIN
+                    INSERT INTO `$ftsName`(`docid`, $columnList)
+                    VALUES (NEW.`rowid`, $columnValues);
+                END
+                """.trimIndent()
+            )
+            // Backfill (no-op on fresh installs).
+            db.execSQL(
+                """
+                INSERT INTO `$ftsName`(`docid`, $columnList)
+                SELECT rowid, $oldColumnValues FROM `$sourceName`
                 """.trimIndent()
             )
         }
