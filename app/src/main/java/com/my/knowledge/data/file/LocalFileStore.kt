@@ -2,8 +2,8 @@ package com.my.knowledge.data.file
 
 import android.content.Context
 import android.net.Uri
+import com.my.knowledge.data.util.Sha256
 import java.io.File
-import java.security.MessageDigest
 import java.util.*
 
 class LocalFileStore(private val context: Context) {
@@ -70,23 +70,9 @@ class LocalFileStore(private val context: Context) {
         File(assetsDir, sourceId).deleteRecursively()
     }
 
-    fun sha256(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val read = input.read(buffer)
-                if (read <= 0) break
-                digest.update(buffer, 0, read)
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
+    fun sha256(file: File): String = Sha256.hex(file)
 
-    fun sha256Text(content: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(content.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-    }
+    fun sha256Text(content: String): String = Sha256.hex(content)
 
     fun generateNoteId(): String = UUID.randomUUID().toString()
 }

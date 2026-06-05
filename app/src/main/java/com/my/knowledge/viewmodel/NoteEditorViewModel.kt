@@ -22,9 +22,9 @@ import com.my.knowledge.domain.repository.NoteRepository
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
+import com.my.knowledge.data.util.Sha256
 import kotlinx.coroutines.launch
 import org.json.JSONArray
-import java.security.MessageDigest
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
 class NoteEditorViewModel(
@@ -219,9 +219,7 @@ class NoteEditorViewModel(
         val savedContent = content.trim()
         if (savedContent.isEmpty() && title.trim().isEmpty()) return targetName
 
-        val hash = MessageDigest.getInstance("SHA-256")
-            .digest(savedContent.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
+        val hash = Sha256.hex(savedContent)
 
         val noteId = currentNote?.id
         val now = System.currentTimeMillis()

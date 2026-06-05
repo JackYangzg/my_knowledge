@@ -16,9 +16,9 @@ import com.my.knowledge.data.parser.WeChatArticleParser
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import kotlinx.coroutines.CoroutineScope
+import com.my.knowledge.data.util.Sha256
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import java.security.MessageDigest
 import java.util.*
 
 /**
@@ -129,11 +129,7 @@ object KnowledgeManager {
             .apply()
     }
 
-    private fun sha256(content: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hashBytes = digest.digest(content.toByteArray(Charsets.UTF_8))
-        return hashBytes.joinToString("") { "%02x".format(it) }
-    }
+    private fun sha256(content: String): String = Sha256.hex(content)
 
     fun importAndAnalyze(
         name: String,

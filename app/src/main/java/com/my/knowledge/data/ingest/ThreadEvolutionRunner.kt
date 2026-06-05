@@ -5,7 +5,7 @@ import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
 import com.my.knowledge.domain.repository.KnowledgeRepository
-import java.security.MessageDigest
+import com.my.knowledge.data.util.Sha256
 import java.util.Locale
 import java.util.UUID
 
@@ -419,11 +419,7 @@ object ThreadEvolutionRunner {
         return raw.takeIf { it.isNotBlank() }
     }
 
-    private fun sha256(content: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(content.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-    }
+    private fun sha256(content: String): String = Sha256.hex(content)
 
     private fun escape(s: String): String =
         s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")

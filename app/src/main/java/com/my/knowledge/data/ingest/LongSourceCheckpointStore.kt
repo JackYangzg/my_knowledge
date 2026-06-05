@@ -1,7 +1,7 @@
 package com.my.knowledge.data.ingest
 
+import com.my.knowledge.data.util.Sha256
 import java.io.File
-import java.security.MessageDigest
 
 /**
  * Persists long-source analysis progress to a per-source JSON file
@@ -136,11 +136,7 @@ class LongSourceCheckpointStore(
          * (stability key, not a security primitive — see ingest.ts
          * for the same disclaimer).
          */
-        fun sha256Hex(content: String): String {
-            val digest = MessageDigest.getInstance("SHA-256")
-            val bytes = digest.digest(content.toByteArray(Charsets.UTF_8))
-            return bytes.joinToString("") { "%02x".format(it) }
-        }
+        fun sha256Hex(content: String): String = Sha256.hex(content)
 
         /**
          * Filesystem-safe version of a free-form source title.

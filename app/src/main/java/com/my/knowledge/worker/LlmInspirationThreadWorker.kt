@@ -14,9 +14,9 @@ import com.my.knowledge.data.repository.InspirationThreadContext
 import com.my.knowledge.data.repository.KnowledgeRepositoryImpl
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.ui.KnowledgeManager
+import com.my.knowledge.data.util.Sha256
 import org.json.JSONArray
 import org.json.JSONObject
-import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -268,11 +268,7 @@ class LlmInspirationThreadWorker(
         return obj.toString()
     }
 
-    private fun sha256(content: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(content.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-    }
+    private fun sha256(content: String): String = Sha256.hex(content)
 
     private fun parseStringArray(json: String?): List<String> {
         if (json.isNullOrBlank() || json == "[]") return emptyList()

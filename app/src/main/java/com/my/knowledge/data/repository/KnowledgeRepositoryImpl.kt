@@ -49,9 +49,9 @@ import com.my.knowledge.domain.repository.ProfileStats
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.Flow
+import com.my.knowledge.data.util.Sha256
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import java.security.MessageDigest
 import java.util.*
 
 class KnowledgeRepositoryImpl(
@@ -415,11 +415,7 @@ class KnowledgeRepositoryImpl(
     override suspend fun getUnfiledBase(): KnowledgeBaseEntity? = kbDao.getByType("unfiled")
 
     // === Content Hash ===
-    override fun calculateContentHash(content: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        val hashBytes = digest.digest(content.toByteArray(Charsets.UTF_8))
-        return hashBytes.joinToString("") { "%02x".format(it) }
-    }
+    override fun calculateContentHash(content: String): String = Sha256.hex(content)
 
     override suspend fun registerTextSource(
         ownerType: String,

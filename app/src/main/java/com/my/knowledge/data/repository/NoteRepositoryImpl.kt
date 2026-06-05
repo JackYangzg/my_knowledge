@@ -3,9 +3,9 @@ package com.my.knowledge.data.repository
 import com.my.knowledge.data.db.dao.NoteDao
 import com.my.knowledge.data.db.entity.NoteEntity
 import com.my.knowledge.data.file.LocalFileStore
+import com.my.knowledge.data.util.Sha256
 import com.my.knowledge.domain.repository.NoteRepository
 import kotlinx.coroutines.flow.Flow
-import java.security.MessageDigest
 import java.util.*
 
 class NoteRepositoryImpl(
@@ -70,8 +70,5 @@ class NoteRepositoryImpl(
 
     override suspend fun getNoteById(id: String): NoteEntity? = noteDao.getById(id)
 
-    private fun sha256(content: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(content.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
-    }
+    private fun sha256(content: String): String = Sha256.hex(content)
 }

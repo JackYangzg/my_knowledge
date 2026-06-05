@@ -11,9 +11,9 @@ import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import com.my.knowledge.data.util.Sha256
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import java.security.MessageDigest
 import java.util.UUID
 
 /**
@@ -171,9 +171,5 @@ class KnowledgeEditorViewModel(
         _reingestStatus.value = null
     }
 
-    private fun sha256(text: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        return digest.digest(text.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-    }
+    private fun sha256(text: String): String = Sha256.hex(text)
 }
