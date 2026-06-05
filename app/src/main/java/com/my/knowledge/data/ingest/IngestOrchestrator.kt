@@ -328,6 +328,20 @@ class IngestOrchestrator(
     private var currentJob: Job? = null
 
     /**
+     * P0-1 stage split: `taskType` -> [Stage]. The dispatch site
+     * (`runTask`) replaces the old `when (task.taskType)` with a
+     * single map lookup. Adding a new step means a new entry here
+     * + a new `runXxxTask` method on this class, not a sweeping
+     * edit of the dispatch chain.
+     */
+    private val stages: Map<String, Stage> = mapOf(
+        "parse" to ParseStage(),
+        "analysis" to AnalysisStage(),
+        "generation" to GenerationStage(),
+        "embedding" to EmbeddingStage(),
+    )
+
+    /**
      * P0-2: stop the currently running ingest step. Designed to be
      * wired to the log-center "Stop" button and to
      * [com.my.knowledge.worker.IngestWorker]'s cancel path.
@@ -419,12 +433,11 @@ class IngestOrchestrator(
                 )
                 return true
             }
-            when (task.taskType) {
-                "parse" -> parseTask(task)
-                "analysis" -> analysisTask(task)
-                "generation" -> generationTask(task)
-                "embedding" -> embeddingTask(task)
-                else -> markSuccess(task, "Unsupported task skipped", "{}")
+            val stage = stages[task.taskType]
+            if (stage != null) {
+                stage.run(task, this)
+            } else {
+                markSuccess(task, "Unsupported task skipped", "{}")
             }
             return true
         } catch (e: Exception) {
@@ -510,7 +523,7 @@ class IngestOrchestrator(
         MetadataOnlyParser()
     )
 
-    private suspend fun parseTask(task: ProcessingTaskEntity) {
+    internal suspend fun runParseTask(task: ProcessingTaskEntity) {
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: error("Source not found: $sourceId")
         ingestStateMachine.transitionToParsing(source.id)
@@ -562,7 +575,7 @@ class IngestOrchestrator(
         )
     }
 
-    private suspend fun analysisTask(task: ProcessingTaskEntity) {
+    internal suspend fun runAnalysisTask(task: ProcessingTaskEntity) {
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: error("Source not found: $sourceId")
         val parsed = db.parsedContentDao().getLatestBySource(source.id) ?: error("Parsed content not found")
@@ -683,7 +696,7 @@ class IngestOrchestrator(
         enqueue(source.id, "generation", 8, """{"analysisResultId":"${analysis.id}"}""")
     }
 
-    private suspend fun generationTask(task: ProcessingTaskEntity) {
+    internal suspend fun runGenerationTask(task: ProcessingTaskEntity) {
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: error("Source not found: $sourceId")
         val parsed = db.parsedContentDao().getLatestBySource(source.id) ?: error("Parsed content not found")
@@ -941,7 +954,7 @@ class IngestOrchestrator(
         return out
     }
 
-    private suspend fun embeddingTask(task: ProcessingTaskEntity) {
+    internal suspend fun runEmbeddingTask(task: ProcessingTaskEntity) {
         // Fragment embeddings are already maintained by repository rebuilds; this task keeps the queue explicit.
         markSuccess(task, "Embedding task acknowledged", "{}")
     }
