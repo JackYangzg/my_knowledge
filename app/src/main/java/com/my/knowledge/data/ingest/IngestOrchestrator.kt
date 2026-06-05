@@ -1162,7 +1162,8 @@ class IngestOrchestrator(
         if (!ai.isAvailable()) return null
         val kbId = source.targetKnowledgeBaseId
         val currentIndex = buildCurrentIndex(kbId)
-        val overview = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId.orEmpty(), "wiki_overview", "overview.md")?.contentMarkdown ?: ""
+        // ARCH-7.1 PR2-G §3.3: cap overview to 5K (was unbounded — full file inlined into system prompt).
+        val overview = buildCurrentOverview(kbId)
         val analysisText = analysis.summary
         // In addition to the prose summary, surface the structured
         // entities / concepts / relations extracted by Stage 1 so the
@@ -1950,6 +1951,22 @@ class IngestOrchestrator(
         }.take(CURRENT_INDEX_PROMPT_CHARS)
     }
 
+    /**
+     * ARCH-7.1 PR2-G §3.3: cap the wiki/overview.md body before it gets
+     * concatenated into the Stage 2 system prompt. overview is a
+     * cumulative file — after 10+ ingests it can be 30K+ chars, after
+     * 50+ it can be 100K+; that entire blob was being inlined into the
+     * prompt, dominating token cost. 5K covers "wiki currently covers
+     * X / Y / Z" plus 1-2 representative paragraphs; the full overview
+     * is rebuilt by [WikiPageCompiler] after this generation anyway.
+     */
+    private suspend fun buildCurrentOverview(kbId: String?): String {
+        if (kbId.isNullOrBlank()) return ""
+        val page = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId, "wiki_overview", "overview.md")
+            ?: return ""
+        return stripFrontMatter(page.contentMarkdown).take(CURRENT_OVERVIEW_PROMPT_CHARS)
+    }
+
     private fun buildAnalysisUserMessage(source: SourceDocumentEntity, content: String): String =
         buildString {
             appendLine("Analyze this source document:")
@@ -2467,6 +2484,8 @@ class IngestOrchestrator(
         private const val AI_READ_TIMEOUT_MS: Int = 300_000
         private const val CURRENT_INDEX_PROMPT_CHARS: Int = 5_000
         private const val CURRENT_INDEX_PROMPT_CHARS_REST: Int = 2_000
+        // ARCH-7.1 PR2-G §3.3: cap overview content to keep Stage 2 system prompt bounded.
+        private const val CURRENT_OVERVIEW_PROMPT_CHARS: Int = 5_000
         private const val STAGE2_SOURCE_EXCERPT_CHARS: Int = 24_000
 
         // ── P0-3: long-source path tunables ─────────────────────────────

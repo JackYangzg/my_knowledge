@@ -192,14 +192,7 @@ ${if (currentIndex.isNotBlank()) "## Current Wiki Index (for de-dup hints)\n$cur
         val summaryPath = "wiki/sources/$sourceBaseName.md"
         val knownTypes = "source | entity | concept | paper | method | comparison | query | synthesis | overview"
         val schemaBlock = if (schema.isNotBlank()) {
-            """
-## Project Schema and Routing (AUTHORITATIVE)
-$schema
-
-Use this schema as the primary routing rule for page types and directories.
-If it defines custom folders or distinctions (for example people, technologies, organizations, methods, or cases), write pages into those schema-defined folders instead of forcing them into wiki/entities/ or wiki/concepts/.
-Use wiki/entities/ and wiki/concepts/ only when the schema does not provide a more specific destination.
-""".trimIndent()
+            "## Project Schema and Routing (AUTHORITATIVE)\n$schema"
         } else ""
         return listOf(
             "You are a wiki maintainer. Based on the analysis provided, generate wiki files.",
@@ -215,11 +208,11 @@ Use wiki/entities/ and wiki/concepts/ only when the schema does not provide a mo
             "",
             "## What to generate",
             "",
-            "1. A source summary page at **$summaryPath** (MUST use this exact path)",
-            "2. For academic papers, also create a paper page in **wiki/papers/** with OmegaWiki-style sections: Problem & Context, Key idea, Method, Experiment & Results, Limitations, Open questions, My take, Related.",
-            "3. Entity or schema-defined typed pages for key named things identified in the analysis. Prefer schema-defined directories when present; otherwise use wiki/entities/.",
-            "4. Concept or schema-defined typed pages for key ideas, methods, techniques, and abstractions. Prefer schema-defined directories when present; otherwise use wiki/concepts/.",
-            "5. For academic papers, method pages in **wiki/methods/** only for named, reusable, citable techniques. Do not duplicate every paper-specific method detail as a method page.",
+            "1. A source summary page (path from the WIKI_SCHEMA table above, row \"source\")",
+            "2. For academic papers, a paper page in the directory from the WIKI_SCHEMA table, row \"paper\" — with OmegaWiki-style sections: Problem & Context, Key idea, Method, Experiment & Results, Limitations, Open questions, My take, Related.",
+            "3. Entity pages: directory from the WIKI_SCHEMA table, row \"entity\" (or schema-defined typed pages for key named things).",
+            "4. Concept pages: directory from the WIKI_SCHEMA table, row \"concept\" (or schema-defined typed pages for key ideas, methods, techniques).",
+            "5. For academic papers, method pages in the directory from the WIKI_SCHEMA table, row \"method\" — only for named, reusable, citable techniques.",
             "6. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
             "7. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
             "8. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
@@ -269,8 +262,6 @@ Use wiki/entities/ and wiki/concepts/ only when the schema does not provide a mo
             "    ---",
             "",
             "    # Example Entity",
-            "",
-            "    Body content goes here. Use [[wikilink]] syntax in the body for cross-references.",
             "",
             "Other rules:",
             "- Use [[wikilink]] syntax in the BODY for cross-references between pages",
@@ -381,7 +372,6 @@ ${languageDirective(language)}
 - 响应的**第一个字符**必须是 `-`(`---` 的开头)
 - 输出完整文件:YAML frontmatter + body
 - 不要有 preamble(不要 "Here is the merged version:"),不要有分析散文
-- 调用方会用 deterministic 值覆盖 `sources` / `tags` / `related` / `updated` —— 你的工作只是 body 与其他字段
 
 ## Existing version on disk
 $existingContent
@@ -394,8 +384,6 @@ $incomingContent
 ---
 
 Now output the merged file. Start with `---` on the first line.
-
-${languageDirective(language)}
 """.trimIndent()
 
     /**
@@ -608,12 +596,8 @@ ${languageDirective(language)}
         appendLine()
         appendLine("## 模式:增量更新(关键,跟从零生成的区别)")
         appendLine()
-        appendLine("你不是从零生成脉络——`existingThread` 是上一次生成的脉络快照,代表用户已经认定的「主轴」。你的工作是**在保持主轴稳定的前提下,接入本次新增**:")
-        appendLine()
-        appendLine("  - 70% 情况下,本次新灵感会**丰富**现有主线的某一段,而非开新线;")
-        appendLine("  - 20% 情况下,新灵感会**分叉**出并行线(并行探索);")
-        appendLine("  - 8% 情况下,新灵感跟某条旧灵感**矛盾或推翻**——把旧段标记为 obsolete;")
-        appendLine("  - 2% 情况下,新灵感标志用户**主题切换**——主轴整体演化,旧主线变 background。")
+        appendLine("你不是从零生成脉络——`existingThread` 是上一次生成的脉络快照,代表用户已经认定的「主轴」。")
+        appendLine("在保持主轴稳定的前提下,接入本次新增,只描述实际发生了什么变化。")
         appendLine()
         appendLine("请在 `diff` 字段里如实记录本次改了什么,不要为了显得「有变化」而虚构 diff,也不要为了「稳定」而吞掉真实的演变。")
         appendLine()
@@ -631,7 +615,16 @@ ${languageDirective(language)}
         appendLine("- 摘要: ${newInspiration.summary.ifBlank { "(无摘要,从内容推断)" }}")
         appendLine("- 完整内容:")
         appendLine("```")
-        appendLine(newInspiration.content.take(4_000))
+        val rawContent = newInspiration.content
+        val truncated = if (rawContent.length <= 4_000) rawContent else {
+            val paragraphs = rawContent.split(Regex("\\n\\s*\\n"))
+            val head = paragraphs.take(3).joinToString("\n\n")
+            val tail = paragraphs.takeLast(1).joinToString("\n\n")
+            val headTail = "$head\n\n... [中间略] ...\n\n$tail"
+            if (headTail.length <= 4_000) headTail
+            else head.take(4_000 - tail.length - 30) + "\n\n... [中间略] ...\n\n" + tail
+        }
+        appendLine(truncated)
         appendLine("```")
 
         if (historicalInspirationDigest.isNotEmpty()) {
@@ -705,8 +698,6 @@ ${languageDirective(language)}
         appendLine("7. relations 的 from/to 优先使用输入里的灵感标题;如果内容没有清晰标题,用内容中的短语概括,但不要捏造外部实体。")
         appendLine("8. diff.newMainlineSegments / evolvedSegments / obsoleteSegments 必填,即使本次没变化也要写空数组 `[]`,让前端能可靠检测「无 diff」。")
         appendLine("9. 整体输出 ≤ 2,000 字符——灵感脉络是要在卡片上读的,不能写论文。")
-        appendLine()
-        appendLine(languageDirective(language))
     }
 
     /**
