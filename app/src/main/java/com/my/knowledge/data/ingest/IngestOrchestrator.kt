@@ -264,6 +264,11 @@ class IngestOrchestrator(
     private val fragmenter = MarkdownFragmenter()
     private val wikiCompiler = WikiPageCompiler()
 
+    // P1-B.4 / PERF-2: in-process handoff for the parse → analysis
+    // relay. Lifted into [ParsedContentCache] so the eviction
+    // policy is testable without the orchestrator's other deps.
+    private val parsedContentCache = ParsedContentCache(limit = 64)
+
     // P0-1: the 4-lane claim loop / idle detection / cold-start
     // recovery that used to be inlined at the top of this class now
     // lives in [IngestScheduler]. The orchestrator still owns the
@@ -490,6 +495,13 @@ class IngestOrchestrator(
         return source.sourceType == "image" || source.mimeType?.startsWith("image/") == true
     }
 
+    private fun cacheParsedContent(sourceId: String, entity: com.my.knowledge.data.db.entity.ParsedContentEntity) {
+        parsedContentCache.put(sourceId, entity)
+    }
+
+    private fun lookupCachedParsedContent(sourceId: String): com.my.knowledge.data.db.entity.ParsedContentEntity? =
+        parsedContentCache.get(sourceId)
+
     private fun ingestParsers() = listOf(
         MarkdownParser(),
         ImageOcrParser(),
@@ -523,6 +535,9 @@ class IngestOrchestrator(
             updatedAt = now
         )
         db.parsedContentDao().insert(parsedEntity)
+        // P1-B.4 / PERF-2: also stage in the in-memory cache so the
+        // analysis stage can pick it up without a DB read.
+        cacheParsedContent(source.id, parsedEntity)
         fileStore.writeParsedMarkdown(source.id, parsed.markdown)
         fileStore.writeParsedMetadata(source.id, parsed.metadataJson)
         syncVisibleKnowledgeItemAfterParse(source.id, parsed.markdown, parsed.plainText, now)
@@ -556,7 +571,13 @@ class IngestOrchestrator(
     internal suspend fun runAnalysisTask(task: ProcessingTaskEntity) {
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: error("Source not found: $sourceId")
-        val parsed = db.parsedContentDao().getLatestBySource(source.id) ?: error("Parsed content not found")
+        // P1-B.4 / PERF-2: prefer the in-memory handoff from the
+        // parse stage. Fall back to the DB read for cold starts
+        // (process restart, Worker-driven scheduling, cache
+        // eviction) — the row is still the source of truth.
+        val parsed = lookupCachedParsedContent(source.id)
+            ?: db.parsedContentDao().getLatestBySource(source.id)
+            ?: error("Parsed content not found")
         ingestStateMachine.transitionToAnalyzing(source.id)
         updateProgress(task, 20, "加载 ${parsed.plainText.length} 字解析结果", "正在汇总标签与摘要")
 
