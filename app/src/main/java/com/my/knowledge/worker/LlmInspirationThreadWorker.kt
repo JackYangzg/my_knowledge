@@ -281,11 +281,7 @@ class LlmInspirationThreadWorker(
     }
 
     private fun jsonArray(values: List<String>): String =
-        if (values.isEmpty()) "[]"
-        else values.joinToString(",", "[", "]") { "\"${escape(it)}\"" }
-
-    private fun escape(s: String): String =
-        s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+        JSONArray(values).toString()
 
     private fun String.countMainlineSegments(): Int =
         if (length < 2) 0 else (count { it == '\"' } / 2).coerceAtLeast(0)
@@ -335,9 +331,11 @@ class LlmInspirationThreadWorker(
     )
 
     internal data class ParsedRelation(val from: String, val to: String, val relation: String) {
-        fun toJson(): String =
-            "{\"from\":\"${from.escape()}\",\"to\":\"${to.escape()}\",\"relation\":\"${relation.escape()}\"}"
-        private fun String.escape() = replace("\\", "\\\\").replace("\"", "\\\"")
+        fun toJson(): String = JSONObject()
+            .put("from", from)
+            .put("to", to)
+            .put("relation", relation)
+            .toString()
     }
 
     private data class ParsedDiff(
@@ -347,9 +345,11 @@ class LlmInspirationThreadWorker(
     )
 
     internal data class ParsedEvolved(val label: String, val before: String, val after: String) {
-        fun toJson(): String =
-            "{\"label\":\"${label.escape()}\",\"before\":\"${before.escape()}\",\"after\":\"${after.escape()}\"}"
-        private fun String.escape() = replace("\\", "\\\\").replace("\"", "\\\"")
+        fun toJson(): String = JSONObject()
+            .put("label", label)
+            .put("before", before)
+            .put("after", after)
+            .toString()
     }
 
     companion object {
