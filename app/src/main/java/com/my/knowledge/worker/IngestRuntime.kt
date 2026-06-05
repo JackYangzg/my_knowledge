@@ -6,6 +6,7 @@ import android.os.PowerManager
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.ingest.IngestOrchestrator
+import com.my.knowledge.data.ingest.IngestOrchestratorApi
 import com.my.knowledge.ui.DependencyProvider
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -73,14 +74,15 @@ object IngestRuntime {
     }
 
     private suspend fun runOnceInternal(appContext: Context) {
-        IngestOrchestrator(
+        val orchestrator: IngestOrchestratorApi = IngestOrchestrator(
             db = AppDatabase.getInstance(appContext),
             fileStore = LocalFileStore(appContext),
             repository = DependencyProvider.provideKnowledgeRepository(appContext),
             scheduler = DependencyProvider.provideScheduler(appContext),
             rebuildDebouncer = DependencyProvider.provideRebuildDebouncer(appContext),
             longSourceCheckpointStore = com.my.knowledge.data.ingest.LongSourceCheckpointStore(appContext.filesDir),
-        ).runUntilIdle()
+        )
+        orchestrator.runUntilIdle()
     }
 
     private suspend fun withIngestRuntimeLocks(appContext: Context, block: suspend () -> Unit) {

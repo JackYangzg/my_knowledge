@@ -223,6 +223,9 @@ internal data class ParsedAnalysis(
 }
 
 @OptIn(FlowPreview::class)
+// CQ-10: implement the narrow entry-point interface so callers
+// (IngestRuntime, the future WorkerFactory) can depend on
+// IngestOrchestratorApi instead of the concrete 2600-line class.
 class IngestOrchestrator(
     private val db: AppDatabase,
     private val fileStore: LocalFileStore,
@@ -257,7 +260,7 @@ class IngestOrchestrator(
      * chunked code path with a short fixture.
      */
     private val markdownChunker: MarkdownSemanticChunker = MarkdownSemanticChunker(),
-) {
+) : IngestOrchestratorApi {
     private val fragmenter = MarkdownFragmenter()
     private val wikiCompiler = WikiPageCompiler()
 
@@ -336,7 +339,7 @@ class IngestOrchestrator(
      * orchestrator's `try { ... } catch (e: Exception)` in [runTask]
      * then routes the failure to the task's retry path.
      */
-    fun cancel() {
+    override fun cancel() {
         currentJob?.cancel()
     }
 
@@ -371,7 +374,7 @@ class IngestOrchestrator(
     // recovery moved to [IngestScheduler]. The orchestrator keeps
     // `runTask` (per-task business logic) and `currentJob` (LLM
     // stream cancel) and hands them in as a function reference.
-    suspend fun runUntilIdle(maxTasks: Int = 80, parallelism: Int = 4) {
+    override suspend fun runUntilIdle(maxTasks: Int, parallelism: Int) {
         ingestScheduler.runUntilIdle(
             maxTasks = maxTasks,
             parallelism = parallelism,
