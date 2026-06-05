@@ -194,17 +194,43 @@ class RebuildDebouncer(
                         } catch (ce: kotlinx.coroutines.CancellationException) {
                             throw ce
                         } catch (t: Throwable) {
-                            // Failure isolation: log and swallow so the
-                            // bucket keeps accepting future triggers.
-                            // The KB remains consistent at the last
-                            // successful rebuild; the next ingest will
-                            // re-schedule and the next successful run
-                            // will catch the KB up.
+                            // CQ-7: previously we just logged and
+                            // swallowed. The KB would silently stay on
+                            // its last-successful-rebuild snapshot
+                            // forever, and the user had no way to
+                            // know the rebuild was failing. Now we
+                            // also surface the failure into the
+                            // `review_item` queue so the user sees
+                            // "自动重建失败: $kbName / $kind" with
+                            // a "手动重建" affordance in the review
+                            // center.
                             Log.e(
                                 "RebuildDebouncer",
                                 "Rebuild action failed for kb=$kbKey kind=$kind (debounceMs=$debounceMs): ${t.message}",
                                 t,
                             )
+                            runCatching {
+                                db.reviewItemDao().insert(
+                                    com.my.knowledge.data.db.entity.ReviewItemEntity(
+                                        id = java.util.UUID.randomUUID().toString(),
+                                        sourceId = null,
+                                        itemId = null,
+                                        type = "rebuild_failed",
+                                        title = "自动重建失败：$kbKey / $kind",
+                                        description = t.message ?: t::class.java.simpleName,
+                                        payloadJson = """{"kbId":"$kbKey","kind":"$kind"}""",
+                                        suggestedActionsJson = """["手动触发重建","忽略"]""",
+                                        status = com.my.knowledge.data.db.entity.ReviewItemEntity.STATUS_PENDING,
+                                        createdAt = System.currentTimeMillis(),
+                                        resolvedAt = null,
+                                    )
+                                )
+                            }.onFailure { writeErr ->
+                                Log.w(
+                                    "RebuildDebouncer",
+                                    "Failed to write review_item for rebuild failure: ${writeErr.message}",
+                                )
+                            }
                         }
                     }
             }
