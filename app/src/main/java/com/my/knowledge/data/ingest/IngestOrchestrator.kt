@@ -281,13 +281,17 @@ class IngestOrchestrator(
         parsedContentDao = db.parsedContentDao(),
     )
 
-    // P0-1: ingest cache fast-path (sha256 == generated sibling).
+    // P0-1: ingest cache fast-path (sha256 == generated sibling +
+    // matching analysis promptVersion). CQ-12/ARCH-6 upgrade: the
+    // cache now also requires the previous source's analysis to
+    // have been produced by the current INGEST_ANALYSIS_V1 prompt.
     // Was a 10-line private method on the orchestrator; lifted to
     // its own class so the cache hit policy is testable in
     // isolation and the orchestrator shrinks another 10 lines.
-    // ARCH-6 follow-up (cache key includes promptVersion) is
-    // tracked separately — it needs a v10→v11 schema migration.
-    private val ingestCache = IngestCache(sourceDao = db.sourceDocumentDao())
+    private val ingestCache = IngestCache(
+        sourceDao = db.sourceDocumentDao(),
+        analysisDao = db.analysisResultDao(),
+    )
 
     // P0-1: state machine for the source_document.status / linked
     // knowledge_item.status flips. Lifted from inlined
