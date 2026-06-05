@@ -1154,33 +1154,32 @@ class IngestOrchestrator(
         )
         appendLog(
             task,
-            "诊断:开始请求流式 JSON，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${schemaHint.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
+            "诊断:开始请求非流式 JSON(ARCH-8 §2.2)，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${schemaHint.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
             "running",
             step
         )
         return try {
-            val result = ai.streamJsonObserved(
+            val result = ai.chatJsonObserved(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
                 schemaHint = schemaHint,
                 temperature = temperature,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
-                onChunk = { delta -> throttler.observeDelta(delta.length) },
             )
             throttler.flush(throttler.totalCountForFlush())
             appendLog(
                 task,
-                "诊断:流式 JSON 请求完成，累计接收 ${throttler.totalCountForFlush()} 字符，清洗后 ${result.length} 字符",
+                "诊断:非流式 JSON 请求完成（一次性返回），清洗后 ${result.length} 字符",
                 "running",
                 step
             )
             result
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:流式 JSON 请求被取消：${e.message ?: "无附加信息"}", "running", step)
+            appendLog(task, "诊断:非流式 JSON 请求被取消：${e.message ?: "无附加信息"}", "running", step)
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:流式 JSON 请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
+            appendLog(task, "诊断:非流式 JSON 请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
             throw t
         } finally {
             throttler.close()
@@ -1203,33 +1202,32 @@ class IngestOrchestrator(
         )
         appendLog(
             task,
-            "诊断:开始请求流式文本，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
+            "诊断:开始请求非流式文本(ARCH-8 §2.2)，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
             "running",
             step
         )
         return try {
-            val result = ai.completeStreamObserved(
+            val result = ai.completeObserved(
                 systemPrompt = systemPrompt,
                 userMessage = userPrompt,
                 temperature = temperature,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
-                onChunk = { delta -> throttler.observeDelta(delta.length) },
             )
             val finalCount = throttler.totalCountForFlush()
             throttler.flush(finalCount)
             appendLog(
                 task,
-                "诊断:流式文本请求完成，累计接收 $finalCount 字符，清洗后 ${result.length} 字符",
+                "诊断:非流式文本请求完成（一次性返回），清洗后 ${result.length} 字符",
                 "running",
                 step
             )
             result
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:流式文本请求被取消：${e.message ?: "无附加信息"}", "running", step)
+            appendLog(task, "诊断:非流式文本请求被取消：${e.message ?: "无附加信息"}", "running", step)
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:流式文本请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
+            appendLog(task, "诊断:非流式文本请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
             throw t
         } finally {
             throttler.close()
@@ -1284,7 +1282,7 @@ class IngestOrchestrator(
         // out of the persisted wiki content even if a future
         // AiGateway.change forgets to do it at the boundary.
         //
-        appendLog(task, "诊断:generation 使用流式模型调用，边接收 FILE 块边更新进度，readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS", "running", "调用 AI 生成 wiki 页面")
+        appendLog(task, "诊断:generation 使用非流式模型调用(ARCH-8 §2.2，一次性返回后解析 FILE 块)，readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS", "running", "调用 AI 生成 wiki 页面")
         val response = try {
             streamTextWithThrottledProgress(
                 systemPrompt = systemPrompt,
@@ -1292,7 +1290,7 @@ class IngestOrchestrator(
                 temperature = 0.1f,
                 task = task,
                 step = "调用 AI 生成 wiki 页面",
-                logMessage = { count -> "generation 流式接收 ${count} 字符" },
+                logMessage = { count -> "generation 接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
@@ -1303,10 +1301,10 @@ class IngestOrchestrator(
                 }
             )
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:generation 流式模型调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成 wiki 页面")
+            appendLog(task, "诊断:generation 非流式模型调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成 wiki 页面")
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:generation 流式模型调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成 wiki 页面")
+            appendLog(task, "诊断:generation 非流式模型调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成 wiki 页面")
             throw t
         }
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
@@ -1446,7 +1444,7 @@ class IngestOrchestrator(
 
         appendLog(
             task,
-            "诊断:analysis 使用流式 JSON 调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${ANALYSIS_SCHEMA.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS",
+            "诊断:analysis 使用非流式 JSON 调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${ANALYSIS_SCHEMA.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS",
             "running",
             "调用 AI 生成结构化分析"
         )
@@ -1458,7 +1456,7 @@ class IngestOrchestrator(
                 temperature = 0.1f,
                 task = task,
                 step = "调用 AI 生成结构化分析",
-                logMessage = { count -> "analysis 流式接收 ${count} 字符" },
+                logMessage = { count -> "analysis 接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
@@ -1469,15 +1467,15 @@ class IngestOrchestrator(
                 }
             )
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:analysis 流式 JSON 调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成结构化分析")
+            appendLog(task, "诊断:analysis 非流式 JSON 调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成结构化分析")
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:analysis 流式 JSON 调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成结构化分析")
+            appendLog(task, "诊断:analysis 非流式 JSON 调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成结构化分析")
             throw t
         }
         appendLog(
             task,
-            "诊断:analysis 流式 JSON 返回 ${cleaned.length} 字符",
+            "诊断:analysis 非流式 JSON 返回 ${cleaned.length} 字符",
             "running",
             "调用 AI 生成结构化分析"
         )
@@ -1636,7 +1634,7 @@ class IngestOrchestrator(
                 temperature = 0.1f,
                 task = task,
                 step = "分块 ${chunk.index}/${chunks.size} 分析中",
-                logMessage = { count -> "分块 ${chunk.index}/${chunks.size} 流式接收 ${count} 字符" },
+                logMessage = { count -> "分块 ${chunk.index}/${chunks.size} 接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
