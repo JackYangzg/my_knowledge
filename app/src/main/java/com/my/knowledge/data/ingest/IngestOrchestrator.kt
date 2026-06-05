@@ -27,9 +27,7 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
@@ -1056,86 +1054,15 @@ class IngestOrchestrator(
     }
 
     /**
-     * P0-2: throttle a [Flow] of SSE delta strings into at most one
-     * `updateProgress` write per 500ms, gated by "every N chunks
-     * received" first. The pattern:
-     *
-     *   1. Wrap the consumer-side flow in a [MutableSharedFlow] of
-     *      progress signals (the char count after the new chunk
-     *      landed). The signal goes out on every chunk; throttling
-     *      happens at the writer side.
-     *   2. A child coroutine `launch { signals.sample(500.ms).collect { ... } }`
-     *      consumes the signal flow and calls [updateProgress] — at
-     *      most once per sample window.
-     *   3. The main coroutine `source.collect { ... }` keeps
-     *      accumulating, untouched by the throttle.
-     *
-     * The child coroutine runs under [supervisorScope] so an
-     * `updateProgress` DB failure doesn't take down the streaming
-     * collection. Cancellation of the parent (via [cancel]) tears
-     * down both the child and the SSE reader on the next line.
-     *
-     * @param everyN  the spec's "每收到 N token 调一次" gate. We use
-     *   chunk-character-count modulo N — N=20 is a reasonable
-     *   sweet spot for "many cheap ticks, few expensive DB writes".
-     *   The actual filter is `sb.length % everyN == 0`, so on small
-     *   outputs (< N chars) the very last progress signal still
-     *   gets through (sample() flushes the trailing value when the
-     *   upstream completes).
-     * @param sampleMs  the spec's "500ms 内只写 1 次 DB" window.
-     */
-    private suspend fun collectWithThrottledProgress(
-        source: Flow<String>,
-        task: ProcessingTaskEntity,
-        step: String,
-        logMessage: (Int) -> String,
-        everyN: Int = PROGRESS_EVERY_N_TOKENS,
-        sampleMs: Long = PROGRESS_SAMPLE_MS,
-    ): String = supervisorScope {
-        val accumulator = StringBuilder()
-        val throttler = SseProgressThrottler(
-            writeProgress = { count -> updateProgress(task, 50, step, logMessage(count)) },
-            everyN = everyN,
-            sampleMs = sampleMs,
-        )
-        appendLog(task, "诊断:开始流式模型输出，progressEvery=$everyN, sampleMs=$sampleMs", "running", step)
-        try {
-            source.collect { chunk ->
-                accumulator.append(chunk)
-                throttler.observe(accumulator.length)
-            }
-            throttler.flush(accumulator.length)
-            appendLog(task, "诊断:流式模型输出完成，累计接收 ${accumulator.length} 字符", "running", step)
-        } catch (e: CancellationException) {
-            appendLog(task, "诊断:流式模型输出被取消：${e.message ?: "无附加信息"}", "running", step)
-            throw e
-        } catch (t: Throwable) {
-            appendLog(task, "诊断:流式模型输出异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
-            throw t
-        } finally {
-            throttler.close()
-        }
-        accumulator.toString()
-    }
-
-    /**
-     * P0-2: convenience wrapper around [ai.streamJson] that wires
-     * the per-chunk `onChunk` callback into the throttled progress
-     * writer from [collectWithThrottledProgress]. The gateway owns
-     * the accumulation + cleaning; we just observe chunks as they
-     * land and rate-limit our DB writes.
-     *
-     * This is the analysis-task counterpart to
-     * [collectWithThrottledProgress] (which operates on a
-     * `Flow<String>`). They share the same throttling constants
-     * (PROGRESS_EVERY_N_TOKENS / PROGRESS_SAMPLE_MS) so a single
-     * rate limit is enforced across the whole pipeline.
-     *
-     * Implementation note: we DON'T collect the chunks into a
-     * local accumulator here — that would duplicate the gateway's
-     * own accumulation. Instead we let the gateway build the full
-     * text and we just listen to the onChunk side-channel for the
-     * every-N-tokens gate.
+     * ARCH-8 §2.2: thin wrapper around [ai.chatJsonObserved] (the
+     * non-streaming + retry variant) that emits a "started" /
+     * "completed" / "cancelled" / "errored" log line on the task
+     * log. Pre-ARCH-8 this method was a streaming wrapper that
+     * wired a per-chunk `onChunk` callback into a throttled
+     * progress writer; after PR3+PR5 there is no throttling left
+     * to do, and the gateway returns the full response in one
+     * `chatJsonObserved` call. The wrapper survives so the call
+     * sites don't have to know about `ai` directly.
      */
     private suspend fun streamJsonWithThrottledProgress(
         systemPrompt: String,
@@ -1144,14 +1071,8 @@ class IngestOrchestrator(
         temperature: Float,
         task: ProcessingTaskEntity,
         step: String,
-        logMessage: (Int) -> String,
         onRetry: suspend (com.my.knowledge.data.ai.AiRetryEvent) -> Unit = {},
     ): String {
-        val throttler = SseProgressThrottler(
-            writeProgress = { count -> updateProgress(task, 50, step, logMessage(count)) },
-            everyN = PROGRESS_EVERY_N_TOKENS,
-            sampleMs = PROGRESS_SAMPLE_MS,
-        )
         appendLog(
             task,
             "诊断:开始请求非流式 JSON(ARCH-8 §2.2)，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${schemaHint.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
@@ -1159,30 +1080,27 @@ class IngestOrchestrator(
             step
         )
         return try {
-            val result = ai.chatJsonObserved(
+            ai.chatJsonObserved(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
                 schemaHint = schemaHint,
                 temperature = temperature,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
-            )
-            throttler.flush(throttler.totalCountForFlush())
-            appendLog(
-                task,
-                "诊断:非流式 JSON 请求完成（一次性返回），清洗后 ${result.length} 字符",
-                "running",
-                step
-            )
-            result
+            ).also { result ->
+                appendLog(
+                    task,
+                    "诊断:非流式 JSON 请求完成（一次性返回），清洗后 ${result.length} 字符",
+                    "running",
+                    step
+                )
+            }
         } catch (e: CancellationException) {
             appendLog(task, "诊断:非流式 JSON 请求被取消：${e.message ?: "无附加信息"}", "running", step)
             throw e
         } catch (t: Throwable) {
             appendLog(task, "诊断:非流式 JSON 请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
             throw t
-        } finally {
-            throttler.close()
         }
     }
 
@@ -1192,14 +1110,8 @@ class IngestOrchestrator(
         temperature: Float,
         task: ProcessingTaskEntity,
         step: String,
-        logMessage: (Int) -> String,
         onRetry: suspend (com.my.knowledge.data.ai.AiRetryEvent) -> Unit = {},
     ): String {
-        val throttler = SseProgressThrottler(
-            writeProgress = { count -> updateProgress(task, 50, step, logMessage(count)) },
-            everyN = PROGRESS_EVERY_N_TOKENS,
-            sampleMs = PROGRESS_SAMPLE_MS,
-        )
         appendLog(
             task,
             "诊断:开始请求非流式文本(ARCH-8 §2.2)，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms",
@@ -1207,30 +1119,26 @@ class IngestOrchestrator(
             step
         )
         return try {
-            val result = ai.completeObserved(
+            ai.completeObserved(
                 systemPrompt = systemPrompt,
                 userMessage = userPrompt,
                 temperature = temperature,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
-            )
-            val finalCount = throttler.totalCountForFlush()
-            throttler.flush(finalCount)
-            appendLog(
-                task,
-                "诊断:非流式文本请求完成（一次性返回），清洗后 ${result.length} 字符",
-                "running",
-                step
-            )
-            result
+            ).also { result ->
+                appendLog(
+                    task,
+                    "诊断:非流式文本请求完成（一次性返回），清洗后 ${result.length} 字符",
+                    "running",
+                    step
+                )
+            }
         } catch (e: CancellationException) {
             appendLog(task, "诊断:非流式文本请求被取消：${e.message ?: "无附加信息"}", "running", step)
             throw e
         } catch (t: Throwable) {
             appendLog(task, "诊断:非流式文本请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
             throw t
-        } finally {
-            throttler.close()
         }
     }
 
@@ -1290,7 +1198,6 @@ class IngestOrchestrator(
                 temperature = 0.1f,
                 task = task,
                 step = "调用 AI 生成 wiki 页面",
-                logMessage = { count -> "generation 接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
@@ -1456,7 +1363,6 @@ class IngestOrchestrator(
                 temperature = 0.1f,
                 task = task,
                 step = "调用 AI 生成结构化分析",
-                logMessage = { count -> "analysis 接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
@@ -1634,7 +1540,6 @@ class IngestOrchestrator(
                 temperature = 0.1f,
                 task = task,
                 step = "分块 ${chunk.index}/${chunks.size} 分析中",
-                logMessage = { count -> "分块 ${chunk.index}/${chunks.size} 接收 ${count} 字符" },
                 onRetry = { event ->
                     appendLog(
                         task,
@@ -2439,25 +2344,6 @@ class IngestOrchestrator(
         private const val CURRENT_INDEX_PROMPT_CHARS: Int = 5_000
         private const val CURRENT_INDEX_PROMPT_CHARS_REST: Int = 2_000
         private const val STAGE2_SOURCE_EXCERPT_CHARS: Int = 24_000
-
-        /**
-         * P0-2: throttling constants for the SSE-driven progress
-         * writer. Pin them as named constants (instead of inline
-         * literals) so:
-         *   1. A future tuning PR can't silently change the rate
-         *      limit without a code review trace.
-         *   2. The unit test can assert the values match the
-         *      P0-2 spec (N=20 tokens / 500ms window).
-         *
-         * Token-counting uses chunk-character-length, not real
-         * tokenizer tokens — the gateway exposes deltas as opaque
-         * strings, and a 1-3 char chunk from the SSE stream is
-         * close enough to "one token" for progress-bar purposes.
-         * Real tokenizer count would require pulling the LLM's
-         * tokenizer into the gateway, which is out of scope.
-         */
-        const val PROGRESS_EVERY_N_TOKENS: Int = 20
-        const val PROGRESS_SAMPLE_MS: Long = 500L
 
         // ── P0-3: long-source path tunables ─────────────────────────────
         //
