@@ -8,6 +8,8 @@ import com.my.knowledge.worker.DistillationWorker
 import com.my.knowledge.worker.IngestWorker
 import com.my.knowledge.worker.IngestRuntime
 import com.my.knowledge.worker.LlmInspirationThreadWorker
+import com.my.knowledge.worker.NaturalLanguageGapReanalysisWorker
+import com.my.knowledge.worker.NewItemGapMatchWorker
 import com.my.knowledge.worker.SummaryWorker
 import com.my.knowledge.worker.TagWorker
 import com.my.knowledge.worker.ThreadEvolutionWorker
@@ -143,6 +145,45 @@ class ProcessingTaskScheduler(
             .build()
         workManager.enqueueUniqueWork(
             "distillation_$chainId",
+            ExistingWorkPolicy.REPLACE,
+            request,
+        )
+    }
+
+    /**
+     * FRAG-1.4 (P12): enqueue a natural-language reanalysis worker
+     * for one chain. Triggered by the user typing in the detail page
+     * "重新分析" text field. REPLACE policy collapses multiple taps.
+     */
+    fun scheduleGapReanalysis(chainId: String, userText: String) {
+        val workManager = WorkManager.getInstance(appContext)
+        val request = OneTimeWorkRequestBuilder<NaturalLanguageGapReanalysisWorker>()
+            .setInputData(
+                workDataOf(
+                    "chainId" to chainId,
+                    "userText" to userText,
+                )
+            )
+            .build()
+        workManager.enqueueUniqueWork(
+            "gap_reanalysis_$chainId",
+            ExistingWorkPolicy.REPLACE,
+            request,
+        )
+    }
+
+    /**
+     * FRAG-1.4 (P13): enqueue a best-effort gap match worker for a
+     * freshly imported item. Called from the ingest-completion path
+     * (RELIAB-1 chain) and the user "重新分析" button.
+     */
+    fun scheduleNewItemMatch(itemId: String) {
+        val workManager = WorkManager.getInstance(appContext)
+        val request = OneTimeWorkRequestBuilder<NewItemGapMatchWorker>()
+            .setInputData(workDataOf("itemId" to itemId))
+            .build()
+        workManager.enqueueUniqueWork(
+            "new_item_gap_match_$itemId",
             ExistingWorkPolicy.REPLACE,
             request,
         )

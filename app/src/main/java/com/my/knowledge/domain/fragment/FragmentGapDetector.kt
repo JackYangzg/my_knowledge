@@ -1,5 +1,7 @@
 package com.my.knowledge.domain.fragment
 
+import com.my.knowledge.data.ai.AiGateway
+import com.my.knowledge.data.ai.AiPromptTemplates
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.dao.KnowledgeFragmentChainDao
 import com.my.knowledge.data.db.dao.KnowledgeFragmentGapDao
@@ -9,9 +11,11 @@ import com.my.knowledge.data.db.entity.KnowledgeFragmentGapEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.KnowledgeRelationEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
+import com.my.knowledge.ui.KnowledgeManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 import java.util.UUID
 
 /**
@@ -99,6 +103,94 @@ class FragmentGapDetector(
     suspend fun detectByChainId(chainId: String): Chain? = withContext(Dispatchers.IO) {
         val existing = chainDao.getById(chainId) ?: return@withContext null
         detectByKb(existing.knowledgeBaseId).firstOrNull { it.id == chainId }
+    }
+
+    /**
+     * FRAG-1.4 (P12): re-run gap detection for one chain after a
+     * user-asserted natural-language update. The LLM is treated as a
+     * reader of the user's statement, not a truth-verifier, so any
+     * gap it marks `resolved` keeps `resolvedByUserText` set (UI
+     * surfaces a "尚未经新 ingest 验证" badge).
+     *
+     * Returns the new gap rows to persist. The existing gap IDs
+     * survive — only `resolved` / `resolvedBy*` fields change for
+     * survivors, and `id` is freshly generated for new gaps.
+     */
+    suspend fun reanalyzeWithText(
+        chainId: String,
+        userText: String,
+        aiGateway: AiGateway = AiGateway(),
+    ): ReanalysisResult = withContext(Dispatchers.IO) {
+        val existingGaps = gapDao.getAllByChain(chainId)
+        if (existingGaps.isEmpty()) return@withContext ReanalysisResult(
+            chainId = chainId, updatedGaps = emptyList(), unresolvedCount = 0, newGapCount = 0,
+        )
+        val existingJson = serialiseGapsForPrompt(existingGaps)
+        val language = "中文"
+        val systemPrompt = AiPromptTemplates.gapReanalysisPrompt(existingJson, userText, language)
+        val userMessage = "请基于以上 prompt 输出 JSON,不要解释。"
+        if (KnowledgeManager.modelConfig.apiKey.isBlank()) {
+            error("LLM not configured; cannot run gap reanalysis")
+        }
+        val raw = aiGateway.complete(systemPrompt = systemPrompt, userMessage = userMessage)
+        val parsed = parseReanalysisJson(raw, existingGaps)
+        val now = System.currentTimeMillis()
+        val newEntities = parsed.toEntities(chainId, now)
+        gapDao.replaceForChain(chainId, newEntities)
+        val unresolved = newEntities.count { !it.resolved }
+        chainDao.updateGapCount(chainId, unresolved, now)
+        ReanalysisResult(
+            chainId = chainId,
+            updatedGaps = newEntities,
+            unresolvedCount = unresolved,
+            newGapCount = parsed.addedGaps.size,
+        )
+    }
+
+    /**
+     * FRAG-1.4 (P13): best-effort match a freshly imported item
+     * against every unresolved gap across the item's KB. The LLM
+     * returns the gap IDs it can confidently say are covered; we
+     * mark those resolved with `resolvedByItemId=itemId`. Non-matches
+     * are deliberately left alone — gaps are resolved by ingest
+     * evidence, not inferred absence.
+     *
+     * Returns the gap IDs that were just marked resolved.
+     */
+    suspend fun matchItemToGaps(
+        itemId: String,
+        aiGateway: AiGateway = AiGateway(),
+    ): List<String> = withContext(Dispatchers.IO) {
+        val item = itemDao.getById(itemId) ?: return@withContext emptyList()
+        val openChains = chainDao.getOpenByKb(item.knowledgeBaseId)
+        if (openChains.isEmpty()) return@withContext emptyList()
+        if (KnowledgeManager.modelConfig.apiKey.isBlank()) {
+            error("LLM not configured; cannot run gap match")
+        }
+        val resolvedNow = mutableListOf<String>()
+        for (chain in openChains) {
+            val openGaps = gapDao.getByChain(chain.id, resolved = false)
+            if (openGaps.isEmpty()) continue
+            val gapsJson = serialiseGapsForPrompt(openGaps)
+            val systemPrompt = AiPromptTemplates.gapMatchPrompt(
+                itemTitle = item.title,
+                itemSummary = item.summary.orEmpty(),
+                itemTagsJson = item.tagsJson,
+                gapsJson = gapsJson,
+            )
+            val userMessage = "请基于以上 prompt 输出 JSON,不要解释。"
+            val raw = aiGateway.complete(systemPrompt = systemPrompt, userMessage = userMessage)
+            val matched = parseMatchJson(raw, openGaps)
+            if (matched.isEmpty()) continue
+            val now = System.currentTimeMillis()
+            for (gap in matched) {
+                gapDao.markResolvedByItem(gap.id, itemId, now)
+                resolvedNow += gap.id
+            }
+            val newUnresolved = gapDao.getByChain(chain.id, resolved = false).size
+            chainDao.updateGapCount(chain.id, newUnresolved, now)
+        }
+        resolvedNow
     }
 
     // --- Internals ----------------------------------------------------
@@ -265,6 +357,144 @@ class FragmentGapDetector(
         resolved = false,
     )
 
+    private fun serialiseGapsForPrompt(gaps: List<KnowledgeFragmentGapEntity>): String {
+        val arr = JSONArray()
+        for (g in gaps) {
+            val obj = JSONObject()
+            obj.put("id", g.id)
+            obj.put("type", g.gapType)
+            obj.put("priority", g.priority)
+            obj.put("description", g.description)
+            obj.put("suggestion", g.suggestion)
+            obj.put("resolved", g.resolved)
+            arr.put(obj)
+        }
+        return arr.toString()
+    }
+
+    private fun parseReanalysisJson(
+        raw: String,
+        existing: List<KnowledgeFragmentGapEntity>,
+    ): ReanalysisParseResult {
+        val now = System.currentTimeMillis()
+        val byId = existing.associateBy { it.id }
+        val updates = mutableMapOf<String, String>() // gapId -> "resolved" | "still_open"
+        val addedGaps = mutableListOf<Gap>()
+        val text = raw.trim()
+        val json = extractFirstJsonObject(text)
+            ?: return ReanalysisParseResult(
+                updatedExisting = existing.map { it.copy() },
+                addedGaps = emptyList(),
+            )
+        return try {
+            val root = JSONObject(json)
+            val arr = root.optJSONArray("updates") ?: JSONArray()
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val gapId = obj.optString("gapId")
+                val action = obj.optString("action")
+                if (gapId.isNotBlank() && action in setOf("resolved", "still_open")) {
+                    updates[gapId] = action
+                }
+                val newGap = obj.optJSONObject("newGap")
+                if (newGap != null) {
+                    val typeName = newGap.optString("type", "MISSING_SUMMARY")
+                    val priorityName = newGap.optString("priority", "LOW")
+                    val type = runCatching { GapType.valueOf(typeName) }.getOrDefault(GapType.MISSING_SUMMARY)
+                    val priority = runCatching { GapPriority.valueOf(priorityName) }.getOrDefault(GapPriority.LOW)
+                    addedGaps += Gap(
+                        id = UUID.randomUUID().toString(),
+                        type = type,
+                        priority = priority,
+                        description = newGap.optString("description"),
+                        suggestion = newGap.optString("suggestion"),
+                        resolved = false,
+                    )
+                }
+            }
+            val updatedExisting: List<KnowledgeFragmentGapEntity> = existing.map { g ->
+                val action = updates[g.id]
+                when (action) {
+                    "resolved" -> g.copy(
+                        resolved = true,
+                        resolvedByItemId = null,
+                        resolvedByUserText = raw.take(500),
+                        resolvedAt = now,
+                    )
+                    else -> g.copy()
+                }
+            }
+            ReanalysisParseResult(updatedExisting = updatedExisting, addedGaps = addedGaps)
+        } catch (_: Exception) {
+            ReanalysisParseResult(updatedExisting = existing.map { it.copy() }, addedGaps = emptyList())
+        }
+    }
+
+    private fun parseMatchJson(
+        raw: String,
+        openGaps: List<KnowledgeFragmentGapEntity>,
+    ): List<KnowledgeFragmentGapEntity> {
+        val validIds = openGaps.map { it.id }.toSet()
+        val text = raw.trim()
+        val json = extractFirstJsonObject(text) ?: return emptyList()
+        return try {
+            val root = JSONObject(json)
+            val arr = root.optJSONArray("matchedGapIds") ?: return emptyList()
+            val matchedIds = (0 until arr.length())
+                .mapNotNull { arr.optString(it, "").takeIf { s -> s.isNotBlank() && s in validIds } }
+                .toSet()
+            openGaps.filter { it.id in matchedIds }
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun extractFirstJsonObject(text: String): String? {
+        val start = text.indexOf('{')
+        if (start < 0) return null
+        var depth = 0
+        var inString = false
+        var escape = false
+        for (i in start until text.length) {
+            val c = text[i]
+            if (escape) { escape = false; continue }
+            if (c == '\\' && inString) { escape = true; continue }
+            if (c == '"') { inString = !inString; continue }
+            if (inString) continue
+            when (c) {
+                '{' -> depth++
+                '}' -> {
+                    depth--
+                    if (depth == 0) return text.substring(start, i + 1)
+                }
+            }
+        }
+        return null
+    }
+
+    private fun ReanalysisParseResult.toEntities(
+        chainId: String,
+        now: Long,
+    ): List<KnowledgeFragmentGapEntity> {
+        val existingEntities = updatedExisting
+        val addedEntities = addedGaps.map { g ->
+            KnowledgeFragmentGapEntity(
+                id = g.id,
+                chainId = chainId,
+                gapType = g.type.name,
+                priority = g.priority.name,
+                description = g.description,
+                suggestion = g.suggestion,
+                resolved = false,
+                resolvedByItemId = null,
+                resolvedByUserText = null,
+                resolvedAt = null,
+                createdAt = now,
+            )
+        }
+        return existingEntities + addedEntities
+    }
+
     private fun List<Gap>.toEntities(chainId: String, now: Long): List<KnowledgeFragmentGapEntity> {
         return map { gap ->
             KnowledgeFragmentGapEntity(
@@ -306,6 +536,19 @@ class FragmentGapDetector(
         val description: String,
         val suggestion: String,
         val resolved: Boolean,
+    )
+
+    /** FRAG-1.4 (P12) reanalysis result. */
+    data class ReanalysisResult(
+        val chainId: String,
+        val updatedGaps: List<KnowledgeFragmentGapEntity>,
+        val unresolvedCount: Int,
+        val newGapCount: Int,
+    )
+
+    private data class ReanalysisParseResult(
+        val updatedExisting: List<KnowledgeFragmentGapEntity>,
+        val addedGaps: List<Gap>,
     )
 
     private fun KnowledgeItemEntity.parseTags(): List<String> {

@@ -738,6 +738,68 @@ ${languageDirective(language)}
         appendLine()
         appendLine("## 输出 markdown(只输出最终文章,不要解释)")
     }
+
+    /**
+     * FRAG-1.4 (P12): reanalysis prompt. Given the current gap list
+     * (serialised as JSON for stable ordering) and a user-asserted
+     * natural-language update, ask the LLM to classify each existing
+     * gap as `resolved` / `still_open` and optionally add new gaps
+     * surfaced by the user's text.
+     *
+     * The LLM is treated as a user-statement reader (P12), not a
+     * truth-verifier. The UI must show "用户声称已补,尚未经新 ingest
+     * 验证" for any gap marked `resolved` here.
+     */
+    fun gapReanalysisPrompt(
+        existingGapsJson: String,
+        userText: String,
+        language: String = "中文",
+    ): String = buildString {
+        appendLine(languageDirective(language))
+        appendLine()
+        appendLine("你是知识图谱分析师。基于以下已有缺口列表和用户的自然语言补充,")
+        appendLine("判断每个 gap 是「已解决」、「仍存在」还是「新发现」,并给出新发现 gap 的描述和建议。")
+        appendLine()
+        appendLine("[现有 gaps]")
+        appendLine(existingGapsJson)
+        appendLine()
+        appendLine("[用户自然语言]")
+        appendLine(userText)
+        appendLine()
+        appendLine("[输出 JSON]")
+        appendLine("""{"updates":[{"gapId":"<id>","action":"resolved|still_open"},{"newGap":{"type":"KB_EMPTY|NO_WIKI_PAGES|MISSING_SYNTHESIS|NO_MAINLINE|NO_RELATIONS|MISSING_TAGS|MISSING_SUMMARY|LOW_CONFIDENCE","priority":"HIGH|MEDIUM|LOW","description":"...","suggestion":"..."}}]}""")
+    }
+
+    /**
+     * FRAG-1.4 (P13): best-effort gap match prompt. Given a freshly
+     * imported item and a list of unresolved gaps, ask the LLM to
+     * return only the gap IDs it can confidently say are covered by
+     * the new item. Empty array = no confident match.
+     *
+     * Uncertain matches MUST be omitted (P13 best-effort).
+     */
+    fun gapMatchPrompt(
+        itemTitle: String,
+        itemSummary: String,
+        itemTagsJson: String,
+        gapsJson: String,
+        language: String = "中文",
+    ): String = buildString {
+        appendLine(languageDirective(language))
+        appendLine()
+        appendLine("你是知识图谱分析师。判断「新导入条目」的内容能否覆盖以下已有缺口(只返回能 100% 覆盖的 gapId,不确定就空)。")
+        appendLine()
+        appendLine("[新条目]")
+        appendLine("标题: ${itemTitle.ifBlank { "(无标题)" }}")
+        appendLine("摘要: ${itemSummary.ifBlank { "(无摘要)" }}")
+        appendLine("标签: $itemTagsJson")
+        appendLine()
+        appendLine("[未 resolve 的 gaps]")
+        appendLine(gapsJson)
+        appendLine()
+        appendLine("[输出 JSON]")
+        appendLine("""{"matchedGapIds":["<gapId>"]}""")
+    }
 }
 
 /**
