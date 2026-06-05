@@ -468,4 +468,11 @@
     <string name="ingest_service_channel_name">知识库导入</string>
     <string name="ingest_service_title">正在整理知识库</string>
     <string name="ingest_service_pending">剩余 %1$d 条</string>
+
+    <!-- P0-2: externalized hardcoded UI strings (P0-2 partial: ReviewQueueScreen + ImportCenterScreen + KnowledgeEditorScreen) -->
+    <string name="review_queue_title">Review Queue</string>
+    <string name="review_queue_retry_cd">重试</string>
+    <string name="editor_title_template">编辑 %1$s</string>
+    <string name="editor_title_placeholder">…</string>
+    <string name="editor_save_warning_inline">保存后会立即生效,知识图谱和检索都会更新。</string>
 </resources>

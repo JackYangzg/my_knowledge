@@ -102,7 +102,7 @@ fun KnowledgeEditorScreen(
             IconButton(onClick = onBack) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回",
+                    contentDescription = stringResource(R.string.auto_11d02415),
                     tint = palette.brand
                 )
             }
@@ -116,7 +116,10 @@ fun KnowledgeEditorScreen(
                 )
                 Spacer(modifier = Modifier.width(6.dp))
                 Text(
-                    text = "编辑 ${item?.title ?: title.ifBlank { "..." }}",
+                    text = stringResource(
+                        R.string.editor_title_template,
+                        item?.title ?: title.ifBlank { stringResource(R.string.editor_title_placeholder) }
+                    ),
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = palette.textPrimary,
@@ -194,7 +197,7 @@ fun KnowledgeEditorScreen(
                 ) {
                     Text(
                         text = stringResource(R.string.auto_ea35bac2) +
-                            "保存后会立即生效,知识图谱和检索都会更新。", style = MaterialTheme.typography.labelSmall,
+                            stringResource(R.string.editor_save_warning_inline), style = MaterialTheme.typography.labelSmall,
                         color = Color(0xFF9A6A1F),
                         modifier = Modifier.padding(10.dp)
                     )

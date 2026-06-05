@@ -71,7 +71,7 @@ fun ReviewQueueScreen(
                 Text(stringResource(R.string.auto_11d02415), fontSize = 14.sp, color = palette.brand)
             }
             Spacer(modifier = Modifier.height(8.dp))
-            Text("Review Queue", style = MaterialTheme.typography.displayLarge, color = palette.textPrimary)
+            Text(stringResource(R.string.review_queue_title), style = MaterialTheme.typography.displayLarge, color = palette.textPrimary)
             Text(stringResource(R.string.auto_1191b28d), style = MaterialTheme.typography.labelLarge, color = palette.textSecondary, modifier = Modifier.padding(top = 4.dp))
         }
 

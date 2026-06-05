@@ -185,16 +185,16 @@ private fun ImportSourceCard(
             Row(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.End) {
                 if (task?.status == "failed" || task?.status == "canceled") {
                     IconButton(onClick = onRetry) {
-                        Icon(Icons.Default.Refresh, contentDescription = "重试", tint = palette.brand)
+                        Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.review_queue_retry_cd), tint = palette.brand)
                     }
                 }
                 if (task?.status == "pending" || task?.status == "running") {
                     IconButton(onClick = onCancel) {
-                        Icon(Icons.Default.Cancel, contentDescription = "取消", tint = palette.semanticWarning)
+                        Icon(Icons.Default.Cancel, contentDescription = stringResource(R.string.auto_4d0b4688), tint = palette.semanticWarning)
                     }
                 }
                 IconButton(onClick = onDelete) {
-                    Icon(Icons.Default.Delete, contentDescription = "删除来源", tint = palette.semanticError)
+                    Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.auto_ecafc815), tint = palette.semanticError)
                 }
             }
         }
