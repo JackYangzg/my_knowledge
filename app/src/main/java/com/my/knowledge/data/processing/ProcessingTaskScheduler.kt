@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.work.*
 import com.my.knowledge.worker.ArchiveRecommendWorker
+import com.my.knowledge.worker.DistillationWorker
 import com.my.knowledge.worker.IngestWorker
 import com.my.knowledge.worker.IngestRuntime
 import com.my.knowledge.worker.LlmInspirationThreadWorker
@@ -129,9 +130,26 @@ class ProcessingTaskScheduler(
         )
     }
 
+    /**
+     * FRAG-1.3: enqueue a distillation worker for one chain. Unique
+     * work name (`distillation_<chainId>`) plus REPLACE semantics mean
+     * a user re-tap on "开始提炼" collapses into the existing in-flight
+     * job instead of spawning a second LLM call.
+     */
+    fun scheduleDistillation(chainId: String) {
+        val workManager = WorkManager.getInstance(appContext)
+        val request = OneTimeWorkRequestBuilder<DistillationWorker>()
+            .setInputData(workDataOf("chainId" to chainId))
+            .build()
+        workManager.enqueueUniqueWork(
+            "distillation_$chainId",
+            ExistingWorkPolicy.REPLACE,
+            request,
+        )
+    }
+
     fun scheduleIngestQueue() {
         IngestRuntime.start(appContext)
-
         val request = OneTimeWorkRequestBuilder<IngestWorker>()
             .setConstraints(
                 Constraints.Builder()

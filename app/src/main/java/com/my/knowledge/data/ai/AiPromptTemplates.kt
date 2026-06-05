@@ -708,6 +708,36 @@ ${languageDirective(language)}
         appendLine()
         appendLine(languageDirective(language))
     }
+
+    /**
+     * FRAG-1.3: distillation prompt. Given the chain's core question and
+     * the related wiki pages (entity / concept / source), produce a single
+     * rigorous synthesis article in markdown. Used by `DistillationEngine`.
+     */
+    fun distillationPrompt(
+        kbName: String,
+        coreQuestion: String,
+        materials: String,
+        language: String = "中文",
+    ): String = buildString {
+        appendLine(languageDirective(language))
+        appendLine()
+        appendLine("你是知识汇编者。以下是围绕一个核心问题「$coreQuestion」收集的 entity、concept、源页内容。")
+        appendLine("请基于这些材料,撰写一篇结构严谨、引用清晰的综合性文章。文章应:")
+        appendLine("- 围绕核心问题展开,不发散")
+        appendLine("- 引用具体的 entity 名称(用 [[entity名]] wikilink 格式)")
+        appendLine("- 标注每个论点的来源(用 [[Source X]] 格式,X 是下方材料的顺序编号)")
+        appendLine("- 篇幅 1500-3000 字")
+        appendLine("- 段落用 ## 二级标题组织")
+        appendLine()
+        appendLine("## 所属知识库")
+        appendLine(kbName)
+        appendLine()
+        appendLine("## 材料")
+        appendLine(materials)
+        appendLine()
+        appendLine("## 输出 markdown(只输出最终文章,不要解释)")
+    }
 }
 
 /**

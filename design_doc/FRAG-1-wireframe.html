@@ -1,0 +1,560 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>FRAG-1 视觉草案 — 碎片整理(列表 + 详情页 + 状态矩阵)</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --card: #ffffff;
+    --ink: #1d1d1f;
+    --ink2: #51525a;
+    --ink3: #8a8c95;
+    --line: #e3e4e8;
+    --line2: #ededf1;
+    --accent: #2f6bff;
+    --accent-soft: #e6edff;
+    --warn: #d97706;
+    --warn-soft: #fff4e0;
+    --danger: #d63b3b;
+    --danger-soft: #fde8e8;
+    --good: #0a8a4a;
+    --good-soft: #e2f6ea;
+    --star: #f3b300;
+    --shadow: 0 1px 2px rgba(0,0,0,0.04), 0 4px 14px rgba(0,0,0,0.05);
+  }
+  * { box-sizing: border-box; }
+  html, body { background: var(--bg); color: var(--ink); font: 14px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 0; }
+  .page { max-width: 1100px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  .sub { color: var(--ink2); margin-bottom: 24px; font-size: 13px; }
+  h2 { font-size: 18px; margin: 48px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+  h2:first-of-type { border-top: 0; margin-top: 0; }
+  h3 { font-size: 14px; margin: 0 0 8px; color: var(--ink2); font-weight: 600; }
+
+  .toc { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin-bottom: 24px; }
+  .toc a { color: var(--accent); text-decoration: none; margin-right: 14px; font-size: 13px; }
+  .toc a:hover { text-decoration: underline; }
+
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--ink2); margin-bottom: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  .phones { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-start; }
+  .phone {
+    width: 360px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .phone .status-bar {
+    height: 28px; padding: 6px 16px 0; display: flex; justify-content: space-between;
+    font-size: 11px; color: var(--ink3); font-weight: 600;
+  }
+  .phone .screen { padding: 0 0 12px; min-height: 540px; background: var(--bg); }
+  .phone .topbar {
+    height: 44px; padding: 0 16px; display: flex; align-items: center; gap: 8px;
+    background: var(--card); border-bottom: 1px solid var(--line2);
+  }
+  .phone .topbar .back { color: var(--accent); font-size: 18px; cursor: pointer; }
+  .phone .topbar .title { font-size: 15px; font-weight: 600; flex: 1; }
+  .phone .topbar .meta { font-size: 11px; color: var(--ink3); }
+
+  .tabs { display: flex; background: var(--card); border-bottom: 1px solid var(--line2); padding: 0 8px; }
+  .tab {
+    padding: 10px 8px; font-size: 13px; color: var(--ink3); cursor: pointer;
+    border-bottom: 2px solid transparent; margin-right: 4px;
+  }
+  .tab.active { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+  .tab .count { font-size: 11px; color: var(--ink3); margin-left: 2px; }
+
+  .stats { display: flex; gap: 8px; padding: 12px 16px 4px; }
+  .stat { flex: 1; background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .stat .n { font-size: 20px; font-weight: 700; color: var(--ink); line-height: 1.1; }
+  .stat .l { font-size: 11px; color: var(--ink3); margin-top: 2px; }
+  .stat .n.warn { color: var(--warn); }
+  .stat .n.good { color: var(--good); }
+  .stat .n.accent { color: var(--accent); }
+
+  .list { padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 8px; }
+  .chain {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px;
+    cursor: pointer;
+  }
+  .chain .title { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .chain .desc { font-size: 12px; color: var(--ink2); line-height: 1.5; }
+  .chain .meta { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; }
+  .badge.need { background: var(--warn-soft); color: var(--warn); }
+  .badge.distill { background: var(--accent-soft); color: var(--accent); }
+  .badge.recommend { background: var(--accent-soft); color: var(--accent); }
+  .badge.archived { background: var(--good-soft); color: var(--good); }
+  .badge.gap { background: var(--danger-soft); color: var(--danger); }
+  .badge.gap.med { background: var(--warn-soft); color: var(--warn); }
+  .badge.gap.low { background: var(--line2); color: var(--ink2); }
+  .badge.gap.verified { background: var(--good-soft); color: var(--good); }
+  .badge.star { background: var(--warn-soft); color: var(--star); }
+  .badge.synthesis { background: #efeaff; color: #6c3fde; }
+
+  .detail-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .goal-card { border-left: 3px solid var(--accent); }
+  .gap-card { border-left: 3px solid var(--warn); padding: 10px 12px; }
+  .gap-card.med { border-left-color: var(--warn); }
+  .gap-card.high { border-left-color: var(--danger); }
+  .gap-card.low { border-left-color: var(--ink3); }
+  .gap-card.resolved { border-left-color: var(--good); opacity: 0.7; }
+  .gap-card.resolved .gap-title { text-decoration: line-through; }
+
+  .card .label { font-size: 11px; color: var(--ink3); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+  .goal-card .text { font-size: 14px; color: var(--ink); font-weight: 500; line-height: 1.5; }
+  .goal-card .coreq { font-size: 12px; color: var(--ink2); margin-top: 6px; font-style: italic; }
+  .goal-card .stats-row { display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; font-size: 11px; color: var(--ink2); }
+  .goal-card .stats-row .pill { background: var(--line2); padding: 2px 8px; border-radius: 6px; }
+
+  .progress {
+    background: var(--line2); border-radius: 999px; height: 8px; overflow: hidden;
+    margin-top: 4px;
+  }
+  .progress > div { background: var(--accent); height: 100%; }
+  .progress-meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink2); margin-bottom: 4px; }
+  .progress-meta .pct { font-weight: 600; color: var(--ink); }
+
+  .gap-title { font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 4px; display: flex; align-items: center; gap: 6px; }
+  .gap-suggestion { font-size: 12px; color: var(--ink2); margin: 4px 0 6px; }
+  .gap-suggestion::before { content: "💡 "; }
+  .natural-input {
+    width: 100%; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px;
+    font-size: 12px; color: var(--ink); background: var(--bg); margin-top: 4px;
+  }
+  .natural-input::placeholder { color: var(--ink3); }
+  .user-assert {
+    margin-top: 6px; padding: 6px 8px; background: var(--warn-soft); border-radius: 6px;
+    font-size: 11px; color: var(--warn); display: flex; align-items: center; gap: 4px;
+  }
+
+  .bottom-bar {
+    position: sticky; bottom: 0; background: var(--card); border-top: 1px solid var(--line);
+    padding: 10px 12px; display: flex; gap: 8px; flex-wrap: wrap;
+  }
+  .btn {
+    flex: 1; min-width: 0; padding: 10px 8px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); font-size: 12px; font-weight: 600; color: var(--ink);
+    cursor: pointer; text-align: center;
+  }
+  .btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
+  .btn.warn { background: var(--warn); color: white; border-color: var(--warn); }
+  .btn.good { background: var(--good); color: white; border-color: var(--good); }
+  .btn.star { background: var(--warn-soft); color: var(--star); border-color: var(--warn); }
+  .btn.share { background: var(--card); }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .section-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 4px 0; font-size: 12px; color: var(--ink2); font-weight: 600;
+  }
+  .section-header .count { color: var(--ink3); font-weight: 400; }
+
+  .matrix { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px; overflow-x: auto; }
+  .matrix table { border-collapse: collapse; width: 100%; min-width: 540px; font-size: 12px; }
+  .matrix th, .matrix td { border: 1px solid var(--line2); padding: 8px 10px; text-align: center; }
+  .matrix th { background: var(--line2); font-weight: 600; }
+  .matrix td.state { font-weight: 600; background: var(--card); text-align: left; }
+  .matrix .ok { color: var(--good); font-size: 16px; }
+  .matrix .no { color: var(--ink3); font-size: 16px; }
+  .matrix code { background: var(--line2); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+
+  .note { background: #fffceb; border: 1px solid #f3d970; border-radius: 8px; padding: 8px 12px; font-size: 12px; color: #6a4d00; margin-bottom: 12px; }
+  .note strong { color: #4a3500; }
+
+  .anno { position: relative; }
+  .anno::after {
+    content: attr(data-n);
+    position: absolute; top: -6px; right: -6px;
+    background: var(--accent); color: white; font-size: 10px; font-weight: 700;
+    width: 18px; height: 18px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  }
+  .callouts { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin-top: 12px; font-size: 12px; color: var(--ink2); }
+  .callouts ol { margin: 0; padding-left: 20px; }
+  .callouts li { margin-bottom: 4px; }
+  .callouts code { background: var(--line2); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>FRAG-1 视觉草案 — 碎片整理(列表 + 详情页 + 状态矩阵)</h1>
+<div class="sub">2026-06-05 / D1 visual sketch / 静态 HTML,无 JS / 数据来自设计稿 §5</div>
+
+<div class="toc">
+  <a href="#list">1. 列表页(4 tab)</a>
+  <a href="#detail-need">2. 详情页 NEED_REVIEW</a>
+  <a href="#detail-distill">3. 详情页 DISTILL_READY</a>
+  <a href="#detail-archive">4. 详情页 RECOMMEND_READY</a>
+  <a href="#detail-archived">5. 详情页 ARCHIVED(标星+分享)</a>
+  <a href="#matrix">6. 4 状态 ↔ 按钮矩阵</a>
+</div>
+
+<div class="note">
+  <strong>设计要点:</strong>
+  ① 列表页 StatCard 用真实数字(目前是占位 18/0/0);
+  ② 详情页"完整度"用横条(轻量可视化,FRAG-1 v1 不上 entity 图谱);
+  ③ 缺口卡 3 档 priority(HIGH 红/MEDIUM 橙/LOW 灰);
+  ④ 自然语言输入 → 触发重分析 + ⚠️ user-asserted badge;
+  ⑤ 底部按钮按 status 显隐(见 §6 矩阵);
+  ⑥ ARCHIVED 状态额外有"分享图片"按钮(系统 Intent.ACTION_SEND)。
+</div>
+
+<h2 id="list">1. 列表页 — 4 tab 过滤</h2>
+<div class="legend">
+  <span><span class="dot" style="background:var(--warn)"></span>待完善 NEED_REVIEW</span>
+  <span><span class="dot" style="background:var(--accent)"></span>可提炼 DISTILL_READY</span>
+  <span><span class="dot" style="background:var(--good)"></span>归档 ARCHIVED</span>
+</div>
+
+<div class="phones">
+  <!-- 全部 tab -->
+  <div class="phone">
+    <div class="status-bar"><span>9:41</span><span>5G ●●●</span></div>
+    <div class="topbar"><span class="back">←</span><span class="title">碎片整理</span><span class="meta">KB·学习笔记</span></div>
+    <div class="tabs">
+      <div class="tab active">全部 <span class="count">7</span></div>
+      <div class="tab">待完善 <span class="count">3</span></div>
+      <div class="tab">可提炼 <span class="count">1</span></div>
+      <div class="tab">归档 <span class="count">3</span></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="n warn">3</div><div class="l">待完善</div></div>
+      <div class="stat"><div class="n accent">1</div><div class="l">可提炼</div></div>
+      <div class="stat"><div class="n good">3</div><div class="l">已归档</div></div>
+    </div>
+    <div class="list">
+      <div class="chain">
+        <div class="title">📚 Transformer 架构笔记合集</div>
+        <div class="desc">从注意力机制到多模态,5 篇核心 entity + 3 篇源页。主线为"自注意力 → 位置编码 → 多头机制"。</div>
+        <div class="meta">
+          <span class="badge need">待完善 · 3 缺口</span>
+          <span class="badge">5 entity</span>
+          <span class="badge">3 源</span>
+        </div>
+      </div>
+      <div class="chain">
+        <div class="title">📚 投资心理学</div>
+        <div class="desc">前景理论 + 损失厌恶 + 心理账户。</div>
+        <div class="meta">
+          <span class="badge distill">可提炼</span>
+          <span class="badge">8 entity</span>
+        </div>
+      </div>
+      <div class="chain">
+        <div class="title">📚 Rust 异步编程</div>
+        <div class="desc">tokio runtime + future + stream。</div>
+        <div class="meta">
+          <span class="badge archived">已归档</span>
+          <span class="badge">6 entity</span>
+        </div>
+      </div>
+      <div class="chain">
+        <div class="title">📚 安卓 Compose 性能优化</div>
+        <div class="desc">recomposition + derivedStateOf + lazy layout。</div>
+        <div class="meta">
+          <span class="badge archived">已归档</span>
+          <span class="badge star">⭐ 推荐</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 待完善 tab -->
+  <div class="phone">
+    <div class="status-bar"><span>9:41</span><span>5G ●●●</span></div>
+    <div class="topbar"><span class="back">←</span><span class="title">碎片整理</span><span class="meta">KB·学习笔记</span></div>
+    <div class="tabs">
+      <div class="tab">全部 <span class="count">7</span></div>
+      <div class="tab active">待完善 <span class="count">3</span></div>
+      <div class="tab">可提炼 <span class="count">1</span></div>
+      <div class="tab">归档 <span class="count">3</span></div>
+    </div>
+    <div class="list">
+      <div class="chain">
+        <div class="title">📚 Transformer 架构笔记合集</div>
+        <div class="desc">主线"自注意力 → 位置编码 → 多头机制"已凝聚,但还缺对比数据和真实应用案例。</div>
+        <div class="meta">
+          <span class="badge gap high">HIGH · 缺对比</span>
+          <span class="badge gap med">MED · 缺应用</span>
+        </div>
+      </div>
+      <div class="chain">
+        <div class="title">📚 分布式系统 CAP 定理</div>
+        <div class="desc">只有 1 个 entity,没有 wiki 合成页,无法形成主线。</div>
+        <div class="meta">
+          <span class="badge gap high">HIGH · 缺合成页</span>
+          <span class="badge gap med">MED · 缺关系</span>
+        </div>
+      </div>
+      <div class="chain">
+        <div class="title">📚 设计模式与 Kotlin 实践</div>
+        <div class="desc">4 个 entity 缺标签,无法聚类成主线。</div>
+        <div class="meta">
+          <span class="badge gap med">MED · 缺标签</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2 id="detail-need">2. 详情页 — NEED_REVIEW(待完善)</h2>
+<div class="phones">
+  <div class="phone" style="width: 380px;">
+    <div class="status-bar"><span>9:41</span><span>5G ●●●</span></div>
+    <div class="topbar">
+      <span class="back">←</span>
+      <span class="title">碎片整理</span>
+      <span class="meta anno" data-n="1">待完善</span>
+    </div>
+    <div class="detail-body">
+      <div class="card goal-card anno" data-n="2">
+        <div class="label">📌 目标</div>
+        <div class="text">证明『Transformer 在多模态长上下文场景下的可扩展性优于 RNN』</div>
+        <div class="coreq">coreQuestion: 长上下文下 attention vs recurrence 的实测对比?</div>
+        <div class="stats-row">
+          <span class="pill">confidence 0.72</span>
+          <span class="pill">5 entity</span>
+          <span class="pill">3 源</span>
+          <span class="pill">2 wiki_index</span>
+        </div>
+      </div>
+
+      <div class="card anno" data-n="3">
+        <div class="progress-meta"><span>完整度</span><span class="pct">80% · 4/5 entity</span></div>
+        <div class="progress"><div style="width: 80%"></div></div>
+      </div>
+
+      <div class="section-header"><span>⚠ 缺口 (3)</span><span class="count">按优先级排序</span></div>
+
+      <div class="card gap-card high anno" data-n="4">
+        <div class="gap-title">⚠ 缺对比数据 <span class="badge gap high">HIGH</span></div>
+        <div class="gap-suggestion">补充 Transformer vs RNN 的 A/B 测试结果(吞吐量、显存、长序列)</div>
+        <input class="natural-input" placeholder="💬 告诉我你补了哪方面的证据..." />
+        <div class="user-assert" style="display:none">⚠️ 用户声称已补,尚未经新 ingest 验证</div>
+      </div>
+
+      <div class="card gap-card med">
+        <div class="gap-title">⚠ 缺应用场景 <span class="badge gap med">MED</span></div>
+        <div class="gap-suggestion">补充 1-2 个真实案例(GPT-4 / Claude / Gemini 的多模态长文应用)</div>
+        <input class="natural-input" placeholder="💬 告诉我你补了哪方面的证据..." />
+      </div>
+
+      <div class="card gap-card low">
+        <div class="gap-title">⚠ 缺主线总结 <span class="badge gap low">LOW</span></div>
+        <div class="gap-suggestion">补一篇合成页 index.md 串联全部 entity</div>
+        <input class="natural-input" placeholder="💬 告诉我你补了哪方面的证据..." />
+      </div>
+    </div>
+    <div class="bottom-bar">
+      <div class="btn primary anno" data-n="5">📥 重新分析</div>
+    </div>
+    <div class="callouts">
+      <strong>标注说明:</strong>
+      <ol>
+        <li>顶部 status 标签:NEED_REVIEW = 橙色"待完善" badge</li>
+        <li>目标卡:内容来自 <code>KnowledgeThreadEntity.description</code> + <code>coreQuestion</code> + entity/source 计数(P5)</li>
+        <li>完整度横条:实 entity 数 / 预期 entity 数,轻量可视化</li>
+        <li>缺口卡 3 档 priority 配色;自然语言输入框回车触发 onReanalyze(P12 user-asserted)</li>
+        <li>底部按钮按 status 显隐:NEED_REVIEW 只有"重新分析"</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<h2 id="detail-distill">3. 详情页 — DISTILL_READY(可提炼)</h2>
+<div class="phones">
+  <div class="phone" style="width: 380px;">
+    <div class="status-bar"><span>9:41</span><span>5G ●●●</span></div>
+    <div class="topbar">
+      <span class="back">←</span>
+      <span class="title">碎片整理</span>
+      <span class="meta" style="color:var(--accent)">可提炼</span>
+    </div>
+    <div class="detail-body">
+      <div class="card goal-card">
+        <div class="label">📌 目标</div>
+        <div class="text">证明『投资心理学在 A 股散户决策中的实际影响』</div>
+        <div class="coreq">coreQuestion: 散户决策中前景理论 vs 实际行为的偏差有多大?</div>
+        <div class="stats-row">
+          <span class="pill">confidence 0.88</span>
+          <span class="pill">8 entity</span>
+          <span class="pill">5 源</span>
+          <span class="pill">3 wiki_index</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="progress-meta"><span>完整度</span><span class="pct">100% · 8/8 entity</span></div>
+        <div class="progress"><div style="width: 100%"></div></div>
+      </div>
+
+      <div class="section-header"><span>✅ 缺口 (0)</span><span class="count">所有 gap 已 resolve</span></div>
+      <div class="card" style="text-align:center; padding: 18px; color: var(--ink2); font-size: 12px;">
+        知识链完整,可以提炼为综合文章。
+      </div>
+    </div>
+    <div class="bottom-bar">
+      <div class="btn primary">✨ 开始提炼</div>
+    </div>
+  </div>
+</div>
+
+<h2 id="detail-archive">4. 详情页 — RECOMMEND_READY(可归档)</h2>
+<div class="phones">
+  <div class="phone" style="width: 380px;">
+    <div class="status-bar"><span>9:41</span><span>5G ●●●</span></div>
+    <div class="topbar">
+      <span class="back">←</span>
+      <span class="title">碎片整理</span>
+      <span class="meta" style="color:var(--accent)">可归档</span>
+    </div>
+    <div class="detail-body">
+      <div class="card goal-card">
+        <div class="label">📌 目标</div>
+        <div class="text">证明『Rust 异步编程模型在 I/O 密集场景下的性能优势』</div>
+        <div class="coreq">coreQuestion: tokio runtime vs Go goroutine 在 1M 并发下的差异?</div>
+        <div class="stats-row">
+          <span class="pill">confidence 0.91</span>
+          <span class="pill">6 entity</span>
+          <span class="pill">4 源</span>
+          <span class="pill">2 wiki_index</span>
+        </div>
+      </div>
+
+      <div class="card synthesis">
+        <div class="label" style="color:#6c3fde">📚 已生成 wiki_synthesis</div>
+        <div class="text" style="font-size:13px">"Rust 异步编程的工程实践:从 Future 到 Stream 的完整路径"</div>
+        <div class="stats-row">
+          <span class="pill">2387 字</span>
+          <span class="pill" style="background:#efeaff; color:#6c3fde">wiki_synthesis</span>
+        </div>
+      </div>
+
+      <div class="card" style="text-align:center; padding: 14px; color: var(--ink2); font-size: 12px;">
+        综合文章已生成,同意后归档。
+      </div>
+    </div>
+    <div class="bottom-bar">
+      <div class="btn warn">📦 归档</div>
+    </div>
+  </div>
+</div>
+
+<h2 id="detail-archived">5. 详情页 — ARCHIVED(已归档 + 标星 + 分享)</h2>
+<div class="phones">
+  <div class="phone" style="width: 380px;">
+    <div class="status-bar"><span>9:41</span><span>5G ●●●</span></div>
+    <div class="topbar">
+      <span class="back">←</span>
+      <span class="title">碎片整理</span>
+      <span class="meta" style="color:var(--good)">已归档 ⭐</span>
+    </div>
+    <div class="detail-body">
+      <div class="card goal-card" style="border-left-color: var(--good)">
+        <div class="label">📌 目标</div>
+        <div class="text">证明『Jetpack Compose 在中长列表场景下的渲染性能优于 RecyclerView』</div>
+        <div class="coreq">coreQuestion: 1K+ item 列表,Compose LazyColumn vs RV DiffUtil 的帧率差异?</div>
+        <div class="stats-row">
+          <span class="pill">confidence 0.95</span>
+          <span class="pill">5 entity</span>
+          <span class="pill">3 源</span>
+          <span class="pill synthesis">2 wiki_synthesis</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="progress-meta"><span>归档时间</span><span class="pct">2026-06-01</span></div>
+        <div class="progress"><div style="width: 100%; background: var(--good)"></div></div>
+      </div>
+
+      <div class="card" style="text-align:center; padding: 14px; color: var(--good); font-size: 13px; font-weight: 600;">
+        ✓ 知识链已归档,内容稳定可用
+      </div>
+    </div>
+    <div class="bottom-bar">
+      <div class="btn star">⭐ 已标星</div>
+      <div class="btn share">📤 分享图片</div>
+    </div>
+    <div class="callouts">
+      <strong>FRAG-1.7 行为:</strong>
+      <ol>
+        <li>"已标星"按钮变黄 = 已标状态;再点切换回"标星"</li>
+        <li>"分享图片"触发系统 Intent.ACTION_SEND,截图当前详情页 → cacheDir/share-{chainId}.png</li>
+        <li>截图内容:标题 + 目标卡 + 完整度 + ⭐ 图标(让接收方一眼看出是成品)</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<h2 id="matrix">6. 4 状态 ↔ 按钮可见性矩阵</h2>
+<div class="matrix">
+  <table>
+    <thead>
+      <tr>
+        <th>状态</th>
+        <th>底部按钮组合</th>
+        <th>缺口卡</th>
+        <th>完整度横条</th>
+        <th>目标卡</th>
+        <th>状态 badge</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td class="state"><code>NEED_REVIEW</code></td>
+        <td><span class="ok">📥 重新分析</span> <span class="no">— 其它 —</span></td>
+        <td>显示 (按 priority 排序,top 3 折叠)</td>
+        <td>显示 (&lt; 100% 时为蓝)</td>
+        <td>显示</td>
+        <td><span class="badge need">待完善</span></td>
+      </tr>
+      <tr>
+        <td class="state"><code>DISTILL_READY</code></td>
+        <td><span class="no">— 重新分析 —</span> <span class="ok">✨ 开始提炼</span></td>
+        <td>显示"✅ 0 缺口"</td>
+        <td>显示 (100%,蓝色)</td>
+        <td>显示</td>
+        <td><span class="badge distill">可提炼</span></td>
+      </tr>
+      <tr>
+        <td class="state"><code>RECOMMEND_READY</code></td>
+        <td><span class="no">— 重新分析 —</span> <span class="ok">📦 归档</span></td>
+        <td>显示 wiki_synthesis 卡片(已生成)</td>
+        <td>显示 (100%,绿色)</td>
+        <td>显示</td>
+        <td><span class="badge recommend">可归档</span></td>
+      </tr>
+      <tr>
+        <td class="state"><code>ARCHIVED</code></td>
+        <td><span class="ok">⭐ 标星 / 已标星</span> <span class="ok">📤 分享图片</span></td>
+        <td>不显示 (chain 已稳定)</td>
+        <td>显示 (归档时间)</td>
+        <td>显示 (border-left 变绿)</td>
+        <td><span class="badge archived">已归档</span></td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="note" style="margin-top: 16px;">
+  <strong>和"4 tab 文案"的映射:</strong>
+  全部 = 所有 chain;
+  待完善 = status='NEED_REVIEW';
+  可提炼 = status='DISTILL_READY';
+  归档 = status IN ('RECOMMEND_READY', 'ARCHIVED') —— 2 个状态合并到 1 个 tab
+  (用户原话"归档"tab 没细分"已生成未确认"vs"已确认",v1 简化)
+</div>
+
+</div>
+</body>
+</html>

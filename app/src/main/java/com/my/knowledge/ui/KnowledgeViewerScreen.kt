@@ -759,6 +759,7 @@ private fun fileTypeLabel(sourceType: String): String = when (sourceType.lowerca
     "wiki_index" -> "Wiki 索引"
     "wiki_overview" -> "Wiki 概览"
     "wiki_log" -> "Ingest 日志"
+    "wiki_synthesis" -> "知识链综合"
     "md", "markdown" -> "Markdown"
     "txt", "text" -> "纯文本"
     "doc", "docx" -> "Word 文档"
