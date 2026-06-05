@@ -24,8 +24,6 @@ import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
@@ -36,7 +34,6 @@ import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.UUID
 
 /**
@@ -264,6 +261,18 @@ class IngestOrchestrator(
     private val fragmenter = MarkdownFragmenter()
     private val wikiCompiler = WikiPageCompiler()
 
+    // P0-1: the 4-lane claim loop / idle detection / cold-start
+    // recovery that used to be inlined at the top of this class now
+    // lives in [IngestScheduler]. The orchestrator still owns the
+    // per-task business logic (runTask + the 4 stage methods) and
+    // passes them in as a function reference plus its own private
+    // `enqueue` helper.
+    private val ingestScheduler = IngestScheduler(
+        taskDao = db.processingTaskDao(),
+        sourceDao = db.sourceDocumentDao(),
+        parsedContentDao = db.parsedContentDao(),
+    )
+
     /**
      * P0-2: tracks the [Job] of the most recently entered [runTask]
      * call. The "User pressed Stop Processing" / IngestWorker stop
@@ -339,89 +348,17 @@ class IngestOrchestrator(
         return mutex.withLock { withLocks(keys, index + 1, block) }
     }
 
-    suspend fun runUntilIdle(maxTasks: Int = 80, parallelism: Int = 4) = supervisorScope {
-        resetInterruptedTasks()
-        recoverSourcesWithoutActiveTasks()
-        val laneCount = parallelism.coerceIn(1, 4)
-        val processed = AtomicInteger(0)
-        val activeTasks = AtomicInteger(0)
-        val lanes = (0 until laneCount).map {
-            async {
-                var idlePolls = 0
-                while (processed.get() < maxTasks) {
-                    val task = db.processingTaskDao().claimNextPendingTask(System.currentTimeMillis())
-                    if (task == null) {
-                        if (activeTasks.get() > 0) {
-                            delay(INGEST_IDLE_POLL_MS)
-                            continue
-                        }
-                        if (idlePolls >= INGEST_IDLE_POLLS) break
-                        idlePolls++
-                        delay(INGEST_IDLE_POLL_MS)
-                        continue
-                    }
-                    idlePolls = 0
-                    var nextTask: ProcessingTaskEntity? = task
-                    while (nextTask != null && processed.get() < maxTasks) {
-                        val current = nextTask
-                        processed.incrementAndGet()
-                        activeTasks.incrementAndGet()
-                        val success = try {
-                            runTask(current)
-                        } finally {
-                            activeTasks.decrementAndGet()
-                        }
-                        nextTask = if (IngestQueuePolicy.shouldClaimNextSameSourceTask(current.taskType, success)) {
-                            claimNextSameSourceTask(current)
-                        } else {
-                            null
-                        }
-                    }
-                }
-            }
-        }
-        lanes.awaitAll()
-    }
-
-    private suspend fun claimNextSameSourceTask(task: ProcessingTaskEntity): ProcessingTaskEntity? {
-        val sourceId = task.sourceId ?: task.targetId
-        if (sourceId.isBlank()) return null
-        return db.processingTaskDao().claimNextPendingTaskForSource(
-            sourceId = sourceId,
-            startedAt = System.currentTimeMillis()
+    // P0-1: the 4-lane claim loop, idle detection, and cold-start
+    // recovery moved to [IngestScheduler]. The orchestrator keeps
+    // `runTask` (per-task business logic) and `currentJob` (LLM
+    // stream cancel) and hands them in as a function reference.
+    suspend fun runUntilIdle(maxTasks: Int = 80, parallelism: Int = 4) {
+        ingestScheduler.runUntilIdle(
+            maxTasks = maxTasks,
+            parallelism = parallelism,
+            runTask = ::runTask,
+            enqueueFn = ::enqueue,
         )
-    }
-
-    private suspend fun resetInterruptedTasks() {
-        db.processingTaskDao().resetInterruptedRunningTasks(
-            excludedTaskId = null,
-            updatedAt = System.currentTimeMillis()
-        )
-    }
-
-    private suspend fun recoverSourcesWithoutActiveTasks() {
-        val sources = db.sourceDocumentDao().getRunnableSourcesWithoutActiveTask(
-            statuses = listOf(
-                SourceDocumentEntity.STATUS_IMPORTED,
-                SourceDocumentEntity.STATUS_PARSING,
-                SourceDocumentEntity.STATUS_PARSED,
-                SourceDocumentEntity.STATUS_ANALYZING
-            )
-        )
-        sources.forEach { source ->
-            when (source.status) {
-                SourceDocumentEntity.STATUS_PARSED,
-                SourceDocumentEntity.STATUS_ANALYZING -> {
-                    val parsed = db.parsedContentDao().getLatestBySource(source.id)
-                    if (parsed != null) {
-                        enqueue(source.id, "analysis", 9, """{"parsedContentId":"${parsed.id}","recovered":true}""")
-                    } else {
-                        enqueue(source.id, "parse", 10, """{"sourceId":"${source.id}","recovered":true}""")
-                    }
-                }
-                else -> enqueue(source.id, "parse", 10, """{"sourceId":"${source.id}","recovered":true}""")
-            }
-        }
     }
 
     private suspend fun runTask(task: ProcessingTaskEntity): Boolean {
@@ -2474,8 +2411,9 @@ class IngestOrchestrator(
         private fun wikiPageLockKey(kbId: String, sourceType: String, title: String): String =
             "${kbId.ifBlank { "_unfiled" }}:${sourceType.trim().lowercase()}:${title.trim().lowercase()}"
 
-        const val INGEST_IDLE_POLLS: Int = 4
-        const val INGEST_IDLE_POLL_MS: Long = 250L
+        // INGEST_IDLE_POLLS / INGEST_IDLE_POLL_MS moved to
+        // [IngestScheduler] companion in P0-1 — the orchestrator
+        // no longer owns the lane loop.
         private const val INGEST_AI_REMOTE_ATTEMPTS: Int = 2
         private const val AI_READ_TIMEOUT_MS: Int = 300_000
         private const val CURRENT_INDEX_PROMPT_CHARS: Int = 20_000
