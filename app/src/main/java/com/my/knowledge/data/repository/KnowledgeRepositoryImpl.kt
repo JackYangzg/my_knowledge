@@ -360,54 +360,50 @@ class KnowledgeRepositoryImpl(
         val targetBase = kbDao.getById(targetKbId)
         val now = System.currentTimeMillis()
 
-        try {
-            // Step 1: move the item itself
-            itemDao.moveToBase(itemId, targetKbId, now)
-            if (targetBase?.type != "unfiled") {
-                itemDao.update(
-                    item.copy(
-                        knowledgeBaseId = targetKbId,
-                        status = KnowledgeItemEntity.STATUS_ARCHIVED,
-                        updatedAt = now
-                    )
+        // CQ-6: removed the decorative try/catch — the exception now
+        // propagates to the caller's `viewModelScope` and is caught
+        // there (the AskViewModel / KnowledgeEditorViewModel already
+        // show a friendly error toast). The repo-layer `Log.e` was
+        // a duplicate of what the top-level crash handler would log
+        // anyway and added no information beyond the stack trace
+        // already in the throwable.
+
+        // Step 1: move the item itself
+        itemDao.moveToBase(itemId, targetKbId, now)
+        if (targetBase?.type != "unfiled") {
+            itemDao.update(
+                item.copy(
+                    knowledgeBaseId = targetKbId,
+                    status = KnowledgeItemEntity.STATUS_ARCHIVED,
+                    updatedAt = now
                 )
-            }
-
-            // Step 2: migrate associated data so they stay in the same KB
-            // Fragments follow the item
-            fragmentDao.updateKbIdByItem(itemId, targetKbId)
-            // Embeddings follow the fragments
-            graphDao.updateEmbeddingsKbByItem(itemId, targetKbId)
-            // Entities that are exclusively backed by this item move with it;
-            // shared entities (backed by items across KBs) stay in the source KB
-            // and will be re-materialised by the source-side rebuild.
-            graphDao.moveExclusiveEntitiesByItem(itemId, oldKbId, targetKbId, now)
-            // Relations whose both endpoints landed in the target KB follow
-            graphDao.moveRelationsToKbByEndpoints(oldKbId, targetKbId, now)
-            // Communities whose every member is now in the target KB follow
-            graphDao.moveCommunitiesToKbByEntities(oldKbId, targetKbId, now)
-
-            // Step 3: update KB item counts and refresh overview
-            itemDao.updateItemCount(oldKbId)
-            itemDao.updateItemCount(targetKbId)
-            refreshOverviewForBase(oldKbId)
-            refreshOverviewForBase(targetKbId)
-
-            // Step 4: rebuild both KB graphs — the source loses orphaned data,
-            // the target gains the newly migrated records
-            rebuildGraphForBase(oldKbId)
-            if (targetBase?.type != "unfiled") rebuildGraphForBase(targetKbId)
-        } catch (e: Throwable) {
-            // P1: 之前任何 DAO / rebuild 抛 NPE / SQLite constraint 都会
-            // 沿着 viewModelScope 协程上抛,直接闪退。现在收到这里,
-            // 写 log 留证据,让 UI 显示一个友好的失败提示而不是白屏。
-            android.util.Log.e(
-                "KnowledgeRepo",
-                "moveItemToBase failed: item=$itemId old=$oldKbId target=$targetKbId",
-                e
             )
-            throw e
         }
+
+        // Step 2: migrate associated data so they stay in the same KB
+        // Fragments follow the item
+        fragmentDao.updateKbIdByItem(itemId, targetKbId)
+        // Embeddings follow the fragments
+        graphDao.updateEmbeddingsKbByItem(itemId, targetKbId)
+        // Entities that are exclusively backed by this item move with it;
+        // shared entities (backed by items across KBs) stay in the source KB
+        // and will be re-materialised by the source-side rebuild.
+        graphDao.moveExclusiveEntitiesByItem(itemId, oldKbId, targetKbId, now)
+        // Relations whose both endpoints landed in the target KB follow
+        graphDao.moveRelationsToKbByEndpoints(oldKbId, targetKbId, now)
+        // Communities whose every member is now in the target KB follow
+        graphDao.moveCommunitiesToKbByEntities(oldKbId, targetKbId, now)
+
+        // Step 3: update KB item counts and refresh overview
+        itemDao.updateItemCount(oldKbId)
+        itemDao.updateItemCount(targetKbId)
+        refreshOverviewForBase(oldKbId)
+        refreshOverviewForBase(targetKbId)
+
+        // Step 4: rebuild both KB graphs — the source loses orphaned data,
+        // the target gains the newly migrated records
+        rebuildGraphForBase(oldKbId)
+        if (targetBase?.type != "unfiled") rebuildGraphForBase(targetKbId)
     }
 
     // === Unfiled operations ===
