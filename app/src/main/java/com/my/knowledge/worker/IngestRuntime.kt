@@ -8,15 +8,12 @@ import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.ingest.IngestOrchestrator
 import com.my.knowledge.data.ingest.IngestOrchestratorApi
 import com.my.knowledge.ui.DependencyProvider
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Process-lifetime ingest runner.
@@ -28,52 +25,66 @@ import java.util.concurrent.atomic.AtomicBoolean
  * app is merely in the background. If the process is killed, the
  * persisted pending/running task rows plus WorkManager restart the
  * pipeline on the next opportunity.
+ *
+ * P1-A.4: the lifecycle policy (start / re-entry / rerun / cancel)
+ * is now hosted by [IngestRuntimeLoop]. This object is a thin
+ * singleton wrapper that owns the app-process scope + the wake /
+ * wifi locks and hands its `runOnce` body into a loop instance.
+ * That split is what makes the lifecycle testable without
+ * standing up the real `AppDatabase`.
  */
 object IngestRuntime {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val runMutex = Mutex()
-    private val rerunRequested = AtomicBoolean(false)
 
+    // The loop is rebuilt lazily so a successful cancel / a fresh
+    // start can spin up a clean instance. In the old design this
+    // was inlined in the singleton and untestable.
     @Volatile
-    private var job: Job? = null
+    private var loop: IngestRuntimeLoop? = null
 
     fun start(context: Context) {
         val appContext = context.applicationContext
-        val active = job
-        if (active?.isActive == true) {
-            rerunRequested.set(true)
+        val active = loop
+        if (active?.isActive() == true) {
+            // Idempotent re-entry: the active loop sees the new
+            // task on its next `rerunRequested` poll.
+            rerunActiveLoop()
             return
         }
-
-        rerunRequested.set(true)
-        job = scope.launch {
-            runMutex.withLock {
-                withIngestRuntimeLocks(appContext) {
-                    do {
-                        rerunRequested.set(false)
-                        runOnceInternal(appContext)
-                    } while (rerunRequested.get())
-                }
-            }
-        }
+        val newLoop = IngestRuntimeLoop(
+            scope = scope,
+            runOnce = { runOnceInLocks(appContext) }
+        )
+        loop = newLoop
+        newLoop.start()
     }
 
     suspend fun runOnce(context: Context) {
         val appContext = context.applicationContext
         runMutex.withLock {
-            withIngestRuntimeLocks(appContext) {
-                runOnceInternal(appContext)
-            }
+            runOnceInLocks(appContext)
         }
     }
 
     fun cancel() {
-        job?.cancel(CancellationException("Ingest cancelled by user"))
-        job = null
-        rerunRequested.set(false)
+        loop?.cancel()
+        loop = null
     }
 
-    private suspend fun runOnceInternal(appContext: Context) {
+    private fun rerunActiveLoop() {
+        // The active loop reads `rerunRequested` between passes;
+        // setting it here is enough to queue a follow-up run.
+        loop?.start()
+    }
+
+    private suspend fun runOnceInLocks(appContext: Context) {
+        withIngestRuntimeLocks(appContext) {
+            runOrchestratorOnce(appContext)
+        }
+    }
+
+    private suspend fun runOrchestratorOnce(appContext: Context) {
         val orchestrator: IngestOrchestratorApi = IngestOrchestrator(
             db = AppDatabase.getInstance(appContext),
             fileStore = LocalFileStore(appContext),
