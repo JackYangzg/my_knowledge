@@ -1,5 +1,7 @@
 package com.my.knowledge.ui
 
+import android.content.Intent
+import android.graphics.Bitmap
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -21,8 +23,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.FileProvider
+import androidx.core.view.drawToBitmap
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.entity.KnowledgeFragmentChainEntity
 import com.my.knowledge.data.db.entity.KnowledgeFragmentGapEntity
@@ -30,8 +35,12 @@ import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.fragment.LifecycleStatus
 import com.my.knowledge.ui.theme.LocalPalette
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.FileOutputStream
 
 /**
  * FRAG-1.6 — chain detail screen.
@@ -57,6 +66,7 @@ fun FragmentChainDetailScreen(
 ) {
     val palette = LocalPalette.current
     val context = LocalContext.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
 
     val db = remember(context) { AppDatabase.getInstance(context) }
@@ -183,8 +193,23 @@ fun FragmentChainDetailScreen(
                         }
                     },
                     onShareImage = {
-                        // FRAG-1.7: 实现 share image
-                        busy = true
+                        scope.launch {
+                            busy = true
+                            val item = distilledItem
+                            val ch = chain
+                            if (item != null && ch != null) {
+                                runCatching {
+                                    shareChainAsImage(
+                                        context = context,
+                                        view = view,
+                                        chainId = ch.id,
+                                        chain = ch,
+                                        distilledItem = item,
+                                    )
+                                }
+                            }
+                            busy = false
+                        }
                     },
                 )
             }
@@ -422,4 +447,56 @@ private fun PrimaryButton(
         Spacer(modifier = Modifier.width(6.dp))
         Text(label)
     }
+}
+
+/**
+ * FRAG-1.7 (P10) — capture the current Compose view to a PNG, persist
+ * to `cacheDir/share-{chainId}.png`, then launch `Intent.ACTION_SEND`
+ * via the existing `${applicationId}.fileprovider` (manifest-registered
+ * in `AndroidManifest.xml`; `cache-path` exposed in
+ * `res/xml/file_paths.xml`).
+ *
+ * Failure modes:
+ * - view not laid out yet (rare; we only call this from a button tap
+ *   inside a stable Scaffold) → `drawToBitmap` throws → caller catches
+ * - cacheDir not writable → `FileOutputStream` throws → caller catches
+ * - no app on the device handles ACTION_SEND image/png → caller catches
+ *
+ * No new dependencies: `androidx.core.view.drawToBitmap` and
+ * `androidx.core.content.FileProvider` are already on the classpath
+ * via the existing Image-Share paths.
+ */
+private suspend fun shareChainAsImage(
+    context: android.content.Context,
+    view: android.view.View,
+    chainId: String,
+    chain: KnowledgeFragmentChainEntity,
+    distilledItem: KnowledgeItemEntity,
+) {
+    val bitmap = withContext(Dispatchers.Main) {
+        view.drawToBitmap(Bitmap.Config.ARGB_8888)
+    }
+    val pngFile = withContext(Dispatchers.IO) {
+        val out = File(context.cacheDir, "share-$chainId.png")
+        FileOutputStream(out).use { stream ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+        }
+        out
+    }
+    val authority = "${context.packageName}.fileprovider"
+    val uri = FileProvider.getUriForFile(context, authority, pngFile)
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "image/png"
+        putExtra(Intent.EXTRA_STREAM, uri)
+        putExtra(Intent.EXTRA_SUBJECT, chain.title.ifBlank { "知识链" })
+        putExtra(
+            Intent.EXTRA_TEXT,
+            "📚 ${chain.title}\n\n${distilledItem.excerpt.take(280)}",
+        )
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    val chooser = Intent.createChooser(send, "分享知识链到…").apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    context.startActivity(chooser)
 }
