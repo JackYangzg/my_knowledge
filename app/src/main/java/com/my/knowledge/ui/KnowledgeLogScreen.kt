@@ -372,7 +372,7 @@ private fun PipelineStepper(tasks: List<ProcessingTaskEntity>) {
                 )
                 Text(
                     text = label,
-                    fontSize = 9.sp,
+                    fontSize = 12.sp,
                     fontWeight = if (status == "running") FontWeight.Bold else FontWeight.Normal,
                     color = getStepColor(palette, status),
                     textAlign = TextAlign.Center,
