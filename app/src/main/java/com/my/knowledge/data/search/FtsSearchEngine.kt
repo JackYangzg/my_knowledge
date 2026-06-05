@@ -16,8 +16,8 @@ class FtsSearchEngine(
     override fun search(query: String, knowledgeBaseId: String?): Flow<List<KnowledgeItemEntity>> {
         val useFts = query.length >= 2 && !query.contains("*")
         return if (useFts) {
-            if (knowledgeBaseId == null) searchDao.ftsSearchAll("\"$query\"")
-            else searchDao.ftsSearchByKb("\"$query\"", knowledgeBaseId)
+            if (knowledgeBaseId == null) searchDao.ftsSearchAll(SearchDao.ftsItemsAllQuery("\"$query\""))
+            else searchDao.ftsSearchByKb(SearchDao.ftsItemsByKbQuery("\"$query\"", knowledgeBaseId))
         } else {
             if (knowledgeBaseId == null) searchDao.searchAll(query)
             else searchDao.searchByKb(query, knowledgeBaseId)
@@ -39,9 +39,9 @@ class FtsSearchEngine(
         val useFts = query.length >= 2 && !query.contains("*")
         val fragments: List<KnowledgeSearchResult> = if (useFts) {
             if (knowledgeBaseId == null) {
-                searchDao.ftsSearchFragmentsAll("\"$query\"", limit)
+                searchDao.ftsSearchFragmentsAll(SearchDao.ftsFragmentsAllQuery("\"$query\"", limit))
             } else {
-                searchDao.ftsSearchFragmentsByKb("\"$query\"", knowledgeBaseId, limit)
+                searchDao.ftsSearchFragmentsByKb(SearchDao.ftsFragmentsByKbQuery("\"$query\"", knowledgeBaseId, limit))
             }
         } else {
             if (knowledgeBaseId == null) {

@@ -13,8 +13,6 @@ import com.my.knowledge.data.db.entity.*
     entities = [
         KnowledgeBaseEntity::class,
         KnowledgeItemEntity::class,
-        KnowledgeItemFts::class,
-        KnowledgeFragmentFts::class,
         NoteEntity::class,
         AttachmentEntity::class,
         ProcessingTaskEntity::class,
@@ -396,14 +394,26 @@ abstract class AppDatabase : RoomDatabase() {
         db.execSQL("DROP TABLE IF EXISTS `knowledge_item_fts`")
         db.execSQL("DROP TABLE IF EXISTS `knowledge_fragment_fts`")
 
-        // ReCREATE with remove_diacritics=1.
+        // ReCREATE with the default unicode61 tokenizer.
+        //
+        // We do NOT pass `remove_diacritics=1` even though the
+        // comment in the original v10→v11 design called for it:
+        // that option is FTS5-only, and the stock Android SQLite
+        // ships FTS4. FTS4's `unknown tokenizer` error from an
+        // unknown option string is raised at CREATE VIRTUAL
+        // TABLE time, which is what crashed the user's app on
+        // first launch (AppDatabase.kt:400). FTS4 unicode61 does
+        // fold CJK into the basic letter class, so a stray
+        // combining mark still won't break phrase queries — the
+        // diacritic-folding case ("café" vs "cafe") simply falls
+        // back to a secondary LIKE scan in the DAO if needed.
         db.execSQL(
             """
             CREATE VIRTUAL TABLE IF NOT EXISTS `knowledge_item_fts` USING fts4(
                 `title`,
                 `contentMarkdown`,
                 `summary`,
-                tokenize=unicode61 remove_diacritics=1,
+                tokenize=unicode61,
                 content=`knowledge_item`
             )
             """.trimIndent()
@@ -414,7 +424,7 @@ abstract class AppDatabase : RoomDatabase() {
                 `content`,
                 `summary`,
                 `tagsJson`,
-                tokenize=unicode61 remove_diacritics=1,
+                tokenize=unicode61,
                 content=`knowledge_fragment`
             )
             """.trimIndent()
@@ -430,7 +440,6 @@ abstract class AppDatabase : RoomDatabase() {
             val (ftsName, sourceName) = ftsToSource
             val columnList = columns.joinToString(", ") { "`$it`" }
             val columnValues = columns.joinToString(", ") { "NEW.`$it`" }
-            val oldColumnValues = columns.joinToString(", ") { "OLD.`$it`" }
             db.execSQL(
                 """
                 CREATE TRIGGER IF NOT EXISTS `room_fts_content_sync_${ftsName}_BEFORE_UPDATE`
@@ -469,11 +478,20 @@ abstract class AppDatabase : RoomDatabase() {
                 END
                 """.trimIndent()
             )
-            // Backfill (no-op on fresh installs).
+            // Backfill (no-op on fresh installs). Bare column names
+            // only — `OLD.col` is a trigger-body qualifier, not a
+            // top-level SELECT reference, so using it here would make
+            // the v10→v11 migration fail on any non-empty source
+            // table and leave the FTS index half-populated (which
+            // would then surface as a SQLITE_INTERNAL "no such file
+            // or directory" the next time a generation-stage
+            // knowledge_item insert fired the AFTER_INSERT sync
+            // trigger). Match the v9→v10 backfill at the top of
+            // MIGRATION_9_10, which is correct.
             db.execSQL(
                 """
                 INSERT INTO `$ftsName`(`docid`, $columnList)
-                SELECT rowid, $oldColumnValues FROM `$sourceName`
+                SELECT rowid, $columnList FROM `$sourceName`
                 """.trimIndent()
             )
         }

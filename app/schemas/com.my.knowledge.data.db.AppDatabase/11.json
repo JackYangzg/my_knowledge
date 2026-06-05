@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 11,
-    "identityHash": "01ab04fa12cd94622a64f42f27d2b181",
+    "identityHash": "f899f7267d65f356657b7c2a962a2341",
     "entities": [
       {
         "tableName": "knowledge_base",
@@ -277,94 +277,6 @@
             "orders": [],
             "createSql": "CREATE INDEX IF NOT EXISTS `index_knowledge_item_rawNoteId` ON `${TABLE_NAME}` (`rawNoteId`)"
           }
-        ]
-      },
-      {
-        "tableName": "knowledge_item_fts",
-        "createSql": "CREATE VIRTUAL TABLE IF NOT EXISTS `${TABLE_NAME}` USING FTS4(`title` TEXT NOT NULL, `contentMarkdown` TEXT NOT NULL, `summary` TEXT, tokenize=unicode61, content=`knowledge_item`)",
-        "fields": [
-          {
-            "fieldPath": "title",
-            "columnName": "title",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "contentMarkdown",
-            "columnName": "contentMarkdown",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "summary",
-            "columnName": "summary",
-            "affinity": "TEXT"
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": []
-        },
-        "ftsVersion": "FTS4",
-        "ftsOptions": {
-          "tokenizer": "unicode61",
-          "tokenizerArgs": [],
-          "contentTable": "knowledge_item",
-          "languageIdColumnName": "",
-          "matchInfo": "FTS4",
-          "notIndexedColumns": [],
-          "prefixSizes": [],
-          "preferredOrder": "ASC"
-        },
-        "contentSyncTriggers": [
-          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_knowledge_item_fts_BEFORE_UPDATE BEFORE UPDATE ON `knowledge_item` BEGIN DELETE FROM `knowledge_item_fts` WHERE `docid`=OLD.`rowid`; END",
-          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_knowledge_item_fts_BEFORE_DELETE BEFORE DELETE ON `knowledge_item` BEGIN DELETE FROM `knowledge_item_fts` WHERE `docid`=OLD.`rowid`; END",
-          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_knowledge_item_fts_AFTER_UPDATE AFTER UPDATE ON `knowledge_item` BEGIN INSERT INTO `knowledge_item_fts`(`docid`, `title`, `contentMarkdown`, `summary`) VALUES (NEW.`rowid`, NEW.`title`, NEW.`contentMarkdown`, NEW.`summary`); END",
-          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_knowledge_item_fts_AFTER_INSERT AFTER INSERT ON `knowledge_item` BEGIN INSERT INTO `knowledge_item_fts`(`docid`, `title`, `contentMarkdown`, `summary`) VALUES (NEW.`rowid`, NEW.`title`, NEW.`contentMarkdown`, NEW.`summary`); END"
-        ]
-      },
-      {
-        "tableName": "knowledge_fragment_fts",
-        "createSql": "CREATE VIRTUAL TABLE IF NOT EXISTS `${TABLE_NAME}` USING FTS4(`content` TEXT NOT NULL, `summary` TEXT, `tagsJson` TEXT NOT NULL, tokenize=unicode61, content=`knowledge_fragment`)",
-        "fields": [
-          {
-            "fieldPath": "content",
-            "columnName": "content",
-            "affinity": "TEXT",
-            "notNull": true
-          },
-          {
-            "fieldPath": "summary",
-            "columnName": "summary",
-            "affinity": "TEXT"
-          },
-          {
-            "fieldPath": "tagsJson",
-            "columnName": "tagsJson",
-            "affinity": "TEXT",
-            "notNull": true
-          }
-        ],
-        "primaryKey": {
-          "autoGenerate": false,
-          "columnNames": []
-        },
-        "ftsVersion": "FTS4",
-        "ftsOptions": {
-          "tokenizer": "unicode61",
-          "tokenizerArgs": [],
-          "contentTable": "knowledge_fragment",
-          "languageIdColumnName": "",
-          "matchInfo": "FTS4",
-          "notIndexedColumns": [],
-          "prefixSizes": [],
-          "preferredOrder": "ASC"
-        },
-        "contentSyncTriggers": [
-          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_knowledge_fragment_fts_BEFORE_UPDATE BEFORE UPDATE ON `knowledge_fragment` BEGIN DELETE FROM `knowledge_fragment_fts` WHERE `docid`=OLD.`rowid`; END",
-          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_knowledge_fragment_fts_BEFORE_DELETE BEFORE DELETE ON `knowledge_fragment` BEGIN DELETE FROM `knowledge_fragment_fts` WHERE `docid`=OLD.`rowid`; END",
-          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_knowledge_fragment_fts_AFTER_UPDATE AFTER UPDATE ON `knowledge_fragment` BEGIN INSERT INTO `knowledge_fragment_fts`(`docid`, `content`, `summary`, `tagsJson`) VALUES (NEW.`rowid`, NEW.`content`, NEW.`summary`, NEW.`tagsJson`); END",
-          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_knowledge_fragment_fts_AFTER_INSERT AFTER INSERT ON `knowledge_fragment` BEGIN INSERT INTO `knowledge_fragment_fts`(`docid`, `content`, `summary`, `tagsJson`) VALUES (NEW.`rowid`, NEW.`content`, NEW.`summary`, NEW.`tagsJson`); END"
         ]
       },
       {
@@ -2362,7 +2274,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '01ab04fa12cd94622a64f42f27d2b181')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f899f7267d65f356657b7c2a962a2341')"
     ]
   }
 }
