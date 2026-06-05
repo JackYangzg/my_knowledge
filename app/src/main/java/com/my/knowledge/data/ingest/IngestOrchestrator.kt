@@ -281,6 +281,17 @@ class IngestOrchestrator(
     // tracked separately — it needs a v10→v11 schema migration.
     private val ingestCache = IngestCache(sourceDao = db.sourceDocumentDao())
 
+    // P0-1: state machine for the source_document.status / linked
+    // knowledge_item.status flips. Lifted from inlined
+    // `sourceDocumentDao().updateStatus(...)` calls in every stage
+    // method; now every transition goes through one chokepoint so
+    // the cross-table writes (source + linked item) never drift
+    // apart.
+    private val ingestStateMachine = IngestStateMachine(
+        sourceDao = db.sourceDocumentDao(),
+        itemDao = db.knowledgeItemDao(),
+    )
+
     /**
      * P0-2: tracks the [Job] of the most recently entered [runTask]
      * call. The "User pressed Stop Processing" / IngestWorker stop
@@ -391,12 +402,7 @@ class IngestOrchestrator(
             // call on the second-and-later import of the same file.
             if (task.taskType in setOf("parse", "analysis", "generation") && ingestCache.isHit(task)) {
                 val now = System.currentTimeMillis()
-                db.sourceDocumentDao().updateStatus(
-                    task.sourceId ?: task.targetId,
-                    SourceDocumentEntity.STATUS_GENERATED,
-                    null,
-                    now
-                )
+                ingestStateMachine.transitionToGenerated(task.sourceId ?: task.targetId, now)
                 markSuccess(
                     task,
                     "Cache hit (sha256 already ingested) — skipped to embedding",
@@ -443,8 +449,7 @@ class IngestOrchestrator(
             )
             task.sourceId?.let {
                 if (!willRetry) {
-                    db.knowledgeItemDao().updateFailureBySourceId(it, e.message, now)
-                    db.sourceDocumentDao().updateStatus(it, SourceDocumentEntity.STATUS_FAILED, e.message, now)
+                    ingestStateMachine.transitionToFailed(it, e.message, now)
                 }
             }
             return false
@@ -505,8 +510,7 @@ class IngestOrchestrator(
     private suspend fun parseTask(task: ProcessingTaskEntity) {
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: error("Source not found: $sourceId")
-        db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_PARSING, null, System.currentTimeMillis())
-        db.knowledgeItemDao().updateStatusBySourceId(source.id, KnowledgeItemEntity.STATUS_PROCESSING, System.currentTimeMillis())
+        ingestStateMachine.transitionToParsing(source.id)
         updateProgress(task, 15, "解析文件 ${source.title}", "正在解析 ${source.mimeType ?: source.sourceType} 内容")
 
         val parser = ingestParsers().first { parser -> parser.supports(source.mimeType, source.sourceType) }
@@ -531,7 +535,7 @@ class IngestOrchestrator(
         val fragments = fragmenter.split(parsedEntity, source.targetKnowledgeBaseId.orEmpty())
         db.knowledgeFragmentDao().insertAll(fragments)
         updateProgress(task, 80, "生成 ${fragments.size} 个知识切片", "切片完成，准备进入分析阶段")
-        db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_PARSED, null, now)
+        ingestStateMachine.transitionToParsed(source.id, now)
         markSuccess(task, "Parsed ${source.title}", """{"parsedContentId":"${parsedEntity.id}"}""")
         enqueue(source.id, "analysis", 9, """{"parsedContentId":"${parsedEntity.id}"}""")
     }
@@ -559,8 +563,7 @@ class IngestOrchestrator(
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: error("Source not found: $sourceId")
         val parsed = db.parsedContentDao().getLatestBySource(source.id) ?: error("Parsed content not found")
-        db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_ANALYZING, null, System.currentTimeMillis())
-        db.knowledgeItemDao().updateStatusBySourceId(source.id, KnowledgeItemEntity.STATUS_PROCESSING, System.currentTimeMillis())
+        ingestStateMachine.transitionToAnalyzing(source.id)
         updateProgress(task, 20, "加载 ${parsed.plainText.length} 字解析结果", "正在汇总标签与摘要")
 
         if (!ai.isAvailable()) {
@@ -575,8 +578,7 @@ class IngestOrchestrator(
                     finishedAt = null
                 )
             )
-            db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_IMPORTED, "等待模型配置", now)
-            db.knowledgeItemDao().updateFailureBySourceId(source.id, "请先在设置中配置模型 API Key", now)
+            ingestStateMachine.transitionToImportedWaitingForConfig(source.id, "请先在设置中配置模型 API Key", now)
             appendLog(task, "等待模型 API Key 配置后重试", "pending_config", "等待模型配置")
             return
         }
@@ -838,7 +840,7 @@ class IngestOrchestrator(
                 )
             )
         }
-        db.sourceDocumentDao().updateStatus(source.id, SourceDocumentEntity.STATUS_GENERATED, null, now)
+        ingestStateMachine.transitionToGenerated(source.id, now)
         markSuccess(task, "Generated ${writtenItems.size} processed wiki pages", """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         enqueue(source.id, "embedding", 5, """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         // Recompute the knowledge base's mainline / gaps / suggestions
