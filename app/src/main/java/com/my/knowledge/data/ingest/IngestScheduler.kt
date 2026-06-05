@@ -92,7 +92,7 @@ class IngestScheduler(
                         } finally {
                             activeTasks.decrementAndGet()
                         }
-                        nextTask = if (IngestQueuePolicy.shouldClaimNextSameSourceTask(current.taskType, success)) {
+                        nextTask = if (shouldClaimNextSameSourceTask(current.taskType, success)) {
                             claimNextSameSourceTask(current)
                         } else {
                             null
@@ -112,6 +112,20 @@ class IngestScheduler(
             startedAt = System.currentTimeMillis()
         )
     }
+
+    /**
+     * Should the lane, after a successful task, immediately claim
+     * the *next* task for the same source (parse → analysis →
+     * generation) without releasing the lane back to the global
+     * claim queue? Yes for the three chainable task types when
+     * the previous one succeeded; otherwise release so a different
+     * lane (or a fresh round of scheduling) can pick up work.
+     *
+     * CQ-2: inlined from the 8-line `IngestQueuePolicy` object —
+     * YAGNI while there's only one call site.
+     */
+    private fun shouldClaimNextSameSourceTask(taskType: String, taskSucceeded: Boolean): Boolean =
+        taskSucceeded && taskType in CHAINABLE_TASK_TYPES
 
     private suspend fun resetInterruptedTasks() {
         taskDao.resetInterruptedRunningTasks(
@@ -177,5 +191,15 @@ class IngestScheduler(
          * shows up after that.
          */
         const val INGEST_IDLE_POLLS: Int = 4
+
+        /**
+         * The three task types that chain inside one source's
+         * pipeline without releasing the lane. `embedding` is
+         * intentionally NOT here — it's a different shape of work
+         * (purely local, no LLM) and runs after the source has
+         * fully `STATUS_GENERATED`, so it gets its own claim
+         * round.
+         */
+        private val CHAINABLE_TASK_TYPES = setOf("parse", "analysis", "generation")
     }
 }
