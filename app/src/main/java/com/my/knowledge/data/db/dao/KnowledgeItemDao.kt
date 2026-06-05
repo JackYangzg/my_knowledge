@@ -39,6 +39,15 @@ interface KnowledgeItemDao {
     @Query("SELECT * FROM knowledge_item WHERE id = :id AND deletedAt IS NULL")
     suspend fun getById(id: String): KnowledgeItemEntity?
 
+    /**
+     * PERF-5: bulk lookup for the scoped graph-rebuild path
+     * (`KnowledgeRepositoryImpl.rebuildGraphForBaseAffected`). Without
+     * this, that path would have to call `getAllByKb` (every item
+     * in the KB) just to materialise 1-2 affected pages.
+     */
+    @Query("SELECT * FROM knowledge_item WHERE id IN (:ids)")
+    suspend fun getAllByIds(ids: List<String>): List<KnowledgeItemEntity>
+
     @Query("SELECT * FROM knowledge_item WHERE sourceId = :sourceId AND deletedAt IS NULL ORDER BY createdAt ASC LIMIT 1")
     suspend fun getBySourceId(sourceId: String): KnowledgeItemEntity?
 

@@ -60,6 +60,19 @@ interface KnowledgeRepository {
     fun observeFragments(itemId: String): Flow<List<KnowledgeFragmentEntity>>
     suspend fun rebuildFragmentsForItem(item: KnowledgeItemEntity, sourceManifestId: String? = null): List<KnowledgeFragmentEntity>
     suspend fun rebuildGraphForBase(kbId: String)
+
+    /**
+     * PERF-5: scoped variant of [rebuildGraphForBase] for the
+     * common "one item changed" case (single delete / restore /
+     * move). Touches only the entities, relations, and
+     * communities whose `sourceItemIdsJson` / `evidenceItemIdsJson` /
+     * `entityIdsJson` overlaps [itemIds], and leaves the rest of
+     * the graph alone. The burst path (many items in a short
+     * window) still falls through to the full [rebuildGraphForBase]
+     * via the debouncer.
+     */
+    suspend fun rebuildGraphForBaseAffected(kbId: String, itemIds: Set<String>)
+
     suspend fun refreshOverviewForBase(kbId: String)
     fun observeKnowledgeEntities(kbId: String): Flow<List<KnowledgeEntityEntity>>
     fun observeAllKnowledgeEntities(): Flow<List<KnowledgeEntityEntity>>

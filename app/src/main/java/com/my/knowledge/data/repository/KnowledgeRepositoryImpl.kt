@@ -253,7 +253,9 @@ class KnowledgeRepositoryImpl(
         }
         itemDao.updateItemCount(item.knowledgeBaseId)
         refreshOverviewForBase(item.knowledgeBaseId)
-        rebuildGraphForBase(item.knowledgeBaseId)
+        // PERF-5: scoped rebuild — one item changed, no need to
+        // re-derive every page in the KB.
+        rebuildGraphForBaseAffected(item.knowledgeBaseId, setOf(id))
     }
 
     override suspend fun permanentDeleteItem(id: String) {
@@ -318,7 +320,8 @@ class KnowledgeRepositoryImpl(
         itemDao.restore(id, System.currentTimeMillis())
         itemDao.updateItemCount(item.knowledgeBaseId)
         refreshOverviewForBase(item.knowledgeBaseId)
-        rebuildGraphForBase(item.knowledgeBaseId)
+        // PERF-5: scoped rebuild.
+        rebuildGraphForBaseAffected(item.knowledgeBaseId, setOf(id))
     }
 
     override fun observeDeletedItems(): Flow<List<KnowledgeItemEntity>> = itemDao.observeDeletedItems()
@@ -401,9 +404,10 @@ class KnowledgeRepositoryImpl(
         refreshOverviewForBase(targetKbId)
 
         // Step 4: rebuild both KB graphs — the source loses orphaned data,
-        // the target gains the newly migrated records
-        rebuildGraphForBase(oldKbId)
-        if (targetBase?.type != "unfiled") rebuildGraphForBase(targetKbId)
+        // the target gains the newly migrated records. PERF-5: scoped
+        // rebuild — the moved item is the only thing that changed.
+        rebuildGraphForBaseAffected(oldKbId, setOf(itemId))
+        if (targetBase?.type != "unfiled") rebuildGraphForBaseAffected(targetKbId, setOf(itemId))
     }
 
     // === Unfiled operations ===
@@ -753,6 +757,292 @@ class KnowledgeRepositoryImpl(
                 }
             }
         graphDao.upsertCommunities(communities)
+    }
+
+    /**
+     * PERF-5: scoped variant of [rebuildGraphForBase] for the
+     * common "one item changed" case. The full rebuild is O(KB
+     * pages × KB pages) for the source-overlap edge pass and
+     * O(KB pages) for every other stage — a single delete in a
+     * 5K-page KB would otherwise trigger a ~5K² comparison.
+     *
+     * Strategy:
+     *  1. Load the current graph rows for the KB.
+     *  2. Find the rows whose `sourceItemIdsJson` /
+     *     `evidenceItemIdsJson` / `entityIdsJson` overlap with
+     *     the affected item IDs. For relations / communities we
+     *     also bubble out through dangling endpoints (an entity
+     *     going away kills every relation that touched it and
+     *     every community that referenced it).
+     *  3. Hard-delete those rows. The full rebuild re-applies
+     *     the `manuallyDeletedEntityKeys` / `manuallyDeletedRelationKeys`
+     *     / `manuallyDeletedCommunityNames` filter, so user-curated
+     *     soft-deletes are still honoured.
+     *  4. Re-materialise only from the affected pages, merging
+     *     with the survivors that were not touched. The merge
+     *     step is the same `mergedByKey` / `relationKeys` logic
+     *     as the full rebuild, just seeded with survivors.
+     */
+    override suspend fun rebuildGraphForBaseAffected(kbId: String, itemIds: Set<String>) {
+        if (kbId.isBlank() || itemIds.isEmpty()) return
+        val now = System.currentTimeMillis()
+        val itemIdSet = itemIds
+
+        // Materialise the affected pages. We don't filter on
+        // `knowledgeBaseId` here: in the move path the item has
+        // already been reassigned to the target KB by the time
+        // we run, but the source KB's graph rows still point at
+        // the old itemId and must be re-derived.
+        val affectedItems = itemDao.getAllByIds(itemIdSet.toList())
+            .filter { it.deletedAt == null }
+        if (affectedItems.isEmpty()) return
+
+        val allEntities = graphDao.getAllEntitiesByKb(kbId)
+        val allRelations = graphDao.getAllRelationsByKb(kbId)
+        val allCommunities = graphDao.getAllCommunitiesByKb(kbId)
+
+        val entitiesById = allEntities.associateBy { it.id }
+        fun entityIdsIn(json: String): Set<String> = json.parseAsStringList().toSet()
+
+        // Find graph rows that touch the affected items directly,
+        // then bubble out: a relation whose endpoint is being
+        // removed must go too, and a community that references a
+        // removed entity must go too.
+        var affectedEntityIds = allEntities
+            .filter { entityIdsIn(it.sourceItemIdsJson).any { id -> id in itemIdSet } }
+            .map { it.id }
+            .toMutableSet()
+        var affectedRelationIds = allRelations
+            .filter { rel ->
+                entityIdsIn(rel.evidenceItemIdsJson).any { id -> id in itemIdSet } ||
+                    rel.fromEntityId in affectedEntityIds ||
+                    rel.toEntityId in affectedEntityIds
+            }
+            .map { it.id }
+            .toMutableSet()
+        var affectedCommunityIds = allCommunities
+            .filter { community ->
+                entityIdsIn(community.entityIdsJson).any { id -> id in affectedEntityIds } ||
+                    community.entityIdsJson.parseAsStringList()
+                        .any { id -> id in affectedRelationIds }
+            }
+            .map { it.id }
+            .toMutableSet()
+
+        if (affectedEntityIds.isEmpty() && affectedRelationIds.isEmpty() && affectedCommunityIds.isEmpty()) {
+            // Nothing to do — the affected items have no graph footprint.
+            return
+        }
+        if (affectedEntityIds.isNotEmpty()) graphDao.deleteEntities(affectedEntityIds.toList(), now)
+        if (affectedRelationIds.isNotEmpty()) graphDao.deleteRelations(affectedRelationIds.toList(), now)
+        if (affectedCommunityIds.isNotEmpty()) graphDao.deleteCommunities(affectedCommunityIds.toList(), now)
+
+        val survivingEntities = allEntities.filterNot { it.id in affectedEntityIds }
+        val survivingRelations = allRelations.filterNot { it.id in affectedRelationIds }
+        val survivingCommunities = allCommunities.filterNot { it.id in affectedCommunityIds }
+
+        // Same manually-deleted filters as the full rebuild. The
+        // user might have soft-deleted an entity / relation /
+        // community in "中间处理数据" while its backing item
+        // was still in the KB; the scoped rebuild must not
+        // resurrect it.
+        val manuallyDeletedEntityKeys = allEntities
+            .filter { it.deletedAt != null }
+            .map { it.name.lowercase(Locale.ROOT) to it.type }
+            .toSet()
+        val entityIndexForManualKey = (survivingEntities + allEntities.filter { it.id in affectedEntityIds })
+            .associateBy { it.id }
+        val manuallyDeletedRelationKeys: Set<Pair<String, String>> = allRelations
+            .filter { it.deletedAt != null }
+            .mapNotNull { rel ->
+                val fromName = entityIndexForManualKey[rel.fromEntityId]?.name?.lowercase(Locale.ROOT)
+                val toName = entityIndexForManualKey[rel.toEntityId]?.name?.lowercase(Locale.ROOT)
+                if (fromName != null && toName != null) fromName to toName else null
+            }
+            .toSet()
+        val manuallyDeletedCommunityNames = allCommunities
+            .filter { it.deletedAt != null }
+            .map { it.name.lowercase(Locale.ROOT) }
+            .toSet()
+
+        val pageMeta = affectedItems.map { item ->
+            WikiPageMeta(
+                item = item,
+                title = frontMatterValue(item.contentMarkdown, "title") ?: item.title,
+                type = normalizeWikiGraphType(item),
+                sources = frontMatterList(item.contentMarkdown, "sources"),
+                links = extractWikiLinks(item.contentMarkdown)
+            )
+        }.filterNot { it.type in STRUCTURAL_WIKI_TYPES }
+
+        // --- Build entities -------------------------------------------------
+        val mergedByKey = linkedMapOf<Pair<String, String>, KnowledgeEntityEntity>()
+        for (entity in survivingEntities) {
+            val key = entity.name.lowercase(Locale.ROOT) to entity.type
+            mergedByKey[key] = entity
+        }
+        for (page in pageMeta) {
+            val key = page.title.lowercase(Locale.ROOT) to page.type
+            if (key in manuallyDeletedEntityKeys) continue
+            val existing = mergedByKey[key]
+            val aliasFromAnalysis = aliasesFromItem(page.item)
+            if (existing == null) {
+                mergedByKey[key] = KnowledgeEntityEntity(
+                    id = UUID.randomUUID().toString(),
+                    knowledgeBaseId = kbId,
+                    name = page.title,
+                    type = page.type,
+                    aliasesJson = aliasFromAnalysis.toJsonArrayOrEmpty(),
+                    sourceItemIdsJson = "[\"${page.item.id}\"]",
+                    weight = 1f + page.links.size + page.sources.size,
+                    confidence = page.item.confidence.coerceIn(0f, 1f),
+                    createdAt = now,
+                    updatedAt = now,
+                    deletedAt = null
+                )
+            } else {
+                val mergedSources = (existing.sourceItemIdsJson.parseAsStringList() + page.item.id).distinct()
+                val mergedAliases = (existing.aliasesJson.parseAsStringList() + aliasFromAnalysis).distinct()
+                mergedByKey[key] = existing.copy(
+                    sourceItemIdsJson = mergedSources.toJsonArrayOrEmpty(),
+                    aliasesJson = mergedAliases.toJsonArrayOrEmpty(),
+                    weight = (existing.weight + 1f + page.links.size + page.sources.size).coerceAtMost(100f),
+                    updatedAt = now
+                )
+            }
+        }
+        val entities = mergedByKey.values
+            .sortedByDescending { it.weight }
+            .take(ENTITY_SAFETY_LIMIT)
+            .toList()
+        graphDao.upsertEntities(entities)
+
+        val byName = entities.associateBy { it.name.lowercase(Locale.ROOT) }
+        val relations = mutableListOf<KnowledgeRelationEntity>()
+        val relationKeys = mutableSetOf<Pair<String, String>>()
+        // Seed with survivors so we don't re-derive or duplicate
+        // edges that don't touch the affected items.
+        for (rel in survivingRelations) {
+            relationKeys += rel.fromEntityId to rel.toEntityId
+            relations += rel
+        }
+
+        // --- Wikilink edges (only for the affected pages) ------------------
+        pageMeta.forEach { page ->
+            val from = byName[page.title.lowercase(Locale.ROOT)] ?: return@forEach
+            page.links.forEach { link ->
+                val to = byName[link.lowercase(Locale.ROOT)] ?: return@forEach
+                if (from.id == to.id) return@forEach
+                val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                if (nameKey in manuallyDeletedRelationKeys) return@forEach
+                val key = from.id to to.id
+                if (key in relationKeys) return@forEach
+                relationKeys += key
+                relations += KnowledgeRelationEntity(
+                    id = UUID.randomUUID().toString(),
+                    knowledgeBaseId = kbId,
+                    fromEntityId = from.id,
+                    toEntityId = to.id,
+                    relationType = "wikilink",
+                    evidenceItemIdsJson = "[\"${page.item.id}\"]",
+                    confidence = 1.0f,
+                    createdAt = now,
+                    updatedAt = now,
+                    deletedAt = null
+                )
+            }
+        }
+
+        // --- Analysis-JSON relations (only for the affected pages) ---------
+        for (page in pageMeta) {
+            val sourceId = page.item.sourceId ?: continue
+            val analysis = analysisResultDao.getLatestBySource(sourceId) ?: continue
+            for (rel in parseRelations(analysis.relationsJson)) {
+                val from = byName[rel.source.lowercase(Locale.ROOT)] ?: continue
+                val to = byName[rel.target.lowercase(Locale.ROOT)] ?: continue
+                if (from.id == to.id) continue
+                val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                if (nameKey in manuallyDeletedRelationKeys) continue
+                val key = from.id to to.id
+                if (key in relationKeys) continue
+                relationKeys += key
+                relations += KnowledgeRelationEntity(
+                    id = UUID.randomUUID().toString(),
+                    knowledgeBaseId = kbId,
+                    fromEntityId = from.id,
+                    toEntityId = to.id,
+                    relationType = "analysis:${rel.type}",
+                    evidenceItemIdsJson = "[\"${page.item.id}\"]",
+                    confidence = rel.confidence.coerceIn(0f, 1f),
+                    createdAt = now,
+                    updatedAt = now,
+                    deletedAt = null
+                )
+            }
+        }
+
+        // --- Source-overlap edges (only the affected bucket) --------------
+        val affectedPagesBySource = pageMeta.groupBy { it.sources.firstOrNull() ?: "" }
+        for ((_, bucket) in affectedPagesBySource) {
+            if (bucket.size < 2) continue
+            for (i in bucket.indices) {
+                for (j in i + 1 until bucket.size) {
+                    val left = bucket[i]
+                    val right = bucket[j]
+                    val leftSet = left.sources.toSet()
+                    if (right.sources.none { it in leftSet }) continue
+                    val from = byName[left.title.lowercase(Locale.ROOT)] ?: continue
+                    val to = byName[right.title.lowercase(Locale.ROOT)] ?: continue
+                    val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                    if (nameKey in manuallyDeletedRelationKeys) continue
+                    val key = from.id to to.id
+                    if (key in relationKeys) continue
+                    relationKeys += key
+                    relations += KnowledgeRelationEntity(
+                        id = UUID.randomUUID().toString(),
+                        knowledgeBaseId = kbId,
+                        fromEntityId = from.id,
+                        toEntityId = to.id,
+                        relationType = "source_overlap",
+                        evidenceItemIdsJson = "[\"${left.item.id}\",\"${right.item.id}\"]",
+                        confidence = 0.8f,
+                        createdAt = now,
+                        updatedAt = now,
+                        deletedAt = null
+                    )
+                }
+            }
+        }
+        graphDao.upsertRelations(relations.take(RELATION_SAFETY_LIMIT))
+
+        // --- Communities ----------------------------------------------------
+        // Re-derive communities for the affected source bucket only;
+        // other communities (different source buckets) survive
+        // unchanged.
+        val newCommunities = pageMeta
+            .groupBy { page -> page.sources.firstOrNull()?.takeIf { it.isNotBlank() } }
+            .filter { (key, group) -> key != null && group.size >= 2 }
+            .mapNotNull { (key, group) ->
+                val keyStr = key ?: ""
+                val communityName = "来源群 $keyStr"
+                if (communityName.lowercase(Locale.ROOT) in manuallyDeletedCommunityNames) {
+                    null
+                } else {
+                    KnowledgeCommunityEntity(
+                        id = UUID.randomUUID().toString(),
+                        knowledgeBaseId = kbId,
+                        name = communityName,
+                        entityIdsJson = group.mapNotNull { byName[it.title.lowercase(Locale.ROOT)] }
+                            .joinToString(",", "[", "]") { "\"${it.id}\"" },
+                        summary = group.take(6).joinToString("、") { it.title },
+                        createdAt = now,
+                        updatedAt = now,
+                        deletedAt = null
+                    )
+                }
+            }
+        val finalCommunities = survivingCommunities + newCommunities
+        graphDao.upsertCommunities(finalCommunities)
     }
 
     /**
@@ -1229,7 +1519,9 @@ class KnowledgeRepositoryImpl(
             }
             itemDao.updateItemCount(kbId)
             val base = kbDao.getById(kbId)
-            if (base?.type != "unfiled") rebuildGraphForBase(kbId)
+            // PERF-5: scoped rebuild — accepting a recommendation
+            // only moves one item.
+            if (base?.type != "unfiled") rebuildGraphForBaseAffected(kbId, setOf(recommendation.itemId))
         }
     }
 
