@@ -482,34 +482,12 @@ class IngestOrchestrator(
         }
     }
 
-    private suspend fun shouldFailImmediately(task: ProcessingTaskEntity, error: Exception): Boolean {
+    internal suspend fun shouldFailImmediately(task: ProcessingTaskEntity, error: Exception): Boolean {
         if (task.taskType != "parse") return false
         if (error.message.isRetryableAiOrNetworkFailure()) return false
         val sourceId = task.sourceId ?: task.targetId
         val source = db.sourceDocumentDao().getById(sourceId) ?: return false
         return source.sourceType == "image" || source.mimeType?.startsWith("image/") == true
-    }
-
-    private fun String?.isRetryableAiOrNetworkFailure(): Boolean {
-        val value = this?.lowercase().orEmpty()
-        return listOf(
-            "dns",
-            "unable to resolve",
-            "连接失败",
-            "failed to connect",
-            "connection reset",
-            "connection abort",
-            "connection aborted",
-            "connection refused",
-            "software caused connection abort",
-            "ssl",
-            "超时",
-            "timeout",
-            "timed out",
-            "ai 调用",
-            "ai调用",
-            "http 5"
-        ).any { value.contains(it) }
     }
 
     private fun ingestParsers() = listOf(
