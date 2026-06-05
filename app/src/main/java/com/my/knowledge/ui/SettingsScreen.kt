@@ -122,18 +122,6 @@ fun SettingsScreen(onBack: () -> Unit) {
         statusMessage = "配置已保存"
     }
 
-    fun saveReasoningEffort(newEffort: ReasoningEffort) {
-        // Preserve every other field (apiKey, baseUrl, ...) by
-        // reading the current ModelConfig and only swapping
-        // reasoningEffort — this dropdown is on the main page and
-        // is meant to save immediately, so it must not require the
-        // user to have visited the Model sub-section first.
-        KnowledgeManager.updateModelConfig(
-            KnowledgeManager.modelConfig.copy(reasoningEffort = newEffort)
-        )
-        reasoningEffort = newEffort
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -224,30 +212,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                             )
                         }
                     }
-                    // ARCH-8 §2.3: 思考强度档位下拉。放在主设置页而不是
-                    // Model 子页面,是因为这是"全局偏好"而不是"模型
-                    // 凭据"——用户不应该需要先填 API Key 才能切换档位。
-                    // 立即保存模式与 debug Switch 保持一致。
-                    Surface(
-                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                        shape = RoundedCornerShape(spacing.md),
-                        color = Color.White,
-                        border = BorderStroke(1.dp, palette.borderBrand)
-                    ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Text("思考强度", style = MaterialTheme.typography.titleMedium, color = palette.textPrimary)
-                            Text(
-                                "控制 LLM 在分析/生成前的推理耗时档位(ARCH-8)。越高越准但越慢。",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = palette.textSecondary,
-                                modifier = Modifier.padding(top = 3.dp, bottom = 12.dp)
-                            )
-                            ReasoningEffortDropdown(
-                                value = reasoningEffort,
-                                onValueChange = { saveReasoningEffort(it) }
-                            )
-                        }
-                    }
                     SettingsHint()
                 }
                 SettingsSection.Model -> {
@@ -255,6 +219,7 @@ fun SettingsScreen(onBack: () -> Unit) {
                     SettingsTextField(label = "模型名称", value = modelName, onValueChange = { modelName = it }, placeholder = "MiniMax-M3")
                     SettingsTextField(label = "API Key", value = apiKey, onValueChange = { apiKey = it }, placeholder = "输入模型 API Key", isPassword = true)
                     SettingsTextField(label = "OpenAI 兼容 Base URL", value = baseUrl, onValueChange = { baseUrl = it }, placeholder = "https://api.minimaxi.com/v1")
+                    ReasoningEffortDropdown(value = reasoningEffort, onValueChange = { reasoningEffort = it })
                     SaveButton(
                         statusMessage = statusMessage,
                         onSave = { saveConfig() },
@@ -470,28 +435,36 @@ fun ReasoningEffortDropdown(
     val palette = LocalPalette.current
     val spacing = LocalSpacing.current
     var expanded by remember { mutableStateOf(false) }
-    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
-        OutlinedTextField(
-            value = reasoningEffortDisplayName(value),
-            onValueChange = {},
-            readOnly = true,
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.menuAnchor().fillMaxWidth(),
-            shape = RoundedCornerShape(spacing.md),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = palette.brand,
-                unfocusedBorderColor = palette.borderBrand
-            )
+    Column(modifier = Modifier.padding(bottom = 20.dp)) {
+        Text(
+            "思考强度",
+            fontSize = 14.sp,
+            color = palette.textSecondary,
+            modifier = Modifier.padding(bottom = 8.dp)
         )
-        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            ReasoningEffort.values().forEach { option ->
-                DropdownMenuItem(
-                    text = { Text(reasoningEffortDisplayName(option)) },
-                    onClick = {
-                        onValueChange(option)
-                        expanded = false
-                    }
+        ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+            OutlinedTextField(
+                value = reasoningEffortDisplayName(value),
+                onValueChange = {},
+                readOnly = true,
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+                modifier = Modifier.menuAnchor().fillMaxWidth(),
+                shape = RoundedCornerShape(spacing.md),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = palette.brand,
+                    unfocusedBorderColor = palette.borderBrand
                 )
+            )
+            ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                ReasoningEffort.values().forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(reasoningEffortDisplayName(option)) },
+                        onClick = {
+                            onValueChange(option)
+                            expanded = false
+                        }
+                    )
+                }
             }
         }
     }
