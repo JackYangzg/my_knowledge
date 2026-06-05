@@ -847,7 +847,18 @@ class IngestOrchestrator(
                     archivedAt = now,
                     deletedAt = null
                 )
-                db.knowledgeItemDao().insert(item)
+                // M2 (MERGE-1 PR-M2): prefer `insertOrIgnore` + `update`
+                // over `OnConflictStrategy.REPLACE`. SQLite implements
+                // REPLACE as DELETE + INSERT, which (a) cascades into
+                // knowledge_fragment / analysis_result FKs and (b)
+                // triggers two FTS sync operations per row. IGNORE +
+                // UPDATE keeps the row id stable and the FK graph
+                // intact, which means subsequent graph rebuilds and
+                // viewer lookups keep their cached row references.
+                val rowId = db.knowledgeItemDao().insertOrIgnore(item)
+                if (rowId == -1L) {
+                    db.knowledgeItemDao().update(item)
+                }
                 item
             }
             items

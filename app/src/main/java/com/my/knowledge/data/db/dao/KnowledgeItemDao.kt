@@ -92,6 +92,24 @@ interface KnowledgeItemDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(item: KnowledgeItemEntity)
 
+    /**
+     * M2 (MERGE-1 PR-M2): atomic "insert or no-op" variant. Returns
+     * the new row's rowId (a positive Long) on success, or `-1L` when
+     * the row already exists and the insert was ignored. Callers are
+     * expected to follow up with [update] in the conflict case to
+     * preserve the original `createdAt` while refreshing content.
+     *
+     * This is preferred over [insert] in the wiki-page merge path
+     * (`IngestOrchestrator.writeWikiPages`) because SQLite's
+     * `OnConflictStrategy.REPLACE` is implemented as
+     * `DELETE` + `INSERT`, which cascades into FK references in
+     * `knowledge_fragment` / `analysis_result` / `ask_citation` and
+     * triggers redundant FTS sync work. `IGNORE` keeps the row id
+     * stable and the FK graph intact.
+     */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertOrIgnore(item: KnowledgeItemEntity): Long
+
     @Update
     suspend fun update(item: KnowledgeItemEntity)
 
