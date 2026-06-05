@@ -98,6 +98,28 @@ data class InternalAnalysisState(
     val llmRefined: Boolean
 )
 
+/**
+ * ARCH-8: 思考强度档位，对应 MiniMax `/v1/responses` API 的
+ * `reasoning.effort` 字段（参考 https://platform.minimaxi.com/docs/api-reference/responses-input-tokens）。
+ *
+ * [apiValue] 是写入请求体 `reasoning.effort` 的小写字符串。
+ * 持久化时存枚举名（如 "MEDIUM"），由 [KnowledgeManager] 负责
+ * SharedPreferences ↔ enum 的双向映射，未识别值回落到 [MEDIUM]。
+ */
+@Serializable
+enum class ReasoningEffort(val apiValue: String) {
+    NONE("none"),
+    MINIMAL("minimal"),
+    LOW("low"),
+    MEDIUM("medium"),
+    HIGH("high");
+
+    companion object {
+        fun fromNameOrDefault(name: String?): ReasoningEffort =
+            name?.let { runCatching { valueOf(it) }.getOrNull() } ?: MEDIUM
+    }
+}
+
 @Serializable
 data class ModelConfig(
     val provider: String = "minimax",
@@ -114,5 +136,6 @@ data class ModelConfig(
     val voiceApiKey: String = "",
     val voiceAppId: String = "",
     val voiceClusterId: String = "volc_ent_asr_streaming",
-    val debugPromptEnabled: Boolean = false
+    val debugPromptEnabled: Boolean = false,
+    val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
 )

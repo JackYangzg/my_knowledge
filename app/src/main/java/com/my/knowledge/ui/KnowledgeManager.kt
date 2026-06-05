@@ -44,6 +44,7 @@ object KnowledgeManager {
     private const val KEY_VOICE_APP_ID = "voice_app_id"
     private const val KEY_VOICE_CLUSTER_ID = "voice_cluster_id"
     private const val KEY_DEBUG_PROMPT_ENABLED = "debug_prompt_enabled"
+    private const val KEY_REASONING_EFFORT = "reasoning_effort"
 
     private var db: AppDatabase? = null
     private var scheduler: ProcessingTaskScheduler? = null
@@ -103,7 +104,8 @@ object KnowledgeManager {
             voiceApiKey = sanitizedVoiceApiKey,
             voiceAppId = preferences.getString(KEY_VOICE_APP_ID, "") ?: "",
             voiceClusterId = preferences.getString(KEY_VOICE_CLUSTER_ID, "volc_ent_asr_streaming") ?: "volc_ent_asr_streaming",
-            debugPromptEnabled = preferences.getBoolean(KEY_DEBUG_PROMPT_ENABLED, false)
+            debugPromptEnabled = preferences.getBoolean(KEY_DEBUG_PROMPT_ENABLED, false),
+            reasoningEffort = ReasoningEffort.fromNameOrDefault(preferences.getString(KEY_REASONING_EFFORT, null))
         )
         scheduler?.scheduleIngestQueue()
     }
@@ -126,6 +128,7 @@ object KnowledgeManager {
             .putString(KEY_VOICE_APP_ID, newConfig.voiceAppId)
             .putString(KEY_VOICE_CLUSTER_ID, newConfig.voiceClusterId)
             .putBoolean(KEY_DEBUG_PROMPT_ENABLED, newConfig.debugPromptEnabled)
+            .putString(KEY_REASONING_EFFORT, newConfig.reasoningEffort.name)
             .apply()
     }
 
