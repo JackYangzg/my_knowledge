@@ -455,6 +455,11 @@ class AiGateway(
             put("messages", messages)
             put("max_tokens", JsonPrimitive(8192))
             put("temperature", JsonPrimitive(temperature))
+            // ARCH-8 §2.1: 嵌套 reasoning.effort 字段
+            // (MiniMax /v1/responses 规范,枚举 none/minimal/low/medium/high)
+            put("reasoning", buildJsonObject {
+                put("effort", JsonPrimitive(config.reasoningEffort.apiValue))
+            })
         }
 
         val url = URL("${config.baseUrl.trimEnd('/')}/chat/completions")
@@ -539,6 +544,11 @@ class AiGateway(
             put("max_tokens", JsonPrimitive(8192))
             put("temperature", JsonPrimitive(temperature))
             put("stream", JsonPrimitive(true))
+            // ARCH-8 §2.1: 嵌套 reasoning.effort 字段
+            // (MiniMax /v1/responses 规范,枚举 none/minimal/low/medium/high)
+            put("reasoning", buildJsonObject {
+                put("effort", JsonPrimitive(config.reasoningEffort.apiValue))
+            })
         }
 
         val url = URL("${config.baseUrl.trimEnd('/')}/chat/completions")
