@@ -273,6 +273,14 @@ class IngestOrchestrator(
         parsedContentDao = db.parsedContentDao(),
     )
 
+    // P0-1: ingest cache fast-path (sha256 == generated sibling).
+    // Was a 10-line private method on the orchestrator; lifted to
+    // its own class so the cache hit policy is testable in
+    // isolation and the orchestrator shrinks another 10 lines.
+    // ARCH-6 follow-up (cache key includes promptVersion) is
+    // tracked separately — it needs a v10→v11 schema migration.
+    private val ingestCache = IngestCache(sourceDao = db.sourceDocumentDao())
+
     /**
      * P0-2: tracks the [Job] of the most recently entered [runTask]
      * call. The "User pressed Stop Processing" / IngestWorker stop
@@ -381,7 +389,7 @@ class IngestOrchestrator(
             // embedding task that we still need to (re)run for the
             // brand-new source row. Saves a full Stage 1 + Stage 2 LLM
             // call on the second-and-later import of the same file.
-            if (task.taskType in setOf("parse", "analysis", "generation") && isIngestCacheHit(task)) {
+            if (task.taskType in setOf("parse", "analysis", "generation") && ingestCache.isHit(task)) {
                 val now = System.currentTimeMillis()
                 db.sourceDocumentDao().updateStatus(
                     task.sourceId ?: task.targetId,
@@ -493,18 +501,6 @@ class IngestOrchestrator(
         PlainTextParser(),
         MetadataOnlyParser()
     )
-
-    private suspend fun isIngestCacheHit(task: ProcessingTaskEntity): Boolean {
-        if (task.inputJson.contains("\"reprocess\":true")) return false
-        val sourceId = task.sourceId ?: task.targetId
-        val source = db.sourceDocumentDao().getById(sourceId) ?: return false
-        if (source.sha256.isBlank()) return false
-        val previous = db.sourceDocumentDao().findBySha256(source.sha256) ?: return false
-        // Only treat as a hit if a DIFFERENT source row already completed
-        // the pipeline end-to-end (status = generated). The new source
-        // row is still "imported", so we compare against the existing one.
-        return previous.id != source.id && previous.status == SourceDocumentEntity.STATUS_GENERATED
-    }
 
     private suspend fun parseTask(task: ProcessingTaskEntity) {
         val sourceId = task.sourceId ?: task.targetId
