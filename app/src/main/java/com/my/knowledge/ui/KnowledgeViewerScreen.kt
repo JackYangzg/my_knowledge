@@ -9,6 +9,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.filled.Hub
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -162,45 +164,68 @@ fun KnowledgeViewerScreen(
                     modifier = Modifier.fillMaxSize().padding(horizontal = 20.dp)
                 )
             } else {
-                Column(
+                // 把外层 Column(verticalScroll) 换成 LazyColumn:首屏只 compose 可见的几个
+                // 块,wiki/一般源 100K+ 字符时不再一次性把整篇 markdown 推入 composition。
+                // header 放第一个 item,会跟内容一起滚走——这是 design doc §3.3 选定的
+                // 方案(避免和 "原文/加工数据" toggle 的视觉交互打架)。
+                //
+                // chunks / md 必须在 @Composable 父作用域里跑 `remember`,
+                // LazyColumn 的 content lambda 是 @Composable,但里面的 `when` 分支体
+                // 是普通表达式——在那里调 `remember` 会报 "Composable invocation"。
+                val md = knowledgeItem.contentMarkdown.ifBlank { "暂无内容" }
+                val chunks = remember(knowledgeItem.id, knowledgeItem.contentMarkdown) {
+                    chunkLongMarkdown(md, maxChars = md.length, chunkSize = 6_000)
+                }
+                LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 20.dp)
+                        .padding(horizontal = 20.dp),
+                    state = rememberLazyListState(),
+                    contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
-                    KnowledgeBodyHeader(
-                        title = if (showProcessedItems) "加工数据" else knowledgeItem.title,
-                        item = knowledgeItem
-                    )
+                    item(key = "header-${knowledgeItem.id}") {
+                        KnowledgeBodyHeader(
+                            title = if (showProcessedItems) "加工数据" else knowledgeItem.title,
+                            item = knowledgeItem
+                        )
+                    }
 
                     if (showProcessedItems) {
-                        ProcessedWikiSection(
-                            items = processedItems,
-                            onOpenItem = onOpenItem
-                        )
+                        item(key = "processed-${knowledgeItem.id}") {
+                            ProcessedWikiSection(
+                                items = processedItems,
+                                onOpenItem = onOpenItem
+                            )
+                        }
                     } else {
                         when {
                             isImageType(knowledgeItem.sourceType) -> {
-                                ImagePlaceholder(knowledgeItem.contentMarkdown)
+                                item(key = "image-${knowledgeItem.id}") {
+                                    ImagePlaceholder(knowledgeItem.contentMarkdown)
+                                }
                             }
                             knowledgeItem.sourceType.startsWith("wiki_") -> {
-                                WikiMarkdownContent(
-                                    markdown = knowledgeItem.contentMarkdown.ifBlank { "暂无内容" },
-                                    linkTargets = linkTargets,
-                                    onOpenItem = onOpenItem
-                                )
+                                // wiki / 一般源按 6K 一块切;wiki 通常 < 30K,一般源 < 100K,
+                                // 5-15 块在 LazyColumn 里只渲染首屏 2-3 块。
+                                items(chunks, key = { it.index }) { chunk ->
+                                    WikiMarkdownContent(
+                                        markdown = chunk.text,
+                                        linkTargets = linkTargets,
+                                        onOpenItem = onOpenItem
+                                    )
+                                }
                             }
                             else -> {
-                                ComposeMarkdown(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    markdown = knowledgeItem.contentMarkdown.ifBlank { "暂无内容" },
-                                    onLinkClick = { openFile(context, it) }
-                                )
+                                items(chunks, key = { it.index }) { chunk ->
+                                    ComposeMarkdown(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        markdown = chunk.text,
+                                        onLinkClick = { openFile(context, it) }
+                                    )
+                                }
                             }
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(60.dp))
                 }
             }
         } ?: run {
@@ -525,16 +550,16 @@ private fun PdfContentViewer(
     val localPath = remember(item.sourceTraceJson) { extractJsonString(item.sourceTraceJson, "localPath") }
     var previewPages by remember(localPath) { mutableStateOf<List<Bitmap>>(emptyList()) }
     var previewError by remember(localPath) { mutableStateOf<String?>(null) }
-    var showFullText by remember(item.id) { mutableStateOf(false) }
-    val textChunks = remember(item.contentMarkdown, showFullText) {
-        chunkLongMarkdown(
-            markdown = item.contentMarkdown.ifBlank { "暂无解析文本" },
-            maxChars = if (showFullText) 220_000 else 36_000
-        )
+    var showFullText by rememberSaveable(item.id) { mutableStateOf(false) }
+    var textChunks by remember(item.id) { mutableStateOf<List<MarkdownChunk>>(emptyList()) }
+    LaunchedEffect(item.contentMarkdown, showFullText) {
+        val cap = if (showFullText) 220_000 else 36_000
+        val markdown = item.contentMarkdown.ifBlank { "暂无解析文本" }
+        textChunks = withContext(Dispatchers.Default) {
+            chunkLongMarkdown(markdown, maxChars = cap)
+        }
     }
-    val isTruncated = remember(item.contentMarkdown, showFullText) {
-        !showFullText && item.contentMarkdown.length > 36_000
-    }
+    val isTruncated = !showFullText && item.contentMarkdown.length > 36_000
 
     LaunchedEffect(localPath) {
         if (localPath.isNullOrBlank()) {
