@@ -10,6 +10,10 @@ interface KnowledgeThreadDao {
     @Query("SELECT * FROM knowledge_thread WHERE knowledgeBaseId = :kbId LIMIT 1")
     suspend fun getByKb(kbId: String): KnowledgeThreadEntity?
 
+    /** FRAG-1.2: detector needs ALL threads per KB, not just the first. */
+    @Query("SELECT * FROM knowledge_thread WHERE knowledgeBaseId = :kbId")
+    suspend fun listByKb(kbId: String): List<KnowledgeThreadEntity>
+
     @Query("SELECT * FROM knowledge_thread WHERE id = :id")
     suspend fun getById(id: String): KnowledgeThreadEntity?
 
