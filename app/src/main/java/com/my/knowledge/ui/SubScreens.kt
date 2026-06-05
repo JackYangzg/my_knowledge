@@ -14,9 +14,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.my.knowledge.data.db.AppDatabase
+import com.my.knowledge.data.db.entity.KnowledgeFragmentChainEntity
+import com.my.knowledge.domain.fragment.LifecycleStatus
 import com.my.knowledge.ui.component.InsightRow
 import com.my.knowledge.ui.component.MiniTag
 import com.my.knowledge.ui.component.StatCard
@@ -26,6 +30,7 @@ import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
 import com.my.knowledge.ui.theme.LocalPalette
 import com.my.knowledge.ui.theme.LocalSpacing
+import kotlinx.coroutines.flow.collectLatest
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -408,14 +413,33 @@ private fun SectionHeader(title: String, icon: androidx.compose.ui.graphics.vect
 }
 
 @Composable
-fun FragmentOrganizeScreen(onBack: () -> Unit) {
+fun FragmentOrganizeScreen(
+    onBack: () -> Unit,
+    onChainClick: (chainId: String) -> Unit = {},
+) {
 
     val palette = LocalPalette.current
+    val context = LocalContext.current
 
-    val spacing = LocalSpacing.current
-    var filter by remember { mutableStateOf("全部") }
-    val filters = listOf("全部", "待归类", "可提炼", "可归档")
-    val fragments = KnowledgeManager.fragments
+    val dao = remember(context) { AppDatabase.getInstance(context).fragmentChainDao() }
+    var chains by remember { mutableStateOf<List<KnowledgeFragmentChainEntity>>(emptyList()) }
+    LaunchedEffect(dao) {
+        dao.observeAll().collectLatest { chains = it }
+    }
+
+    var filter by remember { mutableStateOf(FilterTab.ALL) }
+    val visible = chains.filter { chain ->
+        when (filter) {
+            FilterTab.ALL -> true
+            FilterTab.NEED_REVIEW -> chain.status == LifecycleStatus.NEED_REVIEW.name
+            FilterTab.DISTILL_READY -> chain.status == LifecycleStatus.DISTILL_READY.name
+            FilterTab.ARCHIVED -> chain.status == LifecycleStatus.RECOMMEND_READY.name ||
+                chain.status == LifecycleStatus.ARCHIVED.name
+        }
+    }
+    val needReviewCount = chains.count { it.status == LifecycleStatus.NEED_REVIEW.name }
+    val recommendReadyCount = chains.count { it.status == LifecycleStatus.RECOMMEND_READY.name }
+    val distillReadyCount = chains.count { it.status == LifecycleStatus.DISTILL_READY.name }
 
     LazyColumn(
         modifier = Modifier
@@ -451,9 +475,9 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
         item {
             Column(modifier = Modifier.padding(horizontal = 20.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    StatCard(Modifier.weight(1f), fragments.size.toString(), "待整理")
-                    StatCard(Modifier.weight(1f), "0", "已推荐")
-                    StatCard(Modifier.weight(1f), "0", "可归档")
+                    StatCard(Modifier.weight(1f), needReviewCount.toString(), "待整理")
+                    StatCard(Modifier.weight(1f), recommendReadyCount.toString(), "已推荐")
+                    StatCard(Modifier.weight(1f), distillReadyCount.toString(), "可归档")
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
@@ -462,16 +486,16 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    filters.forEach { item ->
-                        val selected = filter == item
+                    FilterTab.values().forEach { tab ->
+                        val selected = filter == tab
                         Surface(
-                            onClick = { filter = item },
+                            onClick = { filter = tab },
                             shape = CircleShape,
                             color = if (selected) palette.brand else Color.White,
                             border = if (selected) null else BorderStroke(1.dp, palette.borderBrand)
                         ) {
                             Text(
-                                text = item, style = MaterialTheme.typography.labelMedium,
+                                text = tab.label, style = MaterialTheme.typography.labelMedium,
                                 color = if (selected) Color.White else palette.textSecondary,
                                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)
                             )
@@ -481,31 +505,56 @@ fun FragmentOrganizeScreen(onBack: () -> Unit) {
             }
         }
 
-        if (fragments.isEmpty()) {
+        if (visible.isEmpty()) {
             item {
                 Box(modifier = Modifier.fillMaxWidth().padding(48.dp), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.auto_b05a59ae), color = palette.textSecondary, fontSize = 14.sp)
+                    Text(
+                        text = if (chains.isEmpty()) "暂无整理任务,先到知识库添加灵感吧"
+                        else "当前 tab 没有 chain",
+                        color = palette.textSecondary, fontSize = 14.sp,
+                    )
                 }
             }
         } else {
             item {
-                Section(title = stringResource(R.string.auto_73565d17)) {
-                    fragments.forEachIndexed { index, fragment ->
+                Section(title = "${visible.size} 条 chain") {
+                    visible.forEachIndexed { index, chain ->
                         if (index != 0) HorizontalDivider(modifier = Modifier.padding(horizontal = 20.dp), color = palette.borderBrand)
-                        QuietCell(
-                            icon = when {
-                                fragment.sourceFile.endsWith(".md") -> Icons.Default.Description
-                                else -> Icons.Default.Link
-                            },
-                            title = fragment.title,
-                            desc = "来源: ${fragment.sourceFile}",
-                            right = { MiniTag(fragment.tags.firstOrNull() ?: "待分类") }
+                        FragmentChainRow(
+                            chain = chain,
+                            onClick = { onChainClick(chain.id) },
                         )
                     }
                 }
             }
         }
     }
+}
+
+private enum class FilterTab(val label: String) {
+    ALL("全部"),
+    NEED_REVIEW("待完善"),
+    DISTILL_READY("可提炼"),
+    ARCHIVED("归档"),
+}
+
+@Composable
+private fun FragmentChainRow(chain: KnowledgeFragmentChainEntity, onClick: () -> Unit) {
+    val palette = LocalPalette.current
+    val statusLabel = when (chain.status) {
+        LifecycleStatus.NEED_REVIEW.name -> "待完善"
+        LifecycleStatus.DISTILL_READY.name -> "可提炼"
+        LifecycleStatus.RECOMMEND_READY.name -> "已推荐"
+        LifecycleStatus.ARCHIVED.name -> "已归档"
+        else -> chain.status
+    }
+    QuietCell(
+        icon = Icons.Default.AccountTree,
+        title = chain.title.ifBlank { "未命名 chain" },
+        desc = "entity ${chain.entityCount} · source ${chain.sourceCount} · gap ${chain.gapCount}",
+        right = { MiniTag(statusLabel) },
+        onClick = onClick,
+    )
 }
 
 @Composable

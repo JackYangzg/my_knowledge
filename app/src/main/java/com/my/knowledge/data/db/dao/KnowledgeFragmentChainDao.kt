@@ -28,6 +28,9 @@ interface KnowledgeFragmentChainDao {
     @Query("SELECT * FROM knowledge_fragment_chain WHERE knowledgeBaseId = :kbId AND status IN ('RECOMMEND_READY', 'ARCHIVED') ORDER BY updatedAt DESC")
     fun observeArchived(kbId: String): Flow<List<KnowledgeFragmentChainEntity>>
 
+    @Query("SELECT * FROM knowledge_fragment_chain ORDER BY updatedAt DESC")
+    fun observeAll(): Flow<List<KnowledgeFragmentChainEntity>>
+
     @Query("UPDATE knowledge_fragment_chain SET status = :status, updatedAt = :updatedAt WHERE id = :id")
     suspend fun updateStatus(id: String, status: String, updatedAt: Long)
 
