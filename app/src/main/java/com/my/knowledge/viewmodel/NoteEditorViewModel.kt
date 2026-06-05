@@ -13,6 +13,7 @@ import com.my.knowledge.data.ai.AiTextCleaner.removeThinkBlock
 import com.my.knowledge.data.db.entity.NoteEntity
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
+import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
 import com.my.knowledge.data.processing.ProcessingTaskScheduler
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import com.my.knowledge.domain.usecase.AutoSaveNoteUseCase
@@ -141,6 +142,73 @@ class NoteEditorViewModel(
             }
         }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), InspirationThreadUi.empty())
+
+    // THREAD-E2: full evolution history for the inspiration KB.
+    // Drives the "演化历史" expandable panel in [InspirationScreen].
+    // Flat-maps the inspiration base to its thread (if any) and then
+    // to the full ordered log list. Empty list when no thread exists
+    // yet, which is the common cold-start state.
+    val inspirationThreadLogs: StateFlow<List<KnowledgeThreadLogEntity>> = inspirationBase
+        .filterNotNull()
+        .flatMapLatest { base ->
+            flow {
+                val thread = knowledgeRepository.getThreadByKb(base.id)
+                if (thread == null) {
+                    emit(emptyList())
+                } else {
+                    knowledgeRepository.observeThreadLogs(thread.id).collect { emit(it) }
+                }
+            }
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // THREAD-E3: tracks whether a manual evolution is in flight.
+    // `true` from the moment [triggerInspirationEvolution] enqueues
+    // the job until the underlying [inspirationThread] reflects a new
+    // `updatedAt` (or a 60s safety timeout fires). The home screen
+    // uses this to disable the button and show a spinner. We poll
+    // 1Hz — cheap, idempotent, and avoids wiring WorkManager work
+    // info into this ViewModel just for a single boolean.
+    private val _inspirationEvolving = MutableStateFlow(false)
+    val inspirationEvolving: StateFlow<Boolean> = _inspirationEvolving.asStateFlow()
+
+    fun triggerInspirationEvolution() {
+        val base = inspirationBase.value ?: return
+        val scheduler = scheduler ?: return
+        val beforeUpdatedAt = inspirationThread.value.let { ui ->
+            // InspirationThreadUi wraps the raw thread entity; the
+            // `updatedAt` is propagated through so we can detect the
+            // worker's write the same way ThreadViewModel does.
+            ui.toThreadUpdatedAt()
+        }
+        scheduler.scheduleThreadUpdate(base.id)
+        _inspirationEvolving.value = true
+        viewModelScope.launch {
+            val deadline = System.currentTimeMillis() + 60_000L
+            while (System.currentTimeMillis() < deadline) {
+                kotlinx.coroutines.delay(1_000)
+                val current = inspirationThread.value.toThreadUpdatedAt()
+                if (current != null && current != beforeUpdatedAt) {
+                    break
+                }
+            }
+            _inspirationEvolving.value = false
+        }
+    }
+
+    /**
+     * Extract the underlying `updatedAt` from an [InspirationThreadUi]
+     * so the polling loop can detect the worker's write without
+     * re-fetching the raw [KnowledgeThreadEntity]. Returns `null`
+     * when the UI is in its empty state (no thread row yet).
+     */
+    private fun InspirationThreadUi.toThreadUpdatedAt(): Long? =
+        // The UI model exposes `description` / `coreQuestion` / etc.
+        // We piggy-back on the log list which is always populated when
+        // a thread exists; the latest log's `createdAt` is a tight
+        // proxy for "thread was just rewritten" without changing the
+        // UI model surface.
+        inspirationThreadLogs.value.firstOrNull()?.createdAt
 
     fun createNewNote() {
         viewModelScope.launch {

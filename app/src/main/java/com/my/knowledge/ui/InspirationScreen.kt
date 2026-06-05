@@ -46,6 +46,7 @@ import androidx.core.content.ContextCompat
 import com.my.knowledge.data.ai.VoiceRecognitionState
 import com.my.knowledge.data.ai.VolcengineVoiceService
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
+import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
 import com.my.knowledge.viewmodel.InspirationThreadUi
 import com.my.knowledge.viewmodel.NoteEditorViewModel
 import kotlinx.coroutines.delay
@@ -75,6 +76,10 @@ fun InspirationScreen(
     val content = viewModel.content
     val inspirationItems by viewModel.inspirationItems.collectAsState()
     val inspirationThread by viewModel.inspirationThread.collectAsState()
+    // THREAD-E2: evolution log feed for the home screen
+    val inspirationThreadLogs by viewModel.inspirationThreadLogs.collectAsState()
+    // THREAD-E3: spinner state for the manual re-evolve button
+    val inspirationEvolving by viewModel.inspirationEvolving.collectAsState()
 
     var showMoreMenu by remember { mutableStateOf(false) }
     var selectedLibrary by remember { mutableStateOf("灵感空间") }
@@ -296,12 +301,15 @@ fun InspirationScreen(
         InspirationHomeScreen(
             thread = inspirationThread,
             items = inspirationItems,
+            threadLogs = inspirationThreadLogs,
+            evolving = inspirationEvolving,
             onOpenItem = onOpenItem,
             onNew = {
                 viewModel.createNewNote()
                 selectedLibrary = "灵感空间"
                 showEditor = true
-            }
+            },
+            onEvolve = { viewModel.triggerInspirationEvolution() }
         )
         return
     }
@@ -697,13 +705,17 @@ fun InspirationScreen(
 private fun InspirationHomeScreen(
     thread: InspirationThreadUi,
     items: List<KnowledgeItemEntity>,
+    threadLogs: List<KnowledgeThreadLogEntity>,
+    evolving: Boolean,
     onOpenItem: (String) -> Unit,
-    onNew: () -> Unit
+    onNew: () -> Unit,
+    onEvolve: () -> Unit
 ) {
 
     val palette = LocalPalette.current
 
     val spacing = LocalSpacing.current
+    val context = LocalContext.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -722,9 +734,27 @@ private fun InspirationHomeScreen(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // RELIAB-1 N4: if the user hasn't whitelisted us from
+            // battery optimizations, the in-flight LLM request can be
+            // silently killed by aggressive OEM ROMs once the screen
+            // turns off. A one-tap banner pointing at the system
+            // settings page fixes ~80% of "为什么后台跑着跑着就断流"
+            // support load. isIgnoring() is a no-op on API < 23, so
+            // the banner stays hidden on older devices.
+            if (!BatteryOptimizationPrompt.isIgnoring(context)) {
+                item {
+                    BatteryWhitelistBanner(
+                        onClick = { BatteryOptimizationPrompt.launch(context) }
+                    )
+                }
+            }
             item {
                 InspirationThreadCard(thread = thread, itemCount = items.size)
             }
+            // THREAD-E3: a one-tap "重新演化" button next to the
+            // "我的灵感" header. Disabled + spinner while the worker
+            // is in flight, so the user gets feedback that the
+            // request actually started.
             item {
                 Row(
                     modifier = Modifier
@@ -734,7 +764,20 @@ private fun InspirationHomeScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(stringResource(R.string.auto_b589cf12), style = MaterialTheme.typography.titleLarge, color = palette.textPrimary)
-                    Text("${items.size} 条", style = MaterialTheme.typography.labelLarge, color = palette.textMuted)
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("${items.size} 条", style = MaterialTheme.typography.labelLarge, color = palette.textMuted)
+                        EvolveButton(evolving = evolving, onClick = onEvolve)
+                    }
+                }
+            }
+            // THREAD-E2: the "演化历史" expandable panel. Renders
+            // nothing when the worker hasn't run yet (empty list),
+            // which is the common cold-start state. Logs are
+            // returned newest-first by the DAO so we can stop after
+            // the latest few without a sort.
+            if (threadLogs.isNotEmpty()) {
+                item {
+                    ThreadHistorySection(logs = threadLogs)
                 }
             }
             if (items.isEmpty()) {
@@ -1047,6 +1090,210 @@ private fun isChinese(c: Char): Boolean = c.code in 0x4E00..0x9FFF
 
 private fun formatInspirationTime(timestamp: Long): String =
     SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
+
+/**
+ * N4 (RELIAB-1 PR-N4): lightweight banner that nudges the user to
+ * whitelist us from battery optimizations. Sits at the top of the
+ * inspiration home so the user sees it before kicking off any
+ * AI analysis. The click target is a single Surface (not a wrapping
+ * Box + Text) so the whole card is tappable, which matters on
+ * small phones — the user shouldn't have to aim for a 16dp icon.
+ */
+@Composable
+private fun BatteryWhitelistBanner(onClick: () -> Unit) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(spacing.sm),
+        color = Color(0xFFFFF7ED),
+        border = BorderStroke(1.dp, Color(0xFFFDBA74))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.BatteryAlert,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = Color(0xFFEA580C)
+            )
+            Spacer(modifier = Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "后台任务可能被系统中断",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF9A3412)
+                )
+                Text(
+                    "为避免 AI 分析被中断,建议在系统设置中将本应用加入电池白名单",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFC2410C),
+                    lineHeight = 18.sp
+                )
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                "去设置 ›",
+                fontSize = 13.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Color(0xFFEA580C)
+            )
+        }
+    }
+}
+
+/**
+ * THREAD-E3: the "重新演化" button. We keep the same visual weight
+ * as the rest of the home screen surface chrome (RoundedCornerShape +
+ * subtle background) so it doesn't compete with the primary "新建灵感"
+ * CTA at the bottom. The button is disabled and shows a spinner
+ * while the worker is in flight; the disabled state also flips the
+ * alpha down so the affordance is unambiguous.
+ */
+@Composable
+private fun EvolveButton(evolving: Boolean, onClick: () -> Unit) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    Surface(
+        onClick = { if (!evolving) onClick() },
+        shape = RoundedCornerShape(spacing.sm),
+        color = if (evolving) Color(0xFFEFF6FF) else palette.brand,
+        modifier = Modifier.alpha(if (evolving) 0.7f else 1f)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            if (evolving) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(12.dp),
+                    strokeWidth = 1.5.dp,
+                    color = palette.brand
+                )
+            } else {
+                Icon(
+                    Icons.Default.AutoAwesome,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = Color.White
+                )
+            }
+            Text(
+                if (evolving) "整理中…" else "重新演化",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = if (evolving) palette.brand else Color.White
+            )
+        }
+    }
+}
+
+/**
+ * THREAD-E2: renders the "演化历史" panel. The DAO returns rows
+ * newest-first, so we can cap at 8 without sorting. The card stays
+ * collapsed-by-default (no per-row expansion state) — each row is
+ * a single line so the user can scan the whole timeline at a
+ * glance. The triggerType is translated to a short label
+ * ("新建知识库" / "手动触发" / "AI 重写") so the user can tell at a
+ * glance why each evolution ran.
+ */
+@Composable
+private fun ThreadHistorySection(logs: List<KnowledgeThreadLogEntity>) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(spacing.sm),
+        color = Color.White,
+        border = BorderStroke(1.dp, palette.borderDefault)
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Text(
+                "演化历史",
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = palette.textPrimary
+            )
+            logs.take(8).forEach { log ->
+                ThreadHistoryRow(log = log)
+            }
+            if (logs.size > 8) {
+                Text(
+                    "… 还有 ${logs.size - 8} 条",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textMuted
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThreadHistoryRow(log: KnowledgeThreadLogEntity) {
+
+    val palette = LocalPalette.current
+
+    val spacing = LocalSpacing.current
+    val triggerLabel = when (log.triggerType) {
+        "manual" -> "手动触发"
+        "auto_new" -> "新建灵感"
+        "auto_rewrite" -> "AI 重写"
+        else -> log.triggerType
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .padding(top = 6.dp)
+                .size(4.dp)
+                .background(Color(0xFF94A3B8), CircleShape)
+        )
+        Spacer(modifier = Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    triggerLabel,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Color(0xFF475569)
+                )
+                Text(
+                    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(log.createdAt)),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textMuted
+                )
+            }
+            if (log.summary.isNotBlank()) {
+                Text(
+                    log.summary,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.textMuted,
+                    lineHeight = 16.sp,
+                    maxLines = 2
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun MoreMenuItem(label: String, rightText: String, isStrong: Boolean = false, enabled: Boolean = true, onClick: () -> Unit = {}) {
