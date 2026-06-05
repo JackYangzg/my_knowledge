@@ -87,6 +87,9 @@ sealed class Route(val path: String) {
     data object KnowledgeEditor : Route("knowledge_editor/{itemId}") {
         fun create(itemId: String) = "knowledge_editor/${Uri.encode(itemId)}"
     }
+    data object FragmentChainDetail : Route("fragment_chain/{chainId}") {
+        fun create(chainId: String) = "fragment_chain/${Uri.encode(chainId)}"
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -190,7 +193,19 @@ fun KnowledgeApp() {
                     )
                 }
                 composable(Route.Fragments.path) {
-                    FragmentOrganizeScreen(onBack = { navController.popBackStack() })
+                    FragmentOrganizeScreen(
+                        onBack = { navController.popBackStack() },
+                        onChainClick = { chainId ->
+                            navController.navigate(Route.FragmentChainDetail.create(chainId))
+                        },
+                    )
+                }
+                composable(Route.FragmentChainDetail.path) { backStack ->
+                    val chainId = backStack.arguments?.getString("chainId").orEmpty()
+                    FragmentChainDetailScreen(
+                        chainId = chainId,
+                        onBack = { navController.popBackStack() },
+                    )
                 }
                 composable(Route.Manage.path) {
                     KnowledgeManageScreen(

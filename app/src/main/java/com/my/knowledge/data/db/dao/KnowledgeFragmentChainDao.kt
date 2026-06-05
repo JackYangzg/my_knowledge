@@ -19,6 +19,9 @@ interface KnowledgeFragmentChainDao {
     @Query("SELECT * FROM knowledge_fragment_chain WHERE id = :id")
     suspend fun getById(id: String): KnowledgeFragmentChainEntity?
 
+    @Query("SELECT * FROM knowledge_fragment_chain WHERE id = :id")
+    fun observeById(id: String): Flow<KnowledgeFragmentChainEntity?>
+
     @Query("SELECT * FROM knowledge_fragment_chain WHERE threadId = :threadId")
     suspend fun getByThreadId(threadId: String): KnowledgeFragmentChainEntity?
 
