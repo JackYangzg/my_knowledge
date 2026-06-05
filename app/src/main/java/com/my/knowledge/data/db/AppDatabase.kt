@@ -198,6 +198,17 @@ abstract class AppDatabase : RoomDatabase() {
 
         }
 
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.addColumnIfMissing( "knowledge_item", "sourceId", "TEXT")
+                db.addColumnIfMissing( "knowledge_item", "sourceTraceJson", "TEXT NOT NULL DEFAULT '[]'")
+                db.addColumnIfMissing( "knowledge_item", "confidence", "REAL NOT NULL DEFAULT 1.0")
+                db.addColumnIfMissing( "knowledge_item", "archivedAt", "INTEGER")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_item_sourceId` ON `knowledge_item` (`sourceId`)")
+            }
+
+        }
+
         val MIGRATION_6_7 = object : Migration(6, 7) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.addColumnIfMissing( "knowledge_entity", "deletedAt", "INTEGER")
@@ -299,16 +310,5 @@ abstract class AppDatabase : RoomDatabase() {
             )
         }
     }
-
-        val MIGRATION_5_6 = object : Migration(5, 6) {
-            override fun migrate(db: SupportSQLiteDatabase) {
-                db.addColumnIfMissing( "knowledge_item", "sourceId", "TEXT")
-                db.addColumnIfMissing( "knowledge_item", "sourceTraceJson", "TEXT NOT NULL DEFAULT '[]'")
-                db.addColumnIfMissing( "knowledge_item", "confidence", "REAL NOT NULL DEFAULT 1.0")
-                db.addColumnIfMissing( "knowledge_item", "archivedAt", "INTEGER")
-                db.execSQL("CREATE INDEX IF NOT EXISTS `index_knowledge_item_sourceId` ON `knowledge_item` (`sourceId`)")
-            }
-
-        }
     }
 }
