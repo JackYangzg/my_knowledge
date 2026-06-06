@@ -547,68 +547,88 @@ fun InspirationScreen(
                 .imePadding()
                 .padding(bottom = 24.dp, end = 24.dp)
                 .size(72.dp)
-                .pointerInput(voiceState.isRecording) {
+                .pointerInput(Unit) {
+                    // Key = Unit (constant) so this coroutine does NOT
+                    // get cancelled+restarted when voiceState.isRecording
+                    // flips. Old code keyed on isRecording, which meant:
+                    // first press → isRecording=false → fires
+                    // startSpeechInput() → key changes → coroutine
+                    // restarts → the still-pressed finger is treated as a
+                    // "new" gesture only on the second press. Net effect:
+                    // user had to long-press TWICE (first to start,
+                    // second to actually trigger the hold timer). Now
+                    // both start and hold-timer run in the same gesture.
                     awaitEachGesture {
                         awaitFirstDown()
-                        if (voiceState.isRecording) {
-                            // Recording: hold the button until the progress ring
-                            // completes, then release is auto-triggered. Releasing
-                            // early just shows a hint, no premature stop.
-                            isPressingVoiceButton = true
-                            voicePressProgress = 0f
-                            voiceStopTriggered = false
-                            val startedAt = System.currentTimeMillis()
-                            val stopThresholdMs = 1500L
-
-                            val progressJob = scope.launch {
-                                while (isPressingVoiceButton) {
-                                    val elapsed = System.currentTimeMillis() - startedAt
-                                    voicePressProgress = (elapsed.toFloat() / stopThresholdMs)
-                                        .coerceIn(0f, 1f)
-                                    if (elapsed >= stopThresholdMs) {
-                                        voiceStopTriggered = true
-                                        break
-                                    }
-                                    delay(16)
-                                }
-                            }
-
-                            // Block until the user lifts their finger (or the
-                            // gesture is cancelled by the system).
-                            val up = waitForUpOrCancellation()
-                            progressJob.cancel()
-
-                            if (voiceStopTriggered) {
-                                // Held long enough — actually stop the recording.
-                                voicePressProgress = 0f
-                                isPressingVoiceButton = false
-                                voiceStopTriggered = false
-                                stopSpeechInput()
-                                Toast.makeText(
-                                    context,
-                                    "已达到停止时长，录音已结束",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                        // One press covers both start and hold. If the
+                        // recording isn't already on (cold first press),
+                        // kick it off here.
+                        if (!voiceState.isRecording) {
+                            val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                            if (hasPermission) {
+                                startSpeechInput()
                             } else {
-                                // Released too early — show a hint and reset.
-                                voicePressProgress = 0f
-                                isPressingVoiceButton = false
-                                if (up != null) {
-                                    Toast.makeText(
-                                        context,
-                                        "请长按结束录音",
-                                        Toast.LENGTH_SHORT
-                                    ).show()
-                                }
-                            }
-                        } else {
-                            // Not recording: Tap to start
-                            val up = waitForUpOrCancellation()
-                            if (up != null) {
-                                val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                                if (hasPermission) startSpeechInput() else audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                                return@awaitEachGesture
                             }
                         }
+
+                        // Start the hold timer unconditionally.
+                        isPressingVoiceButton = true
+                        voicePressProgress = 0f
+                        voiceStopTriggered = false
+                        val startedAt = System.currentTimeMillis()
+                        val stopThresholdMs = 1500L
+
+                        val progressJob = scope.launch {
+                            while (isPressingVoiceButton) {
+                                val elapsed = System.currentTimeMillis() - startedAt
+                                voicePressProgress = (elapsed.toFloat() / stopThresholdMs)
+                                    .coerceIn(0f, 1f)
+                                if (elapsed >= stopThresholdMs) {
+                                    voiceStopTriggered = true
+                                    // Held long enough — flag set; keep
+                                    // ticking the progress ring until
+                                    // the user releases.
+                                }
+                                delay(16)
+                            }
+                        }
+
+                        // Block until the user lifts their finger (or
+                        // the gesture is cancelled by the system).
+                        val up = waitForUpOrCancellation()
+                        progressJob.cancel()
+                        isPressingVoiceButton = false
+                        val heldLongEnough = voiceStopTriggered
+                        voiceStopTriggered = false
+                        voicePressProgress = 0f
+
+                        if (up == null) {
+                            // System cancelled the gesture (e.g. an
+                            // interrupting notification). Stop cleanly.
+                            stopSpeechInput()
+                            return@awaitEachGesture
+                        }
+
+                        // Release always stops the recording — the
+                        // whole point of the press is "I'm talking,
+                        // record me; I let go, stop". ONE press = start
+                        // + stop. The 1.5s threshold is just a UX floor
+                        // (visual progress ring) so accidental brushes
+                        // don't silently record.
+                        stopSpeechInput()
+                        if (heldLongEnough) {
+                            Toast.makeText(
+                                context,
+                                "已达到停止时长，录音已结束",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        // No toast for early-release — the user already
+                        // feels the button release; spamming
+                        // "请长按结束录音" was the old behavior that
+                        // prompted this fix.
                     }
                 }
         ) {
