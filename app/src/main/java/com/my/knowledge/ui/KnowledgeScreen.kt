@@ -44,7 +44,8 @@ fun KnowledgeScreen(
     onOpenContext: () -> Unit,
     onOpenFragments: () -> Unit,
     onOpenKbDetail: (String) -> Unit,
-    onOpenKbManage: () -> Unit
+    onOpenKbManage: () -> Unit,
+    onOpenNewNote: (String) -> Unit = {}
 ) {
     val palette = LocalPalette.current
     val spacing = LocalSpacing.current
@@ -213,6 +214,20 @@ fun KnowledgeScreen(
                     )
                 }
             )
+        }
+        // "+" FAB: 从主页快速新建知识到任意 KB(优先当前第一可用 KB)。
+        val nonRecycle = knowledgeBases.firstOrNull { it.type != "recyclebin" }
+        if (nonRecycle != null) {
+            FloatingActionButton(
+                onClick = { onOpenNewNote(nonRecycle.name) },
+                containerColor = palette.brand,
+                contentColor = Color.White,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 20.dp, bottom = 20.dp)
+            ) {
+                Icon(Icons.Default.Add, contentDescription = "新建知识")
+            }
         }
     }
 }
