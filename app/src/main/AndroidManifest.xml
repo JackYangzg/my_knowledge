@@ -60,6 +60,20 @@
             android:name=".worker.IngestForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <!-- P0-SLIM: WorkManagerInitializer removed (lint vital flagged on-demand init conflict).
+             WorkManager initializes lazily on first getInstance() call.
+             See https://developer.android.com/topic/libraries/architecture/workmanager/advanced/custom-configuration -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
     </application>
 
 </manifest>

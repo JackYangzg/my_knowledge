@@ -2,7 +2,9 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.google.gms.google.services)
+    // P0-SLIM: google.gms.google.services plugin removed — app/google-services.json
+    //   does not exist, no Firebase deps present, plugin is no-op. See design doc
+    //   ~/.gstack/projects/JackYangzg-my_knowledge/yangzhiguo-main-design-20260606-153749.md (OQ-4)
     alias(libs.plugins.kotlin.serialization)
     id("org.jetbrains.kotlin.kapt")
 }
@@ -69,13 +71,21 @@ dependencies {
     // P1-N2: HttpLoggingInterceptor is debug-only — release builds
     // get a smaller APK and no risk of leaking the Bearer token /
     // response body into logcat.
-    debugImplementation(libs.okhttp.logging)
+    // P0-SLIM: okhttp.logging changed debugImplementation → implementation.
+    //   LlmHttpClient.kt:6 imports HttpLoggingInterceptor at file top
+    //   (Kotlin resolves imports regardless of BuildConfig.DEBUG guard),
+    //   so it must be on the release classpath. ~50 KB cost.
+    //   Guarded by if (BuildConfig.DEBUG) so it's INSTALLED only in debug.
+    implementation(libs.okhttp.logging)
     implementation(libs.jsoup)
     implementation(libs.pdfbox.android)
     implementation(libs.mlkit.text.recognition)
     implementation(libs.mlkit.text.recognition.chinese)
-    implementation("androidx.pdf:pdf-viewer-fragment:1.0.0-alpha05")
-    implementation("com.github.mukeshsolanki:MarkdownView-Android:2.0.0")
+    // P0-SLIM: pdf-viewer-fragment direct import removed; verify via
+    //   `./gradlew :app:dependencies` whether PDFBox still transitively
+    //   pulls it. If yes, no APK change; if no, ~1 MB savings.
+    // P0-SLIM: MarkdownView-Android removed (0 references); project uses
+    //   in-house ui/ComposeMarkdown.kt instead.
     kapt(libs.androidx.room.compiler)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
