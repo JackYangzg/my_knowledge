@@ -59,8 +59,10 @@ import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
 import com.my.knowledge.data.ai.VolcengineVoiceService
+import com.my.knowledge.viewmodel.NoteEditorViewModel
 import com.my.knowledge.ui.theme.LocalPalette
 import com.my.knowledge.ui.theme.LocalSpacing
 import kotlinx.coroutines.delay
