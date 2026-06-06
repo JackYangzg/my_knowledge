@@ -1492,8 +1492,19 @@ class KnowledgeRepositoryImpl(
         // delete or hide knowledge-base content that the user already sees
         // in a library. In particular, do not clear parsed/analysis rows
         // and do not soft-delete knowledge_item rows here.
+        //
+        // Old task rows for this source ARE wiped, though: the log-center
+        // card groups every task by sourceId and shows a stepper per stage
+        // (parse / analysis / generation / embedding). If a previous run
+        // left a `success` parse row and the new run produces a `failed`
+        // parse row, the card ends up with status pill = "failed" but a
+        // green stepper — i.e. "正常任务对应的同文件的失败任务" —
+        // which is exactly the bug the log center should not surface.
+        // The historical detail is still in `processing_task_log`, so
+        // wiping the task rows doesn't lose the per-stage log trail.
         val source = sourceDocumentDao.getById(sourceId) ?: return
         val now = System.currentTimeMillis()
+        taskDao.deleteBySource(sourceId)
         sourceDocumentDao.updateStatus(
             sourceId,
             SourceDocumentEntity.STATUS_IMPORTED,
