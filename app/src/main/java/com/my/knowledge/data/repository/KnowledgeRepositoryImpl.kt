@@ -463,9 +463,17 @@ class KnowledgeRepositoryImpl(
         // Embeddings follow the fragments
         graphDao.updateEmbeddingsKbByItem(itemId, targetKbId)
         // Entities that are exclusively backed by this item move with it;
-        // shared entities (backed by items across KBs) stay in the source KB
-        // and will be re-materialised by the source-side rebuild.
+        // "exclusive" = no other item in source KB still references the
+        // entity, so changing its knowledgeBaseId can't strand any
+        // source-side reference. Done as a single SQL UPDATE.
         graphDao.moveExclusiveEntitiesByItem(itemId, oldKbId, targetKbId, now)
+        // Entities that are SHARED with other items in source cannot be
+        // yanked out of source (would break the source-side references).
+        // For those, COPY the entity to target so the moved item keeps
+        // its link, and trim sourceItemIdsJson on the source copy to
+        // drop the moved item. Source still owns the entity for its
+        // remaining items; the moved item owns a fresh copy in target.
+        copySharedEntitiesToTarget(itemId, oldKbId, targetKbId, now)
         // Relations whose both endpoints landed in the target KB follow
         graphDao.moveRelationsToKbByEndpoints(oldKbId, targetKbId, now)
         // Communities whose every member is now in the target KB follow
@@ -482,6 +490,85 @@ class KnowledgeRepositoryImpl(
         // rebuild — the moved item is the only thing that changed.
         rebuildGraphForBaseAffected(oldKbId, setOf(itemId))
         if (targetBase?.type != "unfiled") rebuildGraphForBaseAffected(targetKbId, setOf(itemId))
+    }
+
+    /**
+     * Move-handling for entities/concepts that are SHARED between the
+     * source KB and the moved item.
+     *
+     * `moveExclusiveEntitiesByItem` already handled the easy case (the
+     * entity's only reference was the moved item → just change its
+     * `knowledgeBaseId`). After it runs, the entities still left in
+     * source that reference the moved item are the ones that have
+     * additional source-side consumers.
+     *
+     * For each such entity, we cannot delete it from source (the
+     * remaining source items would lose the link) and we cannot leave
+     * it solely in source (the moved item, now in target, would lose
+     * the link). The fix is to fork: the source keeps the original
+     * with `sourceItemIdsJson` trimmed to drop the moved item, and the
+     * target receives a fresh copy whose only reference is the moved
+     * item. The follow-up `rebuildGraphForBaseAffected(targetKbId)`
+     * re-derives relations/communities against the new copy from the
+     * item's content.
+     */
+    private suspend fun copySharedEntitiesToTarget(
+        itemId: String,
+        oldKbId: String,
+        newKbId: String,
+        now: Long
+    ) {
+        // sourceItemIdsJson is a JSON array of item-id strings,
+        // e.g. ["abc","def"]. We just need the set membership check.
+        val refsRegex = Regex("\"([^\"]+)\"")
+        fun refsOf(json: String): Set<String> =
+            refsRegex.findAll(json).map { it.groupValues[1] }.toSet()
+
+        val stillInSource = graphDao.getAllEntitiesByKb(oldKbId)
+            .filter { itemId in refsOf(it.sourceItemIdsJson) }
+        if (stillInSource.isEmpty()) return
+
+        // Item IDs that are still in source AFTER the move of itemId
+        // (itemId itself is no longer in oldKbId at this point).
+        val sourceItemIds = itemDao.getAllByKb(oldKbId).map { it.id }.toSet()
+        if (sourceItemIds.isEmpty()) return
+
+        val toUpsert = mutableListOf<KnowledgeEntityEntity>()
+        for (entity in stillInSource) {
+            val refs = refsOf(entity.sourceItemIdsJson)
+            val refsStillInSource = refs.filter { it != itemId && it in sourceItemIds }
+            if (refsStillInSource.isEmpty()) {
+                // The exclusive case should have been caught by
+                // moveExclusiveEntitiesByItem. If we still see zero
+                // refs here (e.g. all other refs are soft-deleted),
+                // skip the copy — the source entity is effectively
+                // orphan and the rebuild will tidy it up.
+                continue
+            }
+            // 1) Copy to target: same name/aliases/weight/confidence,
+            //    new ID, new KB, sourceItemIdsJson = [moved item].
+            toUpsert.add(
+                entity.copy(
+                    id = UUID.randomUUID().toString(),
+                    knowledgeBaseId = newKbId,
+                    sourceItemIdsJson = listOf(itemId).toJsonArrayOrEmpty(),
+                    createdAt = now,
+                    updatedAt = now
+                )
+            )
+            // 2) Trim source: drop the moved item from the original's
+            //    sourceItemIdsJson. Source still references it from
+            //    `refsStillInSource`.
+            toUpsert.add(
+                entity.copy(
+                    sourceItemIdsJson = refsStillInSource.toJsonArrayOrEmpty(),
+                    updatedAt = now
+                )
+            )
+        }
+        if (toUpsert.isNotEmpty()) {
+            graphDao.upsertEntities(toUpsert)
+        }
     }
 
     // === Unfiled operations ===
