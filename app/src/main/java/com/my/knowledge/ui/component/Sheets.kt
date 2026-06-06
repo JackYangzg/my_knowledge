@@ -276,7 +276,8 @@ fun AskSheet(
     ModalBottomSheet(
         onDismissRequest = onClose,
         sheetState = sheetState,
-        modifier = Modifier.fillMaxHeight(0.92f),
+        // UI-1: 高度从 92% 改为 100%,底部不再留透明空白。
+        modifier = Modifier.fillMaxHeight(1f),
         containerColor = palette.bgCard,
         dragHandle = { BottomSheetDefaults.DragHandle(color = palette.borderDefault) }
     ) {
