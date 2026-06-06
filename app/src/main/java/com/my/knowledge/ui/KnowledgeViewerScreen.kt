@@ -29,6 +29,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -89,6 +90,7 @@ fun KnowledgeViewerScreen(
     val linkTargets = remember(processedItems, sourceItem) {
         buildLinkTargets(processedItems, sourceItem)
     }
+    val opaqueToolbar = remember { OpaqueTextToolbarState() }
 
     Box(
         modifier = Modifier
@@ -166,6 +168,7 @@ fun KnowledgeViewerScreen(
         }
 
         item?.let { knowledgeItem ->
+        CompositionLocalProvider(LocalTextToolbar provides opaqueToolbar) {
         SelectionContainer {
             if (!showProcessedItems && knowledgeItem.sourceType == "pdf") {
                 PdfContentViewer(
@@ -271,6 +274,7 @@ fun KnowledgeViewerScreen(
                 }
             }
         }
+        }
         } ?: run {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = palette.brand)
@@ -315,6 +319,7 @@ fun KnowledgeViewerScreen(
         if (showAskSheet) {
             AskSheet(askViewModel = askViewModel, onClose = { showAskSheet = false })
         }
+        OpaqueTextToolbarRender(opaqueToolbar)
     } // close outer Box
 }
 
