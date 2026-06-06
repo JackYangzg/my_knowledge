@@ -106,6 +106,9 @@ fun InspirationScreen(
     // user kept the button down long enough to actually stop the recording.
     var voiceStopTriggered by remember { mutableStateOf(false) }
     var sessionCommittedText by remember { mutableStateOf("") }
+    // 上次 commit 时服务端 partial 的快照. 用来计算"自上次 commit 以来
+    // 服务端新追加的部分" (delta), 避免把服务端用来纠错的累积上文重写一遍.
+    var lastPartialAtCommit by remember { mutableStateOf("") }
 
     var contentValue by remember {
         mutableStateOf(TextFieldValue(content, selection = TextRange(content.length)))
@@ -122,19 +125,43 @@ fun InspirationScreen(
     fun commitVoiceTranscript(rawText: String) {
         val transcript = normalizeVoiceText(rawText)
         if (transcript.isBlank()) return
-        
-        val nextSession = mergeWithOverlap(sessionCommittedText, transcript)
-        if (nextSession == sessionCommittedText) return
+
+        // 服务端 partial 是累积的 (带上文用来纠错). 不能直接用 transcript 当增量
+        // 跟 sessionCommittedText 合并, 否则纠错时 (比如服务端把"很"改成"真")
+        // mergeWithOverlap 会找不到匹配, fallthrough 到 s1+s2 把旧文本重写一遍.
+        //
+        // 正确做法: 拿当前 partial 跟上次 commit 时的 partial 比, 算出"服务端
+        // 自上次 commit 以来新加的部分" (delta), 只把 delta 拼进 session.
+        val delta = extractDelta(lastPartialAtCommit, transcript)
+        if (delta.isBlank()) return
+
+        val nextSession = mergeWithOverlap(sessionCommittedText, delta)
+        if (nextSession == sessionCommittedText) {
+            // 即使 session 没变, 也要更新 lastPartialAtCommit 避免重复空跑
+            lastPartialAtCommit = transcript
+            return
+        }
 
         sessionCommittedText = nextSession
-        
+        lastPartialAtCommit = transcript
+
         val base = preVoiceContent.trimEnd()
         val nextTotalText = mergeWithOverlap(base, nextSession)
-        
+
         contentValue = TextFieldValue(nextTotalText, selection = TextRange(nextTotalText.length))
         viewModel.content = nextTotalText
         viewModel.markVoiceTranscriptionContent()
     }
+
+    /**
+     * 算两个连续 partial 之间的 delta (服务端新追加的内容).
+     *
+     *  - prev == "" (首次 commit)       → 全部都是新内容, 返回 curr
+     *  - prev 是 curr 的前缀           → delta = curr.removePrefix(prev)
+     *  - curr 是 prev 的子串           → 服务端做了回退/纠错缩短, 没有新内容
+     *  - 部分重叠 (服务端重处理了上文)  → 返回整个 curr, 由后续 mergeWithOverlap
+     *                                    跟 sessionCommittedText 做去重
+     */
 
     val commitVoiceTranscriptLatest by rememberUpdatedState(newValue = ::commitVoiceTranscript)
 
@@ -263,6 +290,7 @@ fun InspirationScreen(
         }
         preVoiceContent = contentValue.text
         sessionCommittedText = ""
+        lastPartialAtCommit = ""
         voiceService.startRealtimeTranscription()
     }
 
@@ -1027,6 +1055,28 @@ fun VoiceRealtimePanel(state: VoiceRecognitionState, onStop: () -> Unit, modifie
 }
 
 private fun normalizeVoiceText(text: String): String = text.replace(Regex("\\s+"), " ").replace(Regex("([，。！？,.!?])\\1+"), "$1").trim()
+
+/**
+ * 算两个连续 partial 之间的 delta (服务端新追加的内容).
+ *
+ *  - prev == "" (首次 commit)       → 全部都是新内容, 返回 curr
+ *  - prev 是 curr 的前缀           → delta = curr.removePrefix(prev)
+ *  - curr 是 prev 的子串           → 服务端做了回退/纠错缩短, 没有新内容
+ *  - 部分重叠 (服务端重处理了上文)  → 返回整个 curr, 由后续 mergeWithOverlap
+ *                                    跟 sessionCommittedText 做去重
+ */
+private fun extractDelta(prev: String, curr: String): String {
+    if (prev.isEmpty()) return curr
+    if (curr.isEmpty()) return ""
+    val maxLen = minOf(prev.length, curr.length)
+    var i = 0
+    while (i < maxLen && prev[i] == curr[i]) i++
+    return when {
+        i == prev.length -> curr.substring(i)
+        i == curr.length -> ""
+        else -> curr
+    }
+}
 
 private fun mergeWithOverlap(old: String, new: String): String {
     val s1 = old.trim()
