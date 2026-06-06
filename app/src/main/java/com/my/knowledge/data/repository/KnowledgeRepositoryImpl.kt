@@ -2024,6 +2024,64 @@ class KnowledgeRepositoryImpl(
         )
     }
 
+    //
+    // 重新演化模式:用户主动点"重新演化"时调用。无单一 newItemId,
+    // 拉最近 N 条 updatedAt 的灵感 full content + 较早历史的 digest +
+    // 现有脉络。结构跟 InspirationThreadContext 不同,所以单独立方法。
+    override suspend fun getInspirationReEvolveContext(
+        kbId: String,
+        recentCount: Int,
+        historyCount: Int,
+    ): InspirationReEvolveContext {
+        val allInKb = itemDao.getAllByKb(kbId)
+            .filter { it.deletedAt == null }
+        // recent:按 updatedAt 从新到旧取前 recentCount
+        val recentItems = allInKb.sortedByDescending { it.updatedAt }.take(recentCount)
+        val recent = recentItems.map { it.toNewInspiration() }
+        // history:剩下按 createdAt 从旧到新取 historyCount
+        val history = allInKb
+            .filter { item -> recentItems.none { it.id == item.id } }
+            .sortedBy { it.createdAt }
+            .take(historyCount)
+            .map { it.toInspirationDigest() }
+        val existingSnapshot = threadDao.getByKb(kbId)?.toExistingSnapshot()
+        return InspirationReEvolveContext(
+            kbId = kbId,
+            recentInspiration = recent,
+            historicalInspirationDigest = history,
+            existingThread = existingSnapshot,
+        )
+    }
+
+    // ---- 复用的实体映射 ----------------------------------------------------
+
+    private fun com.my.knowledge.data.db.entity.KnowledgeItemEntity.toNewInspiration():
+        AiPromptTemplates.NewInspiration = AiPromptTemplates.NewInspiration(
+        id = id,
+        title = title,
+        tags = parseTagArray(tagsJson),
+        summary = summary?.takeIf { it.isNotBlank() } ?: excerpt,
+        content = contentMarkdown,
+    )
+
+    private fun com.my.knowledge.data.db.entity.KnowledgeItemEntity.toInspirationDigest():
+        AiPromptTemplates.InspirationDigest = AiPromptTemplates.InspirationDigest(
+        id = id,
+        title = title,
+        tags = parseTagArray(tagsJson),
+        summary = summary?.takeIf { it.isNotBlank() } ?: excerpt,
+        createdAtLabel = formatDateLabel(createdAt),
+    )
+
+    private fun com.my.knowledge.data.db.entity.KnowledgeThreadEntity.toExistingSnapshot():
+        AiPromptTemplates.ExistingThreadSnapshot = AiPromptTemplates.ExistingThreadSnapshot(
+        description = description,
+        coreQuestion = coreQuestion,
+        mainline = parseStringList(mainlineJson),
+        gaps = parseStringList(gapsJson),
+        nextSuggestions = parseStringList(nextSuggestionsJson),
+    )
+
     private fun parseTagArray(json: String?): List<String> {
         if (json.isNullOrBlank() || json == "[]") return emptyList()
         return runCatching {
@@ -2055,6 +2113,18 @@ class KnowledgeRepositoryImpl(
 data class InspirationThreadContext(
     val kbId: String,
     val newInspiration: AiPromptTemplates.NewInspiration,
+    val historicalInspirationDigest: List<AiPromptTemplates.InspirationDigest>,
+    val existingThread: AiPromptTemplates.ExistingThreadSnapshot?,
+)
+
+/**
+ * 灵感脉络「重新演化」模式的输入快照。跟 [InspirationThreadContext] 的关键差异:
+ * 没有单一 newInspiration,而是拉最近 N 条灵感的完整内容作为重写主导依据。
+ * 详见 `KnowledgeRepository.getInspirationReEvolveContext`。
+ */
+data class InspirationReEvolveContext(
+    val kbId: String,
+    val recentInspiration: List<AiPromptTemplates.NewInspiration>,
     val historicalInspirationDigest: List<AiPromptTemplates.InspirationDigest>,
     val existingThread: AiPromptTemplates.ExistingThreadSnapshot?,
 )
