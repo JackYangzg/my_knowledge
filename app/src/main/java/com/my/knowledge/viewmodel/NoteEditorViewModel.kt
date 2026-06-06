@@ -25,6 +25,8 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import com.my.knowledge.data.util.Sha256
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.json.JSONArray
 
 @OptIn(FlowPreview::class, ExperimentalCoroutinesApi::class)
@@ -55,6 +57,17 @@ class NoteEditorViewModel(
     
     private val _saveStatus = MutableStateFlow("idle")
     val saveStatus: StateFlow<String> = _saveStatus
+
+    // T2: surfaced error from the most recent save attempt. Composable
+    // reads this to render an error chip without re-handling exceptions
+    // at every call site.
+    private val _saveError = MutableStateFlow<String?>(null)
+    val saveError: StateFlow<String?> = _saveError.asStateFlow()
+    fun consumeSaveError() { _saveError.value = null }
+
+    // T2: serialize concurrent save attempts (defends against double-tap
+    // creating duplicate knowledge items).
+    private val saveMutex = kotlinx.coroutines.sync.Mutex()
 
     init {
         loadOrCreateNote()
@@ -118,6 +131,23 @@ class NoteEditorViewModel(
     val knowledgeBaseNames: StateFlow<List<String>> = knowledgeRepository.observeAllBases()
         .map { bases -> bases.map { it.name } }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // T6: full knowledge-base list (with type info) for the editor dropdown
+    // to filter out the recyclebin and show the "+ 新建知识库" entry.
+    val knowledgeBases: StateFlow<List<com.my.knowledge.data.db.entity.KnowledgeBaseEntity>> =
+        knowledgeRepository.observeAllBases()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // T5: single source of truth for the default inspiration KB name —
+    // resolved once from the repo so renames of the inspiration KB
+    // propagate cleanly.
+    val defaultInspirationKbName: StateFlow<String> = knowledgeRepository.observeAllBases()
+        .map { bases ->
+            bases.firstOrNull { it.type == "inspiration" }?.name
+                ?: bases.firstOrNull { it.name == "灵感空间" }?.name
+                ?: "灵感空间"
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "灵感空间")
 
     private val inspirationBase = knowledgeRepository.observeAllBases()
         .map { bases -> bases.firstOrNull { it.type == "inspiration" } }
@@ -292,23 +322,28 @@ class NoteEditorViewModel(
         }
     }
 
-    suspend fun saveToKnowledgeBase(kbName: String): String {
-        forceSaveDraft()
-        knowledgeRepository.ensureDefaultBases()
-        val bases = knowledgeRepository.observeAllBases().first()
-        val targetBase = bases.find { it.name == kbName }
-            ?: bases.find { it.type == "inspiration" }
-            ?: bases.find { it.type == "unfiled" }
-        val targetName = targetBase?.name ?: "灵感空间"
+    suspend fun saveToKnowledgeBase(kbName: String): String = saveMutex.withLock {
+        try {
+            forceSaveDraft()
+            _saveStatus.value = "saving"
+            _saveError.value = null
+            knowledgeRepository.ensureDefaultBases()
+            val bases = knowledgeRepository.observeAllBases().first()
+            val targetBase = bases.find { it.name == kbName }
+                ?: bases.find { it.type == "inspiration" }
+                ?: bases.find { it.type == "unfiled" }
+            val targetName = targetBase?.name ?: defaultInspirationKbName.value
 
-        val savedTitle = title.trim().ifBlank { "灵感 ${System.currentTimeMillis()}" }
-        val savedContent = content.trim()
-        if (savedContent.isEmpty() && title.trim().isEmpty()) return targetName
+            val savedTitle = title.trim().ifBlank { "灵感 ${System.currentTimeMillis()}" }
+            val savedContent = content.trim()
+            if (savedContent.isEmpty() && title.trim().isEmpty()) {
+                _saveStatus.value = "saved"
+                return@withLock targetName
+            }
 
-        val hash = Sha256.hex(savedContent)
-
-        val noteId = currentNote?.id
-        val now = System.currentTimeMillis()
+            val hash = Sha256.hex(savedContent)
+            val noteId = currentNote?.id
+            val now = System.currentTimeMillis()
 
         // Look up an existing knowledge item for THIS note. If found, update
         // it in place — no new source / new item / new parse task. This is
@@ -331,7 +366,8 @@ class NoteEditorViewModel(
             lastPushedTitle = title
             lastPushedContent = content
             scheduleLlmThreadUpdateIfInspiration(targetBase, existingForNote.id, triggerType = "inspiration_edited")
-            return targetName
+            _saveStatus.value = "saved"
+            return@withLock targetName
         }
 
         // Fall back to the old in-memory hint for callers that already
@@ -349,7 +385,8 @@ class NoteEditorViewModel(
             lastPushedTitle = title
             lastPushedContent = content
             scheduleLlmThreadUpdateIfInspiration(targetBase, inMemoryExisting.id, triggerType = "inspiration_edited")
-            return targetName
+            _saveStatus.value = "saved"
+            return@withLock targetName
         }
 
         // First-time save: create a fresh source + item, but link the item
@@ -364,11 +401,18 @@ class NoteEditorViewModel(
         )
         lastPushedTitle = title
         lastPushedContent = content
-        // 拿新创建的 knowledge_item id(importText 返回的是 sourceId),用于
-        // 触发灵感脉络的 LLM 增量更新。
         val newItem = knowledgeRepository.getItemBySourceId(newSourceId)
         newItem?.let { scheduleLlmThreadUpdateIfInspiration(targetBase, it.id, triggerType = "inspiration_added") }
-        return targetName
+        _saveStatus.value = "saved"
+        return@withLock targetName
+        } catch (e: Exception) {
+            // T2: surface Room / IO failures as a state-flow error so the
+            // Composable can render a chip instead of silently dropping the
+            // request or crashing the coroutine.
+            _saveStatus.value = "save_failed"
+            _saveError.value = e.message ?: "保存失败"
+            throw e
+        }
     }
 
     /**
