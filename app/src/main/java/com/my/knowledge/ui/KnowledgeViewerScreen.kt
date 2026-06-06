@@ -89,13 +89,12 @@ fun KnowledgeViewerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(palette.bgPage)
     ) {
-    SelectionContainer {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.White)
+            .background(palette.bgPage)
     ) {
         // Header
         Row(
@@ -163,6 +162,7 @@ fun KnowledgeViewerScreen(
         }
 
         item?.let { knowledgeItem ->
+        SelectionContainer {
             if (!showProcessedItems && knowledgeItem.sourceType == "pdf") {
                 PdfContentViewer(
                     item = knowledgeItem,
@@ -181,11 +181,12 @@ fun KnowledgeViewerScreen(
                 val chunks = remember(knowledgeItem.id, knowledgeItem.contentMarkdown) {
                     chunkLongMarkdown(md, maxChars = md.length, chunkSize = 6_000)
                 }
+                val listState = rememberLazyListState()
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 20.dp),
-                    state = rememberLazyListState(),
+                    state = listState,
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
                     item(key = "header-${knowledgeItem.id}") {
@@ -233,13 +234,13 @@ fun KnowledgeViewerScreen(
                     }
                 }
             }
+        }
         } ?: run {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = palette.brand)
             }
         }
-    } // close outer Column
-    } // close SelectionContainer
+    }
 
         // Floating "AI 问一问" button. Same look as the rest of the
         // app's screens, but scoped to KNOWLEDGE_ITEM — the model

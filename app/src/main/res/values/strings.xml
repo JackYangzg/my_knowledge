@@ -13,15 +13,15 @@
     <string name="auto_9777e268">✕ 已废弃</string>
     <string name="auto_049d09bf">— 已经到底了 —</string>
     <string name="auto_041b9398">↻ 已演变</string>
-    <string name="auto_81d9d2e5">- 大小：$size bytes</string>
+    <string name="auto_81d9d2e5">- 大小：%1$d bytes</string>  <!-- arg1=size -->
     <string name="auto_9f0c4121">- 来源：外部导入</string>
-    <string name="auto_66320bad">![导入图片]($uri)\n\n&gt; 图片已进入本地加工队列，后续 OCR 会在处理任务中补全文字内容。</string>
+    <string name="auto_66320bad">![导入图片](%1$s)\n\n&gt; 图片已进入本地加工队列，后续 OCR 会在处理任务中补全文字内容。</string>  <!-- arg1=uri (markdown image URL; current callsite Sheets.kt:820 uses inlined Kotlin string template, resource is dead) -->
     <string name="auto_3fe78430">## 相关</string>
     <string name="auto_ccde88e4">+ 新对话</string>
     <string name="auto_a129b9ad">+ 新增 %1$d 段主线</string>  <!-- arg1=diff.newMainlineSegments.size -->
     <string name="auto_0430a3b6">&gt; PDF 已注册为来源文件。当前版本先保存元数据和文件引用，后续解析任务会补充页文本与片段。</string>
     <string name="auto_b092b16c">&gt; Word 文档已注册为来源文件。当前版本先保存元数据和文件引用，后续解析任务会补充正文片段。</string>
-    <string name="auto_0eff601c">&gt; 文本读取失败：${it.message ?: </string>
+    <string name="auto_0eff601c">&gt; 文本读取失败：%1$s</string>  <!-- arg1=errorMessage (it.message ?: "未知错误") -->
     <string name="auto_e65e8d8f">&gt; 文件已注册为来源文件，等待加工任务解析。</string>
     <string name="auto_d758d967">%1$s 小时前</string>  <!-- arg1=diff / 3_600_000 -->
     <string name="auto_2bbf0eec">%1$s 分钟前</string>  <!-- arg1=diff / 60_000 -->
@@ -46,7 +46,7 @@
     <string name="auto_00729459">Ingest 日志</string>
     <string name="auto_c21cf22b">OpenAI 兼容 Base URL</string>
     <string name="auto_702695b0">PDF 文档</string>
-    <string name="auto_f6cb2867">PDF 文件不存在：$path</string>
+    <string name="auto_f6cb2867">PDF 文件不存在：%1$s</string>  <!-- arg1=path -->
     <string name="auto_08be1e8e">PDF 预览</string>
     <string name="auto_abdd4ca0">PDF 预览渲染失败</string>
     <string name="auto_3260ccf7">PDF 预览页</string>
@@ -73,7 +73,7 @@
     <string name="auto_539d8bbe">本范围内的对话</string>
     <string name="auto_1503df87">本库图谱</string>
     <string name="auto_0750449a">编辑 [title]</string>
-    <string name="auto_75fc0761">编辑 ${item?.title ?: title.ifBlank { </string>
+    <string name="auto_75fc0761">编辑 %1$s</string>  <!-- arg1=title (item?.title ?: title.ifBlank { "无标题" }) -->
     <string name="auto_a7f814c0">编辑</string>
     <string name="auto_748d7dc7">标题</string>
     <string name="auto_e075d146">标题生成</string>
@@ -150,9 +150,9 @@
     <string name="auto_805d5a4a">个人知识空间</string>
     <string name="auto_9b0c6c78">更多</string>
     <string name="auto_06bcf0a9">共 %1$s 字符，已分块懒加载显示。</string>  <!-- arg1=item.contentMarkdown.length -->
-    <string name="auto_c46e24b6">共 $itemCount 条知识</string>
-    <string name="auto_bf6d6df7">共 $totalCount 条已删除</string>
-    <string name="auto_f8978b9d">共 $totalCount 项</string>
+    <string name="auto_c46e24b6">共 %1$d 条知识</string>  <!-- arg1=itemCount -->
+    <string name="auto_bf6d6df7">共 %1$d 条已删除</string>  <!-- arg1=totalCount -->
+    <string name="auto_f8978b9d">共 %1$d 项</string>  <!-- arg1=totalCount -->
     <string name="auto_6c14bd7f">关闭</string>
     <string name="auto_cd549def">关联关系</string>
     <string name="auto_daf4f2dc">关系</string>
@@ -168,8 +168,8 @@
     <string name="auto_fecda037">回收站为空</string>
     <string name="auto_79bc3afb">会取消相关任务、清理解析结果和本地来源文件，并将关联知识移入回收站。</string>
     <string name="auto_b3b9356d">机制</string>
-    <string name="auto_5d21fb77">基于 $itemCount 条灵感整理</string>
-    <string name="auto_de4064e4">基于「$itemTitle」的知识内容</string>
+    <string name="auto_5d21fb77">基于 %1$d 条灵感整理</string>  <!-- arg1=itemCount -->
+    <string name="auto_de4064e4">基于「%1$s」的知识内容</string>  <!-- arg1=itemTitle -->
     <string name="auto_43980cc8">技术</string>
     <string name="auto_4a705f3b">继续加载更多解析文本</string>
     <string name="auto_3c1802f5">继续整理</string>
@@ -186,8 +186,8 @@
     <string name="auto_103e3d9c">将知识移动到「未归类」</string>
     <string name="auto_dd985b01">将知识移动到知识库</string>
     <string name="auto_1de231bb">接口测试成功</string>
-    <string name="auto_3f7f8e84">接口测试失败：${it.localizedMessage ?: </string>
-    <string name="auto_5fd9c790">接口测试失败：HTTP $code</string>
+    <string name="auto_3f7f8e84">接口测试失败：%1$s</string>  <!-- arg1=errorMessage (it.localizedMessage ?: "未知错误") -->
+    <string name="auto_5fd9c790">接口测试失败：HTTP %1$d</string>  <!-- arg1=code -->
     <string name="auto_af57b02c">解析</string>
     <string name="auto_b8c3d2a6">解析文本</string>
     <string name="auto_1d27123f">解析文件…</string>
@@ -222,7 +222,7 @@
     <string name="auto_e8c7f5aa">模型提供商</string>
     <string name="auto_3c554377">默认使用大模型加工知识。未配置 API Key 时，导入内容会停留在待处理队列，配置后可手动重试。</string>
     <string name="auto_7da2ccf9">目标: %1$s/%2$s...</string>  <!-- arg1=task.targetType, arg2=task.targetId.take(8) -->
-    <string name="auto_f6a3f58f">目标知识库：%1$s?.name } ?: </string>  <!-- arg1=row.source.targetKnowledgeBaseId?.let { id -> bases.firstOrNull { it.id == id  -->
+    <string name="auto_f6a3f58f">目标知识库：%1$s</string>  <!-- arg1=resolvedKbName (let/safe-call/Elvis 解析后的 KB 名,解析失败时回退到 "未命名") -->
     <string name="auto_8c9e4f53">内容摘要</string>
     <string name="auto_5630b886">你</string>
     <string name="auto_4dcbbcfa">排队中</string>
@@ -248,10 +248,10 @@
     <string name="auto_99b770c0">全部主题群</string>
     <string name="auto_e58439ec">全局知识库问答</string>
     <string name="auto_3e44b2a9">全选</string>
-    <string name="auto_661a17cd">全选$tabLabel</string>
+    <string name="auto_661a17cd">全选%1$s</string>  <!-- arg1=tabLabel -->
     <string name="auto_3a8aa653">确定要删除「%1$s」吗？</string>  <!-- arg1=deleteTarget!!.name -->
     <string name="auto_a19bdb58">确定要删除「%1$s」吗？删除后可从回收站恢复。</string>  <!-- arg1=deleteTarget!!.title -->
-    <string name="auto_fd7850c9">确定要永久删除所选的 $selectionCount 条知识条目吗？此操作不可恢复。</string>
+    <string name="auto_fd7850c9">确定要永久删除所选的 %1$d 条知识条目吗？此操作不可恢复。</string>  <!-- arg1=selectionCount -->
     <string name="auto_b56d9ac6">确认</string>
     <string name="auto_dd794381">确认归档</string>
     <string name="auto_b755b683">人物</string>
@@ -263,13 +263,13 @@
     <string name="auto_b2c4d253">润色完成</string>
     <string name="auto_dcce9a14">筛选</string>
     <string name="auto_30055755">删除 (%1$s)</string>  <!-- arg1=selectedIds.size -->
-    <string name="auto_2d086b5b">删除 ($selectedCount)</string>
+    <string name="auto_2d086b5b">删除 (%1$d)</string>  <!-- arg1=selectedCount -->
     <string name="auto_3755f56f">删除</string>
-    <string name="auto_31960bb0">删除该$label？</string>
+    <string name="auto_31960bb0">删除该%1$s？</string>  <!-- arg1=label -->
     <string name="auto_ecafc815">删除来源</string>
     <string name="auto_2aa8a986">删除时间: %1$s</string>  <!-- arg1=formatTimestamp(item.deletedAt ?: 0) -->
     <string name="auto_5d071a7a">删除所选</string>
-    <string name="auto_6f10629b">删除选中的 %1$s 条$label？</string>  <!-- arg1=selectedIds.size -->
+    <string name="auto_6f10629b">删除选中的 %1$d 条%2$s？</string>  <!-- arg1=selectedIds.size, arg2=label -->
     <string name="auto_cea896db">删除知识</string>
     <string name="auto_e62a78b1">删除知识库</string>
     <string name="auto_147d229d">尚未创建处理任务</string>
@@ -318,7 +318,7 @@
     <string name="auto_f9f966b2">图片分析 API Key</string>
     <string name="auto_ce8b57b2">图片分析接口</string>
     <string name="auto_d50f96ec">图片类型知识</string>
-    <string name="auto_d3cb5acb">推荐归档到: ${recommendation.recommendedKnowledgeBaseName ?: recommendation.recommendedKnowledgeBaseId ?: </string>
+    <string name="auto_d3cb5acb">推荐归档到: %1$s</string>  <!-- arg1=resolvedKb (name ?: id ?: "未命名") -->
     <string name="auto_73565d17">推荐整理</string>
     <string name="auto_8aba27db">网络波动，已暂停</string>
     <string name="auto_93f6edf4">为避免大文件卡顿，仅预览前 %1$s 页；完整内容请查看下方解析文本。</string>  <!-- arg1=previewPages.size.coerceAtLeast(1).coerceAtMost(PDF_PREVIEW_PAGE_LIMIT) -->
@@ -332,7 +332,7 @@
     <string name="auto_1dc374c1">未知文档</string>
     <string name="auto_fe66c234">未知知识</string>
     <string name="auto_38712f40">文本片段 %1$s</string>  <!-- arg1=chunk.index + 1 -->
-    <string name="auto_bf08c248">文件/来源：${review.sourceId ?: </string>
+    <string name="auto_bf08c248">文件/来源：%1$s</string>  <!-- arg1=sourceId (review.sourceId ?: "未知") -->
     <string name="auto_2fb49eec">问题</string>
     <string name="auto_b773dbb2">问一问</string>
     <string name="auto_34f201bc">我</string>
@@ -356,21 +356,21 @@
     <string name="auto_07b1aeaf">选择知识库范围</string>
     <string name="auto_cc2a3883">演进日志 (v%1$s)</string>  <!-- arg1=thread!!.version -->
     <string name="auto_72635fa0">页面没有跳转标识</string>
-    <string name="auto_c95e958e">已保存到「$savedTo」知识库</string>
+    <string name="auto_c95e958e">已保存到「%1$s」知识库</string>  <!-- arg1=savedTo -->
     <string name="auto_6c440d49">已保存到未归类</string>
     <string name="auto_4cdd7ba3">已保存到知识库</string>
     <string name="auto_d318d1f1">已达到停止时长，录音已结束</string>
     <string name="auto_5cfbea2b">已归档</string>
     <string name="auto_dc7cd22f">已配置</string>
     <string name="auto_a5ffdc95">已取消</string>
-    <string name="auto_883620e4">已全选 $tabLabel</string>
+    <string name="auto_883620e4">已全选 %1$s</string>  <!-- arg1=tabLabel -->
     <string name="auto_18437fbd">已入库并排队，等待解析</string>
     <string name="auto_54b3516c">已删除的知识条目，可恢复</string>
     <string name="auto_79c74f41">已生成</string>
     <string name="auto_8a84aa8e">已推荐</string>
     <string name="auto_398b3588">已新建灵感</string>
-    <string name="auto_613887a3">已选 $selectedCount / $totalCount 项</string>
-    <string name="auto_266dcc6f">已选 $selectionCount 项</string>
+    <string name="auto_613887a3">已选 %1$d / %2$d 项</string>  <!-- arg1=selectedCount, arg2=totalCount -->
+    <string name="auto_266dcc6f">已选 %1$d 项</string>  <!-- arg1=selectionCount -->
     <string name="auto_a03b1a3a">已选择 %1$s 条</string>  <!-- arg1=selectedIds.size -->
     <string name="auto_9fca56a4">已展开全部</string>
     <string name="auto_64575c02">已折叠 %1$s 条</string>  <!-- arg1=count - shownCount -->
@@ -408,7 +408,7 @@
     <string name="auto_b0e24833">展开</string>
     <string name="auto_9f639b76">展开更多 (N)</string>
     <string name="auto_6322136c">展开更多</string>
-    <string name="auto_bcede1f7">展开更多（还有 $remaining 条）</string>
+    <string name="auto_bcede1f7">展开更多（还有 %1$d 条）</string>  <!-- arg1=remaining -->
     <string name="auto_22367b21">展开全部 %1$s 条日志</string>  <!-- arg1=logs.size -->
     <string name="auto_cfa2085e">这个知识库现在主要在讲什么？</string>
     <string name="auto_6f30de4d">这张图片是什么颜色？只答颜色。</string>
@@ -421,7 +421,7 @@
     <string name="auto_169a7538">正在检查语音接口配置...</string>
     <string name="auto_856da543">正在排队等待加工...</string>
     <string name="auto_5d8ef240">正在润色全文</string>
-    <string name="auto_6a6e8dd5">知识：$itemTitle</string>
+    <string name="auto_6a6e8dd5">知识：%1$s</string>  <!-- arg1=itemTitle -->
     <string name="auto_24d053ff">知识关联</string>
     <string name="auto_55187c9a">知识管理</string>
     <string name="auto_66f12078">知识加工数据</string>

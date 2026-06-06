@@ -46,7 +46,6 @@ import androidx.core.content.ContextCompat
 import com.my.knowledge.data.ai.VoiceRecognitionState
 import com.my.knowledge.data.ai.VolcengineVoiceService
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
-import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
 import com.my.knowledge.viewmodel.InspirationThreadUi
 import com.my.knowledge.viewmodel.NoteEditorViewModel
 import kotlinx.coroutines.delay
@@ -76,8 +75,6 @@ fun InspirationScreen(
     val content = viewModel.content
     val inspirationItems by viewModel.inspirationItems.collectAsState()
     val inspirationThread by viewModel.inspirationThread.collectAsState()
-    // THREAD-E2: evolution log feed for the home screen
-    val inspirationThreadLogs by viewModel.inspirationThreadLogs.collectAsState()
     // THREAD-E3: spinner state for the manual re-evolve button
     val inspirationEvolving by viewModel.inspirationEvolving.collectAsState()
 
@@ -301,7 +298,6 @@ fun InspirationScreen(
         InspirationHomeScreen(
             thread = inspirationThread,
             items = inspirationItems,
-            threadLogs = inspirationThreadLogs,
             evolving = inspirationEvolving,
             onOpenItem = onOpenItem,
             onNew = {
@@ -705,7 +701,6 @@ fun InspirationScreen(
 private fun InspirationHomeScreen(
     thread: InspirationThreadUi,
     items: List<KnowledgeItemEntity>,
-    threadLogs: List<KnowledgeThreadLogEntity>,
     evolving: Boolean,
     onOpenItem: (String) -> Unit,
     onNew: () -> Unit,
@@ -768,16 +763,6 @@ private fun InspirationHomeScreen(
                         Text("${items.size} 条", style = MaterialTheme.typography.labelLarge, color = palette.textMuted)
                         EvolveButton(evolving = evolving, onClick = onEvolve)
                     }
-                }
-            }
-            // THREAD-E2: the "演化历史" expandable panel. Renders
-            // nothing when the worker hasn't run yet (empty list),
-            // which is the common cold-start state. Logs are
-            // returned newest-first by the DAO so we can stop after
-            // the latest few without a sort.
-            if (threadLogs.isNotEmpty()) {
-                item {
-                    ThreadHistorySection(logs = threadLogs)
                 }
             }
             if (items.isEmpty()) {
@@ -1197,103 +1182,6 @@ private fun EvolveButton(evolving: Boolean, onClick: () -> Unit) {
     }
 }
 
-/**
- * THREAD-E2: renders the "演化历史" panel. The DAO returns rows
- * newest-first, so we can cap at 8 without sorting. The card stays
- * collapsed-by-default (no per-row expansion state) — each row is
- * a single line so the user can scan the whole timeline at a
- * glance. The triggerType is translated to a short label
- * ("新建知识库" / "手动触发" / "AI 重写") so the user can tell at a
- * glance why each evolution ran.
- */
-@Composable
-private fun ThreadHistorySection(logs: List<KnowledgeThreadLogEntity>) {
-
-    val palette = LocalPalette.current
-
-    val spacing = LocalSpacing.current
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(spacing.sm),
-        color = Color.White,
-        border = BorderStroke(1.dp, palette.borderDefault)
-    ) {
-        Column(
-            modifier = Modifier.padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Text(
-                "演化历史",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.Bold,
-                color = palette.textPrimary
-            )
-            logs.take(8).forEach { log ->
-                ThreadHistoryRow(log = log)
-            }
-            if (logs.size > 8) {
-                Text(
-                    "… 还有 ${logs.size - 8} 条",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.textMuted
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun ThreadHistoryRow(log: KnowledgeThreadLogEntity) {
-
-    val palette = LocalPalette.current
-
-    val spacing = LocalSpacing.current
-    val triggerLabel = when (log.triggerType) {
-        "inspiration_added" -> "新建灵感"
-        "inspiration_edited" -> "编辑灵感"
-        "inspiration_re_evolve" -> "重新演化"
-        else -> log.triggerType
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.Top
-    ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 6.dp)
-                .size(4.dp)
-                .background(Color(0xFF94A3B8), CircleShape)
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Text(
-                    triggerLabel,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF475569)
-                )
-                Text(
-                    SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(log.createdAt)),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.textMuted
-                )
-            }
-            if (log.summary.isNotBlank()) {
-                Text(
-                    log.summary,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = palette.textMuted,
-                    lineHeight = 16.sp,
-                    maxLines = 2
-                )
-            }
-        }
-    }
-}
 
 @Composable
 fun MoreMenuItem(label: String, rightText: String, isStrong: Boolean = false, enabled: Boolean = true, onClick: () -> Unit = {}) {
