@@ -126,27 +126,28 @@ fun InspirationScreen(
         val transcript = normalizeVoiceText(rawText)
         if (transcript.isBlank()) return
 
-        // 服务端 partial 是累积的 (带上文用来纠错). 不能直接用 transcript 当增量
-        // 跟 sessionCommittedText 合并, 否则纠错时 (比如服务端把"很"改成"真")
-        // mergeWithOverlap 会找不到匹配, fallthrough 到 s1+s2 把旧文本重写一遍.
-        //
-        // 正确做法: 拿当前 partial 跟上次 commit 时的 partial 比, 算出"服务端
-        // 自上次 commit 以来新加的部分" (delta), 只把 delta 拼进 session.
-        val delta = extractDelta(lastPartialAtCommit, transcript)
-        if (delta.isBlank()) return
+        // 服务端 partial 是**累积**的 (每一帧都带全部上文, 服务端用上
+        // 文来纠错, 比如把"很"改成"真"的时候会把整句重发). 上一轮
+        // fix (delta 模式) 算两次 partial 的 LCP 试图抠增量, 但服务
+        // 端纠错后整段重发的话, LCP 命中不到, 把"旧段+新段"重写一
+        // 遍导致"今天天气很好今天天气真好"这种重复. 再上一轮 fix
+        // (service 端取最后一个 utterance) 也是猜 API 结构, 没
+        // 真正修.
 
-        val nextSession = mergeWithOverlap(sessionCommittedText, delta)
-        if (nextSession == sessionCommittedText) {
-            // 即使 session 没变, 也要更新 lastPartialAtCommit 避免重复空跑
+        // 唯一对所有服务端行为都正确的策略: **用最新 partial 覆盖**
+        // session. 累积型 partial 的"最新一帧"永远是当前最全的最正
+        // 的文本, 没有重复. delta 累加是错的根源, 直接放弃累加.
+        if (transcript == sessionCommittedText) {
+            // 已经是最新的 (可能是同一次按停里被多次 commit). 仍要刷
+            // lastPartialAtCommit, 否则下一次 commit 看到的是陈旧值.
             lastPartialAtCommit = transcript
             return
         }
-
-        sessionCommittedText = nextSession
+        sessionCommittedText = transcript
         lastPartialAtCommit = transcript
 
         val base = preVoiceContent.trimEnd()
-        val nextTotalText = mergeWithOverlap(base, nextSession)
+        val nextTotalText = mergeWithOverlap(base, sessionCommittedText)
 
         contentValue = TextFieldValue(nextTotalText, selection = TextRange(nextTotalText.length))
         viewModel.content = nextTotalText
