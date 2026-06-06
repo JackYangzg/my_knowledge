@@ -1249,9 +1249,9 @@ private fun ThreadHistoryRow(log: KnowledgeThreadLogEntity) {
 
     val spacing = LocalSpacing.current
     val triggerLabel = when (log.triggerType) {
-        "manual" -> "手动触发"
-        "auto_new" -> "新建灵感"
-        "auto_rewrite" -> "AI 重写"
+        "inspiration_added" -> "新建灵感"
+        "inspiration_edited" -> "编辑灵感"
+        "inspiration_re_evolve" -> "重新演化"
         else -> log.triggerType
     }
     Row(

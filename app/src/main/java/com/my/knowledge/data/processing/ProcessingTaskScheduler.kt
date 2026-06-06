@@ -1,7 +1,6 @@
 package com.my.knowledge.data.processing
 
 import android.content.Context
-import android.util.Log
 import androidx.work.*
 import com.my.knowledge.worker.ArchiveRecommendWorker
 import com.my.knowledge.worker.DistillationWorker
@@ -12,20 +11,18 @@ import com.my.knowledge.worker.NaturalLanguageGapReanalysisWorker
 import com.my.knowledge.worker.NewItemGapMatchWorker
 import com.my.knowledge.worker.SummaryWorker
 import com.my.knowledge.worker.TagWorker
-import com.my.knowledge.worker.ThreadEvolutionWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 class ProcessingTaskScheduler(
     context: Context,
     /**
-     * Optional debouncer that the P0-1 thread-update path delegates
-     * to. When present, [scheduleThreadUpdate] becomes a fire-and-
-     * forget ping into the debouncer (no WorkManager unique work,
-     * no enqueue). When null, the method falls back to the legacy
-     * WorkManager enqueue so the public API still works for any
-     * host that hasn't wired a debouncer yet.
+     * Optional rebuild debouncer for graph / overview / sweep rebuilds.
+     * Left here so the host can plug in a single debouncer instance for
+     * all rebuild types; this scheduler itself no longer touches the
+     * debouncer (灵感脉络已经全量改走 LLM,不再有「程序化脉络」debounce 的需求)。
      */
+    @Suppress("unused")
     private val rebuildDebouncer: RebuildDebouncer? = null,
 ) {
     private val appContext = context.applicationContext
@@ -65,64 +62,40 @@ class ProcessingTaskScheduler(
     }
 
     /**
-     * P0-1: delegates to the [RebuildDebouncer] when one is wired
-     * up. Falls back to the legacy `OneTimeWorkRequest` enqueue if
-     * the host hasn't installed a debouncer (back-compat for tests
-     * and ad-hoc callers).
+     * 灵感脉络的 LLM 更新入口。双模式:
+     *   - **incremental** (默认):每新增/编辑一条灵感,NoteEditorViewModel
+     *     调一次,带 [newItemId]。worker 拿这条 + 历史摘要 + 现有脉络做增量。
+     *   - **re_evolve**:用户在灵感空间 / KB 详情页点「重新演化」时,ViewModel
+     *     传 `mode = "re_evolve"`、`newItemId = null`,worker 改读最近 N 条灵感
+     *     full content 整体重写。
      *
-     * The previous WorkManager enqueue fired a SECOND `rebuildGraphForBase`
-     * per ingest — once inside the orchestrator's KB write lock and
-     * once again from inside the [com.my.knowledge.worker.ThreadEvolutionWorker]
-     * it scheduled. Going through the debouncer collapses both
-     * rebuilds into one debounced run on `Dispatchers.IO`.
-     */
-    fun scheduleThreadUpdate(kbId: String) {
-        val debouncer = rebuildDebouncer
-        if (debouncer != null) {
-            debouncer.scheduleThreadEvolution(kbId)
-            return
-        }
-        Log.d(
-            "ProcessingTaskScheduler",
-            "scheduleThreadUpdate($kbId) falling back to WorkManager (no debouncer wired). " +
-                "P0-1 path expects DependencyProvider to install a RebuildDebouncer."
-        )
-        val workManager = WorkManager.getInstance(appContext)
-        val request = OneTimeWorkRequestBuilder<ThreadEvolutionWorker>()
-            .setInputData(workDataOf("knowledgeBaseId" to kbId))
-            .build()
-
-        workManager.enqueueUniqueWork(
-            "thread_update_$kbId",
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
-    }
-
-    /**
-     * 灵感脉络的 LLM 增量更新。每新增一条灵感,NoteEditorViewModel
-     * 调一次这个方法;worker 调大模型,失败时 fallback 到程序化
-     * [ThreadEvolutionWorker] 写一份占位脉络,保证 UI 不会空。
+     * 失败时:incremental 退到本地 tag 聚类 fallback;re-evolve 在有旧脉络时保留
+     * 旧脉络只写一条 log,冷启动也退到 fallback。详见
+     * [LlmInspirationThreadWorker].
      *
-     * @param kbId         灵感知识库 id(目前固定 type="inspiration")
-     * @param newItemId    本次新增的 inspiration knowledge_item id,
-     *                     worker 拿它去拉本条灵感全文
-     * @param triggerType  "inspiration_added" | "inspiration_edited"
+     * @param kbId         灵感知识库 id(目前固定 type="inspiration" 或 "normal")
+     * @param newItemId    incremental 模式必填;re_evolve 模式传 null
+     * @param triggerType  "inspiration_added" | "inspiration_edited" | "inspiration_re_evolve"
+     * @param mode         "incremental" | "re_evolve";不传时 worker 根据
+     *                     `newItemId` 是否为空自动推断
      */
     fun scheduleLlmThreadUpdate(
         kbId: String,
-        newItemId: String,
+        newItemId: String? = null,
         triggerType: String = "inspiration_added",
+        mode: String? = null,
     ) {
         val workManager = WorkManager.getInstance(appContext)
+        val resolvedMode = mode ?: if (newItemId.isNullOrBlank()) "re_evolve" else "incremental"
+        val dataBuilder = Data.Builder()
+            .putString("knowledgeBaseId", kbId)
+            .putString("triggerType", triggerType)
+            .putString("mode", resolvedMode)
+        if (!newItemId.isNullOrBlank()) {
+            dataBuilder.putString("newItemId", newItemId)
+        }
         val request = OneTimeWorkRequestBuilder<LlmInspirationThreadWorker>()
-            .setInputData(
-                workDataOf(
-                    "knowledgeBaseId" to kbId,
-                    "newItemId" to newItemId,
-                    "triggerType" to triggerType,
-                )
-            )
+            .setInputData(dataBuilder.build())
             .build()
 
         workManager.enqueueUniqueWork(

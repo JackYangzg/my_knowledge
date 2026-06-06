@@ -10,6 +10,7 @@ import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.entity.KnowledgeItemEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadEntity
 import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
+import com.my.knowledge.data.repository.InspirationReEvolveContext
 import com.my.knowledge.data.repository.InspirationThreadContext
 import com.my.knowledge.data.repository.KnowledgeRepositoryImpl
 import com.my.knowledge.domain.repository.KnowledgeRepository
@@ -20,30 +21,33 @@ import org.json.JSONObject
 import java.util.UUID
 
 /**
- * 灵感脉络 —— 增量 LLM 脉络 worker。
+ * 灵感脉络 —— LLM 脉络 worker(双模式)。
  *
- * 触发:每新增一条灵感,NoteEditorViewModel.saveToKnowledgeBase
- *       调 [com.my.knowledge.data.processing.ProcessingTaskScheduler.scheduleLlmThreadUpdate]
- *       调度本 worker。
+ * 触发:
+ *   - **incremental** 模式 —— 每新增 / 编辑一条灵感,NoteEditorViewModel.saveToKnowledgeBase
+ *     调 [com.my.knowledge.data.processing.ProcessingTaskScheduler.scheduleLlmThreadUpdate]
+ *     调度本 worker,带 `newItemId`。
+ *   - **re_evolve** 模式 —— 用户在灵感空间 / 知识库详情页点「重新演化」按钮,
+ *     ViewModel 调同一个 scheduler,但传 `mode = "re_evolve"`、`newItemId = null`,
+ *     worker 读现有脉络 + 最近 N 条灵感 full content 整体重写。
  *
  * 流程:
- *   1. [KnowledgeRepository.getInspirationContext] 一次性拿齐输入
- *      (本次新灵感 / 历史摘要 / 现有脉络);
+ *   1. 按 `mode` 拿输入上下文:incremental 走 [KnowledgeRepository.getInspirationContext]
+ *      (1 条新灵感 + 30 条历史摘要 + 现有脉络);re-evolve 走
+ *      [KnowledgeRepository.getInspirationReEvolveContext]
+ *      (N 条最近灵感 full content + 25 条历史摘要 + 现有脉络当草稿);
  *   2. 算 input hash,如果跟现有 thread 的 inputHash 一致,跳过 LLM;
- *   3. 拼 [AiPromptTemplates.inspirationThreadPrompt],调 LLM(用 chatJson
- *      拿到严格 JSON);
+ *   3. 拼 [AiPromptTemplates.inspirationThreadPrompt](按 mode 走不同分支),
+ *      调 LLM(用 chatJson 拿到严格 JSON);
  *   4. 解析 LLM 输出,写回 KnowledgeThreadEntity;
- *   5. 失败 / 不可用 / 解析失败 → fallback:本地 tag 聚类,保证 UI 不会空。
+ *   5. 失败 / 不可用 / 解析失败 → 双轨 fallback:
+ *      - incremental + 没有旧脉络 → 本地 tag 聚类(buildFallbackThread),保证 UI 不会空;
+ *      - incremental + 有旧脉络 → 本地 tag 聚类(覆盖旧脉络,保持「新增触发就有新结果」语义);
+ *      - re_evolve + 有旧脉络 → 保留旧脉络,只 append 一条 threadLog 提示;
+ *      - re_evolve + 没有旧脉络 → 本地 tag 聚类占位(冷启动)。
  *
- * 1:1 对齐 llm_wiki 的两步 ingest 设计 —— 这里是"增量分析 + 增量写入",
- * 跟 [ThreadEvolutionWorker] 的全量程序化算法是双轨:LLM 优先,启发式兜底。
- *
- * 关于 diff 字段:prompt 里有,但 KnowledgeThreadEntity 当前没 diff 列。
- * 本版把 diff 序列化进 threadLog 的 summary 末尾(以 <!--DIFF-V1: ... -->
- * 哨兵开头),后续 schema 升级时再拆出独立列。这样:
- *   - 不用触发 Room schema 迁移
- *   - 老 threadLog 没 diff,UI 解析时 fallback 为空 diff
- *   - 不影响主线 / 关联 / 缺口 / 下一步的核心数据
+ * 关于 diff 字段:incremental 模式 LLM 输出含 diff,序列化进 threadLog 的 summary 末尾
+ * (以 <!--DIFF-V1: ... --> 哨兵开头)。re-evolve 模式整脉络在重写,diff 没意义,跳过。
  */
 class LlmInspirationThreadWorker(
     context: Context,
@@ -52,8 +56,10 @@ class LlmInspirationThreadWorker(
 
     override suspend fun doWork(): Result {
         val kbId = inputData.getString("knowledgeBaseId") ?: return Result.failure()
-        val newItemId = inputData.getString("newItemId") ?: return Result.failure()
+        val newItemId = inputData.getString("newItemId")
         val triggerType = inputData.getString("triggerType") ?: "inspiration_added"
+        val mode = inputData.getString("mode")
+            ?: if (newItemId.isNullOrBlank()) "re_evolve" else "incremental"
 
         val db = AppDatabase.getInstance(applicationContext)
         val repository = newRepository(db)
@@ -63,29 +69,65 @@ class LlmInspirationThreadWorker(
             return Result.success()
         }
 
-        val inspirationCtx: InspirationThreadContext = try {
-            repository.getInspirationContext(kbId, newItemId)
-        } catch (e: Exception) {
-            return Result.retry()
+        // 按 mode 拿输入上下文 + 算 input hash
+        val incrementalCtx: InspirationThreadContext?
+        val reEvolveCtx: InspirationReEvolveContext?
+        val inputHash: String
+        val existingThreadSnapshot: AiPromptTemplates.ExistingThreadSnapshot?
+        val detectedLanguage: String
+        when (mode) {
+            "re_evolve" -> {
+                incrementalCtx = null
+                reEvolveCtx = try {
+                    repository.getInspirationReEvolveContext(kbId)
+                } catch (e: Exception) {
+                    return Result.retry()
+                }
+                inputHash = computeInputHashForReEvolve(reEvolveCtx)
+                existingThreadSnapshot = reEvolveCtx.existingThread
+                val anchor = reEvolveCtx.recentInspiration.firstOrNull()
+                detectedLanguage = com.my.knowledge.data.ai.LanguageDetector
+                    .detect(anchor?.content?.ifBlank { anchor.title } ?: base.name)
+            }
+            else -> { // "incremental"
+                if (newItemId.isNullOrBlank()) return Result.failure()
+                incrementalCtx = try {
+                    repository.getInspirationContext(kbId, newItemId)
+                } catch (e: Exception) {
+                    return Result.retry()
+                }
+                reEvolveCtx = null
+                inputHash = computeInputHash(incrementalCtx)
+                existingThreadSnapshot = incrementalCtx.existingThread
+                val ni = incrementalCtx.newInspiration
+                detectedLanguage = com.my.knowledge.data.ai.LanguageDetector
+                    .detect(ni.content.ifBlank { ni.title })
+            }
         }
 
-        val newInspiration: AiPromptTemplates.NewInspiration = inspirationCtx.newInspiration
-        val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector
-            .detect(newInspiration.content.ifBlank { newInspiration.title })
-
-        val inputHash = computeInputHash(inspirationCtx)
         val existing = repository.getThreadByKb(kbId)
         if (existing != null && existing.inputHash == inputHash) {
             return Result.success()
         }
 
-        val systemPrompt = AiPromptTemplates.inspirationThreadPrompt(
-            kbName = base.name,
-            newInspiration = newInspiration,
-            historicalInspirationDigest = inspirationCtx.historicalInspirationDigest,
-            existingThread = inspirationCtx.existingThread,
-            language = detectedLanguage,
-        )
+        val systemPrompt = when (mode) {
+            "re_evolve" -> AiPromptTemplates.inspirationThreadPrompt(
+                kbName = base.name,
+                historicalInspirationDigest = reEvolveCtx!!.historicalInspirationDigest,
+                existingThread = existingThreadSnapshot,
+                language = detectedLanguage,
+                newInspiration = null,
+                recentInspiration = reEvolveCtx.recentInspiration,
+            )
+            else -> AiPromptTemplates.inspirationThreadPrompt(
+                kbName = base.name,
+                historicalInspirationDigest = incrementalCtx!!.historicalInspirationDigest,
+                existingThread = existingThreadSnapshot,
+                language = detectedLanguage,
+                newInspiration = incrementalCtx.newInspiration,
+                recentInspiration = emptyList(),
+            )
+        }
         val userMessage = "请基于以上灵感脉络上下文,生成 JSON 输出。"
 
         val llmConfigured = KnowledgeManager.modelConfig.apiKey.isNotBlank()
@@ -105,6 +147,23 @@ class LlmInspirationThreadWorker(
             }
         } else null
 
+        // re-evolve + 有旧脉络 + LLM 失败 → 保留旧脉络,只 append log。
+        if (generated == null && mode == "re_evolve" && existing != null) {
+            val log = KnowledgeThreadLogEntity(
+                id = UUID.randomUUID().toString(),
+                threadId = existing.id,
+                triggerType = triggerType,
+                triggerId = "re_evolve",
+                beforeHash = sha256(existing.mainlineJson + existing.relationsJson),
+                afterHash = sha256(existing.mainlineJson + existing.relationsJson),
+                summary = "LLM 不可用 / 失败,保留旧脉络(re-evolve 模式)",
+                createdAt = System.currentTimeMillis()
+            )
+            repository.appendThreadLog(log)
+            repository.updateBase(base.copy(threadStatus = "ready", updatedAt = System.currentTimeMillis()))
+            return Result.success()
+        }
+
         val thread = if (generated != null) {
             buildThreadEntity(
                 existing = existing,
@@ -113,6 +172,7 @@ class LlmInspirationThreadWorker(
                 generated = generated,
             )
         } else {
+            // incremental + LLM 失败,或 re-evolve 冷启动(existing == null)且 LLM 失败 → 本地 fallback
             buildFallbackThread(
                 existing = existing,
                 kbId = kbId,
@@ -124,18 +184,21 @@ class LlmInspirationThreadWorker(
 
         repository.saveThread(thread)
 
-        // diff 序列化进 threadLog,让前端能可靠检测"本次新增 / 演变 / 废弃"
-        val diffBlob = generated?.diff?.let { serializeDiff(it) } ?: ""
+        // diff 序列化进 threadLog;re-evolve 模式整脉络在重写,diff 无意义,跳过
+        val diffBlob = if (mode == "incremental") {
+            generated?.diff?.let { serializeDiff(it) } ?: ""
+        } else ""
         val log = KnowledgeThreadLogEntity(
             id = UUID.randomUUID().toString(),
             threadId = thread.id,
             triggerType = triggerType,
-            triggerId = newItemId,
+            triggerId = newItemId ?: "re_evolve",
             beforeHash = existing?.let { sha256(it.mainlineJson + it.relationsJson) },
             afterHash = sha256(thread.mainlineJson + thread.relationsJson),
             summary = buildString {
                 if (generated != null) {
-                    append("LLM 灵感脉络更新:${thread.mainlineJson.countMainlineSegments()} 条主线,")
+                    val modeLabel = if (mode == "re_evolve") "重新演化" else "增量更新"
+                    append("LLM 灵感脉络$modeLabel:${thread.mainlineJson.countMainlineSegments()} 条主线,")
                     append("${thread.relationsJson.countRelationSegments()} 条关联")
                 } else {
                     append("LLM 不可用 / 失败,使用程序化 fallback")
@@ -253,6 +316,42 @@ class LlmInspirationThreadWorker(
             for (d in ctx.historicalInspirationDigest) {
                 add(d.id)
                 add(d.title)
+            }
+        }
+        return sha256(pieces.joinToString("\n"))
+    }
+
+    /**
+     * re-evolve 模式的输入 hash:把最近 N 条灵感的 id/title/content/summary/tags
+     * 和历史摘要一起 hash。跟 [computeInputHash] 区别在于「锚」是 N 条而不是 1 条,
+     * 这样只要 N 条里任意一条变动 (或现有脉络存在 / 不存在变化) 就会触发 LLM
+     * 重写,跟「手动重新演化」的语义对齐 —— 用户只要再点一次按钮、且最近灵感
+     * 有任何变化,就该出新结果。
+     *
+     * existing thread 的快照也参与 hash,因为重新演化 = 「拿当前草稿 + 当前最近灵感
+     * 整体重写」,草稿换了就该重算。
+     */
+    private fun computeInputHashForReEvolve(
+        ctx: InspirationReEvolveContext,
+    ): String {
+        val pieces = buildList {
+            add("mode=re_evolve")
+            for (ni in ctx.recentInspiration) {
+                add(ni.id)
+                add(ni.title)
+                add(ni.content)
+                add(ni.summary)
+                add(ni.tags.joinToString(","))
+            }
+            for (d in ctx.historicalInspirationDigest) {
+                add(d.id)
+                add(d.title)
+            }
+            val existing = ctx.existingThread
+            if (existing != null) {
+                add(existing.description)
+                add(existing.coreQuestion)
+                add(existing.mainline.joinToString("|"))
             }
         }
         return sha256(pieces.joinToString("\n"))

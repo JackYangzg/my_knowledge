@@ -30,10 +30,6 @@ class MyKnowledgeWorkerFactory(
             appContext,
             workerParameters,
         )
-        ThreadEvolutionWorker::class.java.name -> ThreadEvolutionWorker(
-            appContext,
-            workerParameters,
-        )
         TagWorker::class.java.name -> TagWorker(
             appContext,
             workerParameters,

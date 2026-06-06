@@ -3,7 +3,6 @@ package com.my.knowledge.data.processing
 import android.util.Log
 import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.ingest.SweepReviews
-import com.my.knowledge.data.ingest.ThreadEvolutionRunner
 import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +31,7 @@ import kotlinx.coroutines.withContext
  *
  * The debouncer splits the work:
  *   1. The KB write lock only covers wiki-page writes now.
- *   2. The four side-effecting rebuilds are scheduled here, off the
+ *   2. The side-effecting rebuilds are scheduled here, off the
  *      lock, on `Dispatchers.IO`.
  *   3. Per-KB debounce: rapid-fire triggers (e.g. importing five
  *      sources into the same KB in quick succession) collapse into a
@@ -42,10 +41,17 @@ import kotlinx.coroutines.withContext
  *      and swallowed by the per-KB `collectLatest`; other KBs keep
  *      working because each KB has its own flow + job.
  *
- * Three schedules are exposed (graph / sweep / thread) so callers
+ * Three schedules are exposed (graph / overview / sweep) so callers
  * don't have to pick the right debounce window themselves. A generic
  * [schedule] is also provided for callers that need custom debounce
  * (e.g. unit tests).
+ *
+ * Note (2026-06): the previous `scheduleThreadEvolution` path is gone.
+ * The "灵感脉络" rebuild now lives entirely in [com.my.knowledge.worker.LlmInspirationThreadWorker]
+ * (incremental on save, re-evolve on manual trigger) and is no longer
+ * debounced here. Ingest also no longer triggers any thread refresh —
+ * see `IngestOrchestrator.generationTask` for the now-empty post-gen
+ * tail and the rationale.
  *
  * Backed by `MutableSharedFlow` + `debounce` + `collectLatest` per
  * the design note in the P0-1 spec.
@@ -55,7 +61,6 @@ class RebuildDebouncer(
     private val repository: KnowledgeRepository,
     private val externalScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val graphDebounceMs: Long = DEFAULT_GRAPH_DEBOUNCE_MS,
-    private val threadDebounceMs: Long = DEFAULT_THREAD_DEBOUNCE_MS,
     private val sweepDebounceMs: Long = DEFAULT_SWEEP_DEBOUNCE_MS,
 ) {
     /**
@@ -128,28 +133,6 @@ class RebuildDebouncer(
             action = {
                 withContext(Dispatchers.IO) {
                     SweepReviews(db).sweep(kbId)
-                }
-            },
-        )
-    }
-
-    /**
-     * Per-KB thread evolution (the `ThreadEvolutionWorker` body,
-     * inlined as a `suspend` function so we don't go through
-     * WorkManager). Coalesces inside [threadDebounceMs] — this is
-     * intentionally larger than the graph debounce because the
-     * thread rebuild is more expensive and the user-visible thread
-     * doesn't change between two quick generations.
-     */
-    fun scheduleThreadEvolution(kbId: String) {
-        if (kbId.isBlank()) return
-        scheduleInternal(
-            kbId = kbId,
-            kind = "thread",
-            debounceMs = threadDebounceMs,
-            action = {
-                withContext(Dispatchers.IO) {
-                    ThreadEvolutionRunner.runEvolution(db, repository, kbId)
                 }
             },
         )
@@ -284,15 +267,6 @@ class RebuildDebouncer(
          * rebuild.
          */
         const val DEFAULT_GRAPH_DEBOUNCE_MS: Long = 1_000L
-
-        /**
-         * Default per-KB debounce for thread evolution. Larger than
-         * the graph debounce because (a) the thread rebuild is more
-         * expensive and (b) the user-visible thread doesn't change
-         * meaningfully between two quick generations. Matches the
-         * P0-1 spec: "5 秒,合并多次 generation 的连续触发".
-         */
-        const val DEFAULT_THREAD_DEBOUNCE_MS: Long = 5_000L
 
         /**
          * Default per-KB debounce for review sweeps. Runs off the

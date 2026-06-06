@@ -915,41 +915,12 @@ class IngestOrchestrator(
         ingestStateMachine.transitionToGenerated(source.id, now)
         markSuccess(task, "Generated ${writtenItems.size} processed wiki pages", """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         enqueue(source.id, "embedding", 5, """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
-        // Recompute the knowledge base's mainline / gaps / suggestions
-        // whenever a new generation lands. P0-1: the inline log row
-        // stays (cheap, just a breadcrumb) but the actual evolution
-        // goes through the debouncer instead of `scheduler?.scheduleThreadUpdate`.
-        // The debouncer coalesces 5+ rapid ingests into a single
-        // rebuild per KB and runs the work off the hot path.
-        if (kbId.isNotBlank()) {
-            db.knowledgeBaseDao().getById(kbId)?.let { base ->
-                if (base.type != "unfiled") {
-                    db.knowledgeThreadLogDao().insert(
-                        com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity(
-                            id = UUID.randomUUID().toString(),
-                            threadId = "pending",
-                            triggerType = "ingest_complete",
-                            triggerId = source.id,
-                            beforeHash = null,
-                            afterHash = null,
-                            summary = "源 ${source.title} 加工完成，触发脉络更新",
-                            createdAt = System.currentTimeMillis()
-                        )
-                    )
-                    val debouncer = rebuildDebouncer
-                    if (debouncer != null) {
-                        debouncer.scheduleThreadEvolution(kbId)
-                    } else {
-                        // Back-compat: no debouncer wired → fall
-                        // through to the scheduler (which itself now
-                        // delegates to the debouncer when one is
-                        // present, so this is mostly for the unit
-                        // tests).
-                        scheduler?.scheduleThreadUpdate(kbId)
-                    }
-                }
-            }
-        }
+        // 灵感脉络的更新不再由 ingest 触发(2026-06 重构):整套程序化脉络
+        // (ThreadEvolutionWorker + ThreadEvolutionRunner)已经删除,脉络刷新
+        // 只在 NoteEditorViewModel.saveToKnowledgeBase 走 LLM incremental,
+        // 或用户在「灵感空间 / KB 详情页」点「重新演化」走 LLM re-evolve。
+        // 这里曾经写过一条 "ingest_complete" 面包屑 + 触发程序化脉络重建,
+        // 那条路径会覆盖 LLM 跑出来的主线 / 关联 / 缺口,所以连面包屑一起删。
     }
 
     /**

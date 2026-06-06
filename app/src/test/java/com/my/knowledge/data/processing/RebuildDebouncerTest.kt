@@ -61,9 +61,14 @@ class RebuildDebouncerTest {
      * The shim lets the test pass `null` for the
      * `AppDatabase` / `KnowledgeRepository` constructor args — the
      * production `RebuildDebouncer` only touches them inside
-     * `scheduleGraphRebuild` / `scheduleThreadEvolution` /
-     * `scheduleSweepReviews`; the test exclusively uses the generic
+     * `scheduleGraphRebuild` / `scheduleSweepReviews` (and the
+     * overview helper); the test exclusively uses the generic
      * `schedule(kbId, debounceMs, action)` entry point.
+     *
+     * Note (2026-06): the test no longer references thread
+     * evolution at all — that path is gone. The `threadMs` arg
+     * remains on the shim for back-compat with older test
+     * snapshots and is now always ignored.
      */
     private fun newDebouncer(
         scheduler: TestCoroutineScheduler,
@@ -245,11 +250,12 @@ class RebuildDebouncerTest {
 
     @Test
     fun `default debounce constants match the P0-1 spec`() {
-        // The spec says: graph + overview = 1s, thread evolution = 5s.
-        // The P0-1 deliverable pins these down so a future tuning
-        // PR can't silently weaken the debounce.
+        // The spec says: graph + overview = 1s.
+        // The P0-1 deliverable pins this down so a future tuning
+        // PR can't silently weaken the debounce. Thread evolution
+        // used to also have a constant here, but that path is gone
+        // (see plan: 灵感脉络 unified under LLM-only path in 2026-06).
         assertEquals(1_000L, RebuildDebouncer.DEFAULT_GRAPH_DEBOUNCE_MS)
-        assertEquals(5_000L, RebuildDebouncer.DEFAULT_THREAD_DEBOUNCE_MS)
         // Sweep is off the hot path; 3s is a separate, internal
         // constant — pin it as well so the rationale isn't lost.
         assertEquals(3_000L, RebuildDebouncer.DEFAULT_SWEEP_DEBOUNCE_MS)

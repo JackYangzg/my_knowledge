@@ -8,6 +8,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.sync.Semaphore
@@ -168,46 +169,52 @@ class AiGateway(
         temperature: Float = 0.7f,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
-        @Suppress("UNUSED_PARAMETER") onChunk: (String) -> Unit = {},
+        onChunk: suspend (String) -> Unit = {},
     ): String {
         val config = configProvider()
         if (config.apiKey.isBlank()) {
             return "[配置缺失] 请在设置中配置 API Key。"
         }
-        // ARCH-8: non-streaming path. `onChunk` is kept in the
-        // signature for source compatibility but is no longer
-        // invoked — the full response is delivered as the return
-        // value. Callers that relied on per-token progress should
-        // migrate to a different code path.
-        return callApi(
-            config = config,
-            systemPrompt = systemPrompt,
-            userMessage = userMessage,
-            temperature = temperature,
-            maxAttempts = maxAttempts,
-            onRetry = onRetry,
-        )
+        // P0-2 streaming path: use the shared SSE helper so the
+        // orchestrator's progress writer gets per-token updates
+        // (and the user sees content arrive in real time).
+        // Retry on transient failures (`retryRemoteCall` already
+        // honors `isRetryableHttpStatus` / 408/425/429/5xx); on
+        // a permanent failure the last exception propagates to
+        // the caller.
+        return retryRemoteCall(maxAttempts, onRetry) {
+            streamSseOnce(config, systemPrompt, userMessage, temperature, onChunk)
+        }
     }
 
-    override fun completeStream(systemPrompt: String, userMessage: String): Flow<String> = flow {
+    override fun completeStream(systemPrompt: String, userMessage: String): Flow<String> = channelFlow {
         val config = configProvider()
         if (config.apiKey.isBlank()) {
-            emit("[配置缺失] 请在设置中配置 API Key。")
-            return@flow
+            send("[配置缺失] 请在设置中配置 API Key。")
+            return@channelFlow
         }
-
-        // ARCH-8: non-streaming path. The Flow<String> contract is
-        // preserved by emitting the full response as a single value.
-        // Callers that collected the final value are unaffected;
-        // callers that expected per-token emissions (e.g. throttled
-        // progress writers) need to migrate off this entry point.
-        val result = callApi(
-            config = config,
-            systemPrompt = systemPrompt,
-            userMessage = userMessage,
-            temperature = 0.7f,
-        )
-        emit(result)
+        // P0-2: real SSE loop. Each token delta is forwarded to
+        // collectors via `send`, so the throttled progress writer
+        // sees real token flow instead of one big read-until-EOF.
+        // Cancellation is cooperative: cancelling the collector
+        // throws CancellationException inside the read loop and
+        // tears the connection down within the next read.
+        try {
+            streamSseOnce(config, systemPrompt, userMessage, 0.7f) { delta ->
+                send(delta)
+            }
+        } catch (e: CancellationException) {
+            // Don't wrap — let structured concurrency see the
+            // original cause.
+            throw e
+        } catch (e: Exception) {
+            // Legacy contract: surface as a [错误]-prefixed string
+            // so pre-P0-2 chat UI keeps working. The classified
+            // HTTP error starts with `[` already (e.g. [服务端错误],
+            // [鉴权失败]), so `emitted.any { it.startsWith("[") }`
+            // continues to match.
+            send("[错误] ${e.message ?: "流中断"}")
+        }
     }.flowOn(Dispatchers.IO)
 
     override suspend fun chatJson(
@@ -251,7 +258,7 @@ class AiGateway(
         userPrompt: String,
         schemaHint: String,
         temperature: Float,
-        @Suppress("UNUSED_PARAMETER") onChunk: (String) -> Unit
+        onChunk: (String) -> Unit
     ): String {
         val config = configProvider()
         if (config.apiKey.isBlank()) return ""
@@ -259,18 +266,19 @@ class AiGateway(
         // the two paths' prompt shape identical is what makes
         // "streamJson is equivalent to chatJson" a true statement.
         val effectiveSystem = "$systemPrompt\n\n只输出严格 JSON，不要 Markdown，不要解释。\nSchema:\n$schemaHint"
-        // ARCH-8: non-streaming path. JSON mode never exposed per-chunk
-        // progress (the whole body had to be buffered before parsing
-        // because a partial JSON document is unrecoverable), so
-        // dropping the SSE loop is a pure latency win — one HTTP
-        // round-trip instead of many tiny SSE deltas. `onChunk` is
-        // kept in the signature for source compatibility.
-        return callApi(
-            config = config,
-            systemPrompt = effectiveSystem,
-            userMessage = userPrompt,
-            temperature = temperature,
-        )
+        // P0-2 streaming path. The request uses `stream: true` so
+        // token deltas flow back through [onChunk] in real time;
+        // the returned string is the joined-then-cleaned final
+        // text, equivalent in shape to what `chatJson` returns
+        // for the same logical content. No retry here: the
+        // P0-2 spec calls for transient errors to bubble up so
+        // the orchestrator's retry handler decides. A 4xx/5xx
+        // surfaces as an exception whose message contains the
+        // classified [服务端错误] / [鉴权失败] / ... prefix.
+        val joined = streamSseOnce(config, effectiveSystem, userPrompt, temperature) { delta ->
+            onChunk(delta)
+        }
+        return with(AiTextCleaner) { joined.cleanModelOutput() }
     }
 
     suspend fun streamJsonObserved(
@@ -468,8 +476,11 @@ class AiGateway(
         systemPrompt: String,
         userMessage: String,
         temperature: Float,
+        // suspend lambda so callers can `send(...)` on a Flow producer
+        // (see `completeStream`) or fan out to other suspending sinks
+        // without re-entering a dispatcher hop.
         onDelta: suspend (String) -> Unit,
-    ) = concurrencyLimiter.withPermit {
+    ): String = concurrencyLimiter.withPermit {
         val requestBody = buildJsonObject {
             put("model", JsonPrimitive(config.modelName))
             put(
@@ -503,6 +514,7 @@ class AiGateway(
             .header("Authorization", "Bearer ${config.apiKey}")
             .header("Accept", "text/event-stream")
             .build()
+        val joined = StringBuilder()
         try {
             LlmHttpClient.instance.newCall(request).execute().use { response ->
                 val responseCode = response.code
@@ -535,7 +547,10 @@ class AiGateway(
                         if (payload.isBlank()) continue
                         if (payload == "[DONE]") break
                         val delta = parseStreamDelta(payload)
-                        if (!delta.isNullOrBlank()) onDelta(delta)
+                        if (!delta.isNullOrBlank()) {
+                            joined.append(delta)
+                            onDelta(delta)
+                        }
                     }
                 }
             }
@@ -544,6 +559,7 @@ class AiGateway(
             // see the original cause for structured concurrency.
             throw e
         }
+        joined.toString()
     }
 
     private fun analyzeImageOnce(baseUrl: String, apiKey: String, requestBody: String): String {

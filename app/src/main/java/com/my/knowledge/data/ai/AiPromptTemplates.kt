@@ -583,49 +583,87 @@ ${languageDirective(language)}
         val nextSuggestions: List<String>,
     )
 
+    /**
+     * @param newInspiration     incremental 模式下必填(本次新增的灵感,完整内容);re-evolve 模式传 null。
+     * @param recentInspiration  re-evolve 模式下必填(最近 N 条灵感,完整内容);incremental 模式传 emptyList()。
+     *                          模式推断:`newInspiration != null` → incremental,否则 `recentInspiration` 非空 → re-evolve。
+     */
     fun inspirationThreadPrompt(
         kbName: String,
-        newInspiration: NewInspiration,
         historicalInspirationDigest: List<InspirationDigest>,
         existingThread: ExistingThreadSnapshot?,
         language: String = "中文",
+        newInspiration: NewInspiration? = null,
+        recentInspiration: List<NewInspiration> = emptyList(),
     ): String = buildString {
+        val isReEvolve = newInspiration == null && recentInspiration.isNotEmpty()
+
         appendLine(languageDirective(language))
         appendLine()
         appendLine("你是用户的灵感脉络编辑。每条灵感是用户随手记的片段(标题 + 标签 + 内容,可能 1-3 句,可能半篇),用户希望把它们组织成「我最近在想什么、推到了哪里、下一步该做什么」的可读主线,而不是机械的 tag 共现列表。")
         appendLine()
-        appendLine("## 模式:增量更新(关键,跟从零生成的区别)")
-        appendLine()
-        appendLine("你不是从零生成脉络——`existingThread` 是上一次生成的脉络快照,代表用户已经认定的「主轴」。")
-        appendLine("在保持主轴稳定的前提下,接入本次新增,只描述实际发生了什么变化。")
-        appendLine()
-        appendLine("请在 `diff` 字段里如实记录本次改了什么,不要为了显得「有变化」而虚构 diff,也不要为了「稳定」而吞掉真实的演变。")
+
+        if (isReEvolve) {
+            // re-evolve 模式:用户主动点了"重新演化",LLM 把现有脉络当成"待重写的草稿"
+            // 整体重写,不用 incremental 模式那种"以一条新灵感为锚"的写法。
+            appendLine("## 模式:重新演化(关键)")
+            appendLine()
+            appendLine("本次**没有新增灵感**。用户主动要求重新分析整个脉络,重新组织主线、关联、缺口。")
+            appendLine("把 `existingThread` 当成「待重写的草稿」,而不是「已认定的轴」——重写幅度可以很大,主线、核心问题、缺口都可以整体翻新。")
+            appendLine()
+            appendLine("最近 ${recentInspiration.size} 条灵感是本次重写的主导依据(按更新时间从新到旧),它们的最新状态必须被主线条承载。")
+        } else {
+            // incremental 模式:沿用原文案
+            appendLine("## 模式:增量更新(关键,跟从零生成的区别)")
+            appendLine()
+            appendLine("你不是从零生成脉络——`existingThread` 是上一次生成的脉络快照,代表用户已经认定的「主轴」。")
+            appendLine("在保持主轴稳定的前提下,接入本次新增,只描述实际发生了什么变化。")
+            appendLine()
+            appendLine("请在 `diff` 字段里如实记录本次改了什么,不要为了显得「有变化」而虚构 diff,也不要为了「稳定」而吞掉真实的演变。")
+        }
+
         appendLine()
         appendLine("## 输入")
         appendLine()
         appendLine("### 灵感知识库上下文")
         appendLine("- 知识库名:「$kbName」")
-        appendLine("- 历史灵感总数:${historicalInspirationDigest.size + 1}(含本次新增)")
-        appendLine("- 触发:新增 1 条灵感")
-        appendLine()
-        appendLine("### 本次新增灵感(必须出现在主线条中)")
-        appendLine("- 灵感 id: ${newInspiration.id}")
-        appendLine("- 标题: ${newInspiration.title}")
-        appendLine("- 标签: ${newInspiration.tags.joinToString("、").ifBlank { "(无)" }}")
-        appendLine("- 摘要: ${newInspiration.summary.ifBlank { "(无摘要,从内容推断)" }}")
-        appendLine("- 完整内容:")
-        appendLine("```")
-        val rawContent = newInspiration.content
-        val truncated = if (rawContent.length <= 4_000) rawContent else {
-            val paragraphs = rawContent.split(Regex("\\n\\s*\\n"))
-            val head = paragraphs.take(3).joinToString("\n\n")
-            val tail = paragraphs.takeLast(1).joinToString("\n\n")
-            val headTail = "$head\n\n... [中间略] ...\n\n$tail"
-            if (headTail.length <= 4_000) headTail
-            else head.take(4_000 - tail.length - 30) + "\n\n... [中间略] ...\n\n" + tail
+        if (isReEvolve) {
+            appendLine("- 灵感总数:${recentInspiration.size + historicalInspirationDigest.size}")
+            appendLine("- 触发:用户主动要求重新演化整条脉络")
+        } else {
+            appendLine("- 历史灵感总数:${historicalInspirationDigest.size + 1}(含本次新增)")
+            appendLine("- 触发:新增 1 条灵感")
         }
-        appendLine(truncated)
-        appendLine("```")
+        appendLine()
+
+        if (isReEvolve) {
+            // re-evolve 模式:把最近 N 条灵感用 full content 列出,作为"必须主导本次重写"的输入
+            appendLine("### 最近 ${recentInspiration.size} 条灵感(必须主导本次重写,按更新时间从新到旧)")
+            recentInspiration.forEachIndexed { idx, ni ->
+                appendLine()
+                appendLine("#### 最近灵感 ${idx + 1} / ${recentInspiration.size}")
+                appendLine("- 灵感 id: ${ni.id}")
+                appendLine("- 标题: ${ni.title}")
+                appendLine("- 标签: ${ni.tags.joinToString("、").ifBlank { "(无)" }}")
+                appendLine("- 摘要: ${ni.summary.ifBlank { "(无摘要,从内容推断)" }}")
+                appendLine("- 完整内容:")
+                appendLine("```")
+                appendLine(truncateForPrompt(ni.content))
+                appendLine("```")
+            }
+        } else {
+            // incremental 模式:沿用原文案
+            val ni = newInspiration!!
+            appendLine("### 本次新增灵感(必须出现在主线条中)")
+            appendLine("- 灵感 id: ${ni.id}")
+            appendLine("- 标题: ${ni.title}")
+            appendLine("- 标签: ${ni.tags.joinToString("、").ifBlank { "(无)" }}")
+            appendLine("- 摘要: ${ni.summary.ifBlank { "(无摘要,从内容推断)" }}")
+            appendLine("- 完整内容:")
+            appendLine("```")
+            appendLine(truncateForPrompt(ni.content))
+            appendLine("```")
+        }
 
         if (historicalInspirationDigest.isNotEmpty()) {
             appendLine()
@@ -637,7 +675,7 @@ ${languageDirective(language)}
 
         if (existingThread != null) {
             appendLine()
-            appendLine("### 现有脉络(增量起点)")
+            appendLine(if (isReEvolve) "### 现有脉络(待重写的草稿)" else "### 现有脉络(增量起点)")
             appendLine("- 描述: ${existingThread.description}")
             appendLine("- 核心问题: ${existingThread.coreQuestion}")
             appendLine("- 主线:")
@@ -659,7 +697,27 @@ ${languageDirective(language)}
         appendLine()
         appendLine("严格 JSON,字段名 case-sensitive,不要 markdown 围栏,不要解释,第一个字符必须是 `{`:")
         appendLine()
-        appendLine("""{
+        if (isReEvolve) {
+            // re-evolve 模式没有 diff 字段
+            appendLine("""{
+  "description": "2-3 句整体描述(说明灵感库当前在思考的主题/方向)",
+  "coreQuestion": "1 句,用户整体在尝试回答/解决的问题",
+  "mainline": [
+    "主线条 1:灵感 A → 灵感 B → 灵感 C,本条主线在追踪 / 推导出 ...(60-100 字)"
+  ],
+  "relations": [
+    {"from": "灵感标题 A", "to": "灵感标题 B", "relation": "从...推导出 / 与...矛盾 / 拓展了 / 收束到..."}
+  ],
+  "gaps": [
+    "知识缺口 1:目前缺少关于 X 的具体灵感或知识"
+  ],
+  "nextSuggestions": [
+    "下一步建议 1:具体到动作(写新灵感 / 整理到某知识库 / 做研究 / 跟既有知识交叉验证)"
+  ]
+}""")
+        } else {
+            // incremental 模式:沿用原文案,带 diff
+            appendLine("""{
   "description": "2-3 句整体描述(说明灵感库当前在思考的主题/方向)",
   "coreQuestion": "1 句,用户整体在尝试回答/解决的问题",
   "mainline": [
@@ -686,6 +744,7 @@ ${languageDirective(language)}
     ]
   }
 }""")
+        }
         appendLine()
         appendLine("## 硬约束(违反直接丢弃响应)")
         appendLine()
@@ -696,8 +755,30 @@ ${languageDirective(language)}
         appendLine("5. 只能基于输入中的灵感标题、标签、摘要、完整内容、历史灵感摘要和现有脉络生成;不要引入文件名、wiki 页面、来源路径、知识库外部条目或其他未出现在灵感内容里的信息。")
         appendLine("6. 不要把 tag 当成主线——主线是灵感之间的**叙事递进**,不是 tag 共现。")
         appendLine("7. relations 的 from/to 优先使用输入里的灵感标题;如果内容没有清晰标题,用内容中的短语概括,但不要捏造外部实体。")
-        appendLine("8. diff.newMainlineSegments / evolvedSegments / obsoleteSegments 必填,即使本次没变化也要写空数组 `[]`,让前端能可靠检测「无 diff」。")
-        appendLine("9. 整体输出 ≤ 2,000 字符——灵感脉络是要在卡片上读的,不能写论文。")
+        if (isReEvolve) {
+            appendLine("8. 整体输出 ≤ 2,000 字符——灵感脉络是要在卡片上读的,不能写论文。re-evolve 模式没有 diff 字段,不要补。")
+        } else {
+            appendLine("8. diff.newMainlineSegments / evolvedSegments / obsoleteSegments 必填,即使本次没变化也要写空数组 `[]`,让前端能可靠检测「无 diff」。")
+            appendLine("9. 整体输出 ≤ 2,000 字符——灵感脉络是要在卡片上读的,不能写论文。")
+        }
+        // head + tail 两次注入 languageDirective(防小模型语言漂移,
+        // 见 languageDirective KDoc 解释)。re-evolve 模式同样适用。
+        appendLine()
+        appendLine(languageDirective(language))
+    }
+
+    /**
+     * 截断灵感内容到 ~4000 字,优先保留首尾段落。用于 prompt 中塞 full content
+     * 时控制 token 用量;incremental / re-evolve 模式共用。
+     */
+    private fun truncateForPrompt(rawContent: String): String {
+        if (rawContent.length <= 4_000) return rawContent
+        val paragraphs = rawContent.split(Regex("\\n\\s*\\n"))
+        val head = paragraphs.take(3).joinToString("\n\n")
+        val tail = paragraphs.takeLast(1).joinToString("\n\n")
+        val headTail = "$head\n\n... [中间略] ...\n\n$tail"
+        return if (headTail.length <= 4_000) headTail
+        else head.take(4_000 - tail.length - 30) + "\n\n... [中间略] ...\n\n" + tail
     }
 
     /**

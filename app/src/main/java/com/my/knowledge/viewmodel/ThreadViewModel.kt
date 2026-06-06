@@ -82,14 +82,16 @@ class ThreadViewModel(
 
     fun triggerManualEvolution() {
         val kbId = _kbId.value ?: return
-        // Hand off to the worker instead of doing the work inline. The
-        // worker has the full rewrite (input hash + tag cluster + wikilink
-        // graph + score-driven gaps) and writes the resulting thread +
-        // log atomically. The previous in-line path only updated the
-        // graph and dropped a log row, so users saw an empty
-        // "知识主线" list with a fake "刷新成功" toast.
+        // 用户点「重新演化」走 LLM re-evolve 模式:worker 读最近 N 条灵感
+        // full content + 现有脉络当草稿,整体重写。LLM 不可用时保留旧脉络
+        // (incremental 路径会用本地 fallback,但 re-evolve 模式下保留更稳)。
         val beforeUpdatedAt = thread.value?.updatedAt
-        scheduler.scheduleThreadUpdate(kbId)
+        scheduler.scheduleLlmThreadUpdate(
+            kbId = kbId,
+            newItemId = null,
+            triggerType = "inspiration_re_evolve",
+            mode = "re_evolve",
+        )
         _evolving.value = true
         viewModelScope.launch {
             // Wait for the row to be rewritten, or fall back to a

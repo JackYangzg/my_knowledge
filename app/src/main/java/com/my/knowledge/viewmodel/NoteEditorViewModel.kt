@@ -181,7 +181,15 @@ class NoteEditorViewModel(
             // worker's write the same way ThreadViewModel does.
             ui.toThreadUpdatedAt()
         }
-        scheduler.scheduleThreadUpdate(base.id)
+        // 用户点「重新演化」走 LLM re-evolve:worker 读最近 N 条灵感 full
+        // content + 现有脉络当草稿,整体重写。incremental 路径只在
+        // saveToKnowledgeBase 里随新灵感触发,这里不复用。
+        scheduler.scheduleLlmThreadUpdate(
+            kbId = base.id,
+            newItemId = null,
+            triggerType = "inspiration_re_evolve",
+            mode = "re_evolve",
+        )
         _inspirationEvolving.value = true
         viewModelScope.launch {
             val deadline = System.currentTimeMillis() + 60_000L

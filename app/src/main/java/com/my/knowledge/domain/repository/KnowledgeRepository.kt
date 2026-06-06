@@ -179,6 +179,20 @@ interface KnowledgeRepository {
     ): com.my.knowledge.data.repository.InspirationThreadContext
 
     /**
+     * 灵感脉络重新演化的输入上下文(用户主动点"重新演化"时调用,
+     * 跟 incremental 模式区分):
+     *   - 最近 N 条灵感(完整内容)——按 updatedAt 从新到旧,主导本次重写
+     *   - 较早的灵感(只带摘要 / 标签)——背景信息
+     *   - 现有脉络——待重写的草稿(可能为 null,冷启动场景)
+     * 数据由 Impl 在一次 DB 读路径里拼好,worker 只管拼 prompt。
+     */
+    suspend fun getInspirationReEvolveContext(
+        kbId: String,
+        recentCount: Int = 5,
+        historyCount: Int = 25,
+    ): com.my.knowledge.data.repository.InspirationReEvolveContext
+
+    /**
      * Backfill `wiki_entity` / `wiki_concept` pages for every source
      * document in the given knowledge base that doesn't already have
      * them, using each source's latest `AnalysisResultEntity` (no LLM

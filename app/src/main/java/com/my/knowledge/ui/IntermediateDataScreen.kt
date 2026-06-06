@@ -340,8 +340,8 @@ fun IntermediateDataScreen(
             text = {
                 Text(
                     stringResource(R.string.auto_d2d08fd2) +
-                        "不会删除来源知识条目。删除后再次生成知识脉络时，" +
-                        "如果来源仍然存在，仍可能重新出现。"
+                        stringResource(R.string.auto_b2a9c854) +
+                        stringResource(R.string.auto_81a39925)
                 )
             },
             confirmButton = {
@@ -370,7 +370,7 @@ fun IntermediateDataScreen(
             text = {
                 Text(
                     stringResource(R.string.auto_1716d047) +
-                        "但下次知识脉络重建时仍有可能重新出现。"
+                        stringResource(R.string.auto_798b5e90)
                 )
             },
             confirmButton = {
@@ -508,12 +508,12 @@ private fun BulkSelectHeader(
             Spacer(modifier = Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = if (isAllSelected) "已全选 $tabLabel" else "全选$tabLabel", style = MaterialTheme.typography.titleSmall,
+                    text = if (isAllSelected) stringResource(R.string.auto_883620e4, tabLabel) else stringResource(R.string.auto_661a17cd, tabLabel), style = MaterialTheme.typography.titleSmall,
                     color = palette.textPrimary
                 )
                 Text(
-                    text = if (selectedCount > 0) "已选 $selectedCount / $totalCount 项"
-                    else "共 $totalCount 项", style = MaterialTheme.typography.labelSmall,
+                    text = if (selectedCount > 0) stringResource(R.string.auto_613887a3, selectedCount, totalCount)
+                    else stringResource(R.string.auto_f8978b9d, totalCount), style = MaterialTheme.typography.labelSmall,
                     color = palette.textMuted
                 )
             }
