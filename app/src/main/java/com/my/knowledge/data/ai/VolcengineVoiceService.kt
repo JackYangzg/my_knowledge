@@ -336,17 +336,35 @@ class VolcengineVoiceService(private val context: Context) {
     private fun findTranscript(value: Any?): String {
         return when (value) {
             is JSONObject -> {
+                // With show_utterances=true, Volcengine returns an
+                // "utterances" array. Each utterance is a recognized
+                // segment and the LATEST one is the new content since
+                // the last partial. The top-level "text" is the
+                // cumulative full transcript (server's "context for
+                // error correction") — using it makes the consumer see
+                // every previous utterance re-emitted and the text
+                // box fills with duplicates. Prefer the last utterance.
+                value.optJSONArray("utterances")?.let { arr ->
+                    if (arr.length() > 0) {
+                        val last = arr.optJSONObject(arr.length() - 1)
+                        val text = last?.optString("text")?.takeIf { it.isNotBlank() }
+                        if (text != null) return text
+                    }
+                }
+                // Fall back to top-level text fields (cumulative).
+                // Used when show_utterances is off or absent.
                 val directKeys = listOf("text", "utterance", "transcript", "sentence")
                 directKeys.firstNotNullOfOrNull { key ->
                     value.optString(key).takeIf { it.isNotBlank() }
                 } ?: value.keys().asSequence()
                     .mapNotNull { key -> findTranscript(value.opt(key)).takeIf { it.isNotBlank() } }
                     .firstOrNull()
-                    .orEmpty()
+                .orEmpty()
             }
-            is JSONArray -> (0 until value.length())
+            is JSONArray -> (value.length() - 1 downTo 0)
                 .mapNotNull { index -> findTranscript(value.opt(index)).takeIf { it.isNotBlank() } }
-                .joinToString("")
+                .firstOrNull()
+                .orEmpty()
             else -> ""
         }
     }
