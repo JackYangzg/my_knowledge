@@ -76,7 +76,7 @@ fun KnowledgeViewerScreen(
     val item by viewModel.item.collectAsState()
     val processedItems by viewModel.processedItems.collectAsState()
     val sourceItem by viewModel.sourceItem.collectAsState()
-    var showProcessedItems by remember(itemId) { mutableStateOf(false) }
+    var showProcessedItems by rememberSaveable(itemId) { mutableStateOf(false) }
     var showAskSheet by remember { mutableStateOf(false) }
     val linkTargets = remember(processedItems, sourceItem) {
         buildLinkTargets(processedItems, sourceItem)
