@@ -10,7 +10,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -26,7 +26,11 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
@@ -50,7 +54,8 @@ fun ComposeMarkdown(
     val palette = LocalPalette.current
 
     val spacing = LocalSpacing.current
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    SelectionContainer {
+        Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
         val lines = markdown.split("\n")
         var inCodeBlock = false
         val codeLines = mutableListOf<String>()
@@ -119,6 +124,7 @@ fun ComposeMarkdown(
         if (inCodeBlock && codeLines.isNotEmpty()) {
             renderCodeBlock(codeLines.joinToString("\n"))
         }
+    }
     }
 }
 
@@ -241,6 +247,10 @@ private fun InlineMarkdownText(
 
     val spacing = LocalSpacing.current
     val effectiveStyle = style ?: TextStyle(color = palette.textPrimary)
+    val linkStyles = TextLinkStyles(style = SpanStyle(color = palette.brand, textDecoration = TextDecoration.Underline))
+    val linkListener = LinkInteractionListener { annotation ->
+        (annotation as? LinkAnnotation.Clickable)?.tag?.let(onLinkClick)
+    }
     val annotated = buildAnnotatedString {
         val all = Regex("(\\*\\*(.+?)\\*\\*)|(\\*(.+?)\\*)|(`([^`]+)`)|(\\[(.+?)\\]\\((.+?)\\))")
         var last = 0
@@ -251,17 +261,15 @@ private fun InlineMarkdownText(
                 m.groups[3] != null -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(m.groups[4]!!.value) }
                 m.groups[5] != null -> withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = palette.bgSubtle)) { append(m.groups[6]!!.value) }
                 m.groups[7] != null -> {
-                    withStyle(SpanStyle(color = palette.brand, textDecoration = TextDecoration.Underline)) {
-                        pushStringAnnotation("link", m.groups[9]!!.value); append(m.groups[8]!!.value); pop()
+                    withLink(LinkAnnotation.Clickable(m.groups[9]!!.value, linkStyles, linkListener)) {
+                        append(m.groups[8]!!.value)
                     }
                 }
             }
         }
         append(text.substring(last))
     }
-    ClickableText(text = annotated, modifier = modifier.fillMaxWidth(), style = effectiveStyle) { offset ->
-        annotated.getStringAnnotations("link", offset, offset).firstOrNull()?.let { onLinkClick(it.item) }
-    }
+    Text(text = annotated, modifier = modifier.fillMaxWidth(), style = effectiveStyle)
 }
 
 fun openFile(context: android.content.Context, uriString: String) {

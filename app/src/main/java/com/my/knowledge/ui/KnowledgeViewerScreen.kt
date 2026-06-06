@@ -12,7 +12,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.ClickableText
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
@@ -31,8 +31,12 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.LinkInteractionListener
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
@@ -87,6 +91,7 @@ fun KnowledgeViewerScreen(
             .fillMaxSize()
             .background(Color.White)
     ) {
+    SelectionContainer {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -234,6 +239,7 @@ fun KnowledgeViewerScreen(
             }
         }
     } // close outer Column
+    } // close SelectionContainer
 
         // Floating "AI 问一问" button. Same look as the rest of the
         // app's screens, but scoped to KNOWLEDGE_ITEM — the model
@@ -364,18 +370,16 @@ private fun InternalLinkText(
     val palette = LocalPalette.current
 
     val spacing = LocalSpacing.current
-    val annotated = remember(text, linkTargets, fallbackAsLink) {
-        buildInternalLinkAnnotatedString(palette, text, linkTargets, fallbackAsLink)
+    val linkStyles = TextLinkStyles(style = SpanStyle(color = palette.brand, fontWeight = FontWeight.SemiBold, textDecoration = TextDecoration.Underline))
+    val linkListener = LinkInteractionListener { annotation ->
+        (annotation as? LinkAnnotation.Clickable)?.tag?.let(onOpenItem)
     }
-    ClickableText(
+    val annotated = remember(text, linkTargets, fallbackAsLink, linkListener) {
+        buildInternalLinkAnnotatedString(palette, text, linkTargets, fallbackAsLink, linkStyles, linkListener)
+    }
+    Text(
         text = annotated,
-        style = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, lineHeight = 22.sp, color = Color(0xFF334155)),
-        onClick = { offset ->
-            annotated.getStringAnnotations(TAG_INTERNAL_LINK, offset, offset)
-                .firstOrNull()
-                ?.item
-                ?.let(onOpenItem)
-        }
+        style = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, lineHeight = 22.sp, color = Color(0xFF334155))
     )
 }
 
@@ -383,19 +387,21 @@ private fun buildInternalLinkAnnotatedString(
     palette: Palette,
     text: String,
     linkTargets: Map<String, String>,
-    fallbackAsLink: Boolean
+    fallbackAsLink: Boolean,
+    linkStyles: TextLinkStyles,
+    linkListener: LinkInteractionListener
 ): AnnotatedString = buildAnnotatedString {
     val regex = Regex("\\[\\[([^\\]]+)]]")
     var cursor = 0
     val matches = regex.findAll(text).toList()
     if (matches.isEmpty()) {
-        appendMaybeLinkedPlainText(palette, text, linkTargets, fallbackAsLink)
+        appendMaybeLinkedPlainText(palette, text, linkTargets, fallbackAsLink, linkStyles, linkListener)
         return@buildAnnotatedString
     }
     matches.forEach { match ->
         append(text.substring(cursor, match.range.first))
         val label = match.groupValues[1].substringBefore("|").trim()
-        appendLinkedLabel(palette, label, linkTargets)
+        appendLinkedLabel(palette, label, linkTargets, linkStyles, linkListener)
         cursor = match.range.last + 1
     }
     append(text.substring(cursor))
@@ -405,22 +411,28 @@ private fun AnnotatedString.Builder.appendMaybeLinkedPlainText(
     palette: Palette,
     text: String,
     linkTargets: Map<String, String>,
-    fallbackAsLink: Boolean
+    fallbackAsLink: Boolean,
+    linkStyles: TextLinkStyles,
+    linkListener: LinkInteractionListener
 ) {
-    if (fallbackAsLink) appendLinkedLabel(palette, text, linkTargets) else append(text)
+    if (fallbackAsLink) appendLinkedLabel(palette, text, linkTargets, linkStyles, linkListener) else append(text)
 }
 
-private fun AnnotatedString.Builder.appendLinkedLabel(palette: Palette, label: String, linkTargets: Map<String, String>) {
+private fun AnnotatedString.Builder.appendLinkedLabel(
+    palette: Palette,
+    label: String,
+    linkTargets: Map<String, String>,
+    linkStyles: TextLinkStyles,
+    linkListener: LinkInteractionListener
+) {
     val targetId = linkTargets[normalizeLinkKey(label)]
     if (targetId == null) {
         append(label)
         return
     }
-    pushStringAnnotation(TAG_INTERNAL_LINK, targetId)
-    withStyle(SpanStyle(color = palette.brand, fontWeight = FontWeight.SemiBold, textDecoration = TextDecoration.Underline)) {
+    withLink(LinkAnnotation.Clickable(targetId, linkStyles, linkListener)) {
         append(label)
     }
-    pop()
 }
 
 private fun buildLinkTargets(processedItems: List<KnowledgeItemEntity>, sourceItem: KnowledgeItemEntity?): Map<String, String> {
