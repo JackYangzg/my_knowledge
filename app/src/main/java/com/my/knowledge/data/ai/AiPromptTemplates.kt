@@ -107,7 +107,7 @@ ${if (schemaHint.isNotBlank()) "The JSON must conform to this schema (field name
 - `tags`: 3-8 short topic tags in $language (e.g. ["分布式系统", "共识算法"]).
 - `entities`: extract 1-10 named things mentioned in the source. Each entry:
     - `name`: official / canonical name
-    - `entityType`: FREE-FORM semantic type. Pick the most specific noun that names what this thing IS — examples include (but are not limited to) Person, Organization, Company, Product, Tool, Dataset, System, Project, Place, Algorithm, Paper, Article, Book, Software, Library, API, Protocol, Standard, Event, Concept. Use your judgment; do not constrain yourself to a fixed list. Use the SAME casing style across the response (TitleCase is recommended for English, 中文直接用中文).
+    - `entityType`: FREE-FORM semantic type (e.g. Person, Algorithm, Paper, Tool). Use the same casing style; 中文用中文.
     - `type`: DEPRECATED alias of `entityType`. Prefer `entityType`; the orchestrator accepts `type` as a fallback for backward compat.
     - `aliases`: optional list of alternative names
     - `description`: 1-2 sentence factual description in $language
@@ -120,7 +120,7 @@ ${if (schemaHint.isNotBlank()) "The JSON must conform to this schema (field name
   - DO NOT include abstract ideas, methods, or theories as entities.
 - `concepts`: extract 1-8 key ideas, methods, mechanisms, principles, or frameworks. Each entry:
     - `name`: stable descriptive noun phrase in $language
-    - `conceptCategory`: FREE-FORM semantic category. Pick the most specific noun that names what kind of idea this IS — examples include (but are not limited to) Theory, Method, Technique, Phenomenon, Principle, Framework, Problem, Pattern, Protocol, Metric, Algorithm, Mechanism, Model, Process, Heuristic. Use your judgment; do not constrain yourself to a fixed list.
+    - `conceptCategory`: FREE-FORM semantic category (e.g. Theory, Method, Pattern, Algorithm, Mechanism).
     - `category`: DEPRECATED alias of `conceptCategory`. Prefer `conceptCategory`; the orchestrator accepts `category` as a fallback.
     - `definition`: 1-2 sentence definition
     - `why_it_matters`: why this concept matters in the source
@@ -136,7 +136,7 @@ ${if (schemaHint.isNotBlank()) "The JSON must conform to this schema (field name
     - `reason`: 1 sentence why
     - `evidenceFragmentIds`: array of fragment ids (can be empty)
     - `confidence`: 0.0-1.0
-  Aim for 3-10 high-signal relations. If entities < 3 or concepts < 3, still produce the relations you can from what you have; don't pad with "related_to" everywhere.
+  Aim for 3-10 relations; don't pad with "related_to".
 - `claims`: core factual claims the source makes. Each:
     - `claim`: the claim text in $language
     - `evidence`: short locator / quote
@@ -157,6 +157,11 @@ ${if (schemaHint.isNotBlank()) "The JSON must conform to this schema (field name
 3. All `name` fields in `entities` and `concepts` are referenced BY STRING in `relations` / `related_*` arrays. Make spelling consistent.
 4. Use empty arrays `[]` for empty collections. Do not omit required fields.
 5. If the source is empty / illegible, still emit the JSON with empty arrays and a short summary explaining why.
+6. There is no
+local entity/concept supplement from local heuristics — the
+`entities` and `concepts` arrays are owned by the LLM. If the
+source is too short, you will preserve those empty arrays rather
+than fabricate entries.
 
 ${if (purpose.isNotBlank()) "## Wiki Purpose (for context)\n$purpose" else ""}
 ${if (currentIndex.isNotBlank()) "## Current Wiki Index (for de-dup hints)\n$currentIndex" else ""}
@@ -208,11 +213,11 @@ ${if (currentIndex.isNotBlank()) "## Current Wiki Index (for de-dup hints)\n$cur
             "",
             "## What to generate",
             "",
-            "1. A source summary page (path from the WIKI_SCHEMA table above, row \"source\")",
-            "2. For academic papers, a paper page in the directory from the WIKI_SCHEMA table, row \"paper\" — with OmegaWiki-style sections: Problem & Context, Key idea, Method, Experiment & Results, Limitations, Open questions, My take, Related.",
-            "3. Entity pages: directory from the WIKI_SCHEMA table, row \"entity\" (or schema-defined typed pages for key named things).",
-            "4. Concept pages: directory from the WIKI_SCHEMA table, row \"concept\" (or schema-defined typed pages for key ideas, methods, techniques).",
-            "5. For academic papers, method pages in the directory from the WIKI_SCHEMA table, row \"method\" — only for named, reusable, citable techniques.",
+            "1. A source summary page at **`$summaryPath`** (where `$sourceBaseName` is the filename without extension)",
+            "2. For academic papers, a paper page in **`wiki/papers/`** — with OmegaWiki-style sections: Problem & Context, Key idea, Method, Experiment & Results, Limitations, Open questions, My take, Related.",
+            "3. Entity pages in **`wiki/entities/`** (or schema-defined typed pages for key named things).",
+            "4. Concept pages in **`wiki/concepts/`** (or schema-defined typed pages for key ideas, methods, techniques).",
+            "5. For academic papers, method pages in **`wiki/methods/`** — only for named, reusable, citable techniques.",
             "6. An updated wiki/index.md — add new entries to existing categories, preserve all existing entries",
             "7. A log entry for wiki/log.md (just the new entry to append, format: ## [YYYY-MM-DD] ingest | Title)",
             "8. An updated wiki/overview.md — a high-level summary of what the entire wiki covers, updated to reflect the newly ingested source. This should be a comprehensive 2-5 paragraph overview of ALL topics in the wiki, not just the new source.",
