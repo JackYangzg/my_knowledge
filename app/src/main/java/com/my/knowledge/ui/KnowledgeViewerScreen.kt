@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -28,6 +29,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.AnnotatedString
@@ -182,6 +186,7 @@ fun KnowledgeViewerScreen(
                     chunkLongMarkdown(md, maxChars = md.length, chunkSize = 6_000)
                 }
                 val listState = rememberLazyListState()
+                Box(modifier = Modifier.fillMaxSize()) {
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxSize()
@@ -232,6 +237,37 @@ fun KnowledgeViewerScreen(
                             }
                         }
                     }
+                }
+                val indicator = listState.scrollIndicatorState
+                if (indicator != null && indicator.contentSize > indicator.viewportSize) {
+                    Canvas(
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .fillMaxHeight()
+                            .width(4.dp)
+                            .padding(end = 2.dp)
+                    ) {
+                        val contentSize = indicator.contentSize.toFloat()
+                        val viewportSize = indicator.viewportSize.toFloat()
+                        val scrollOffset = indicator.scrollOffset.toFloat()
+                        val containerHeight = size.height
+                        val thumbHeight = (viewportSize / contentSize) * containerHeight
+                        val maxScroll = contentSize - viewportSize
+                        val thumbOffsetY = if (maxScroll > 0) {
+                            (scrollOffset / maxScroll) * (containerHeight - thumbHeight)
+                        } else 0f
+                        drawRoundRect(
+                            color = Color(0xFFCBD5E1),
+                            cornerRadius = CornerRadius(2.dp.toPx())
+                        )
+                        drawRoundRect(
+                            color = Color(0xFF64748B),
+                            topLeft = Offset(0f, thumbOffsetY),
+                            size = Size(size.width, thumbHeight),
+                            cornerRadius = CornerRadius(2.dp.toPx())
+                        )
+                    }
+                }
                 }
             }
         }
