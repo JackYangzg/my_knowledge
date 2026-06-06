@@ -68,6 +68,11 @@ sealed class Route(val path: String) {
     data object KnowledgeItemDetail : Route("knowledge_item/{kbId}/{itemId}") {
         fun create(kbId: String, itemId: String) = "knowledge_item/${Uri.encode(kbId)}/${Uri.encode(itemId)}"
     }
+    data object NewNote : Route("new_note?kbName={kbName}") {
+        fun create(kbName: String? = null): String =
+            if (kbName.isNullOrBlank()) "new_note"
+            else "new_note?kbName=${Uri.encode(kbName)}"
+    }
     data object Ask : Route("ask/{scopeType}/{scopeId}/{title}") {
         fun create(scopeType: String, scopeId: String, title: String) =
             "ask/${Uri.encode(scopeType)}/${Uri.encode(scopeId)}/${Uri.encode(title)}"
@@ -277,7 +282,8 @@ fun KnowledgeApp() {
                         allKnowledgeBases = kbBases,
                         onBack = { navController.popBackStack() },
                         onOpenItem = { itemId -> navController.navigate(Route.KnowledgeItemDetail.create(kbId, itemId)) },
-                        onOpenIntermediate = { baseId -> navController.navigate(Route.IntermediateData.create(baseId)) }
+                        onOpenIntermediate = { baseId -> navController.navigate(Route.IntermediateData.create(baseId)) },
+                        onOpenNewNote = { kbName -> navController.navigate(Route.NewNote.create(kbName)) }
                     )
                 }
                 composable(
@@ -354,6 +360,30 @@ fun KnowledgeApp() {
                         viewModel = askViewModel,
                         itemTitle = title,
                         onBack = { navController.popBackStack() }
+                    )
+                }
+                composable(
+                    route = Route.NewNote.path,
+                    arguments = listOf(navArgument("kbName") {
+                        type = NavType.StringType
+                        nullable = true
+                        defaultValue = null
+                    })
+                ) { entry ->
+                    val rawKbName = entry.arguments?.getString("kbName")
+                    val initialKbName = rawKbName?.takeIf { it.isNotBlank() } ?: "灵感空间"
+                    val kbBases by homeViewModel.knowledgeBases.collectAsState()
+                    val resolvedKbName = kbBases.find { it.name == initialKbName }?.name ?: initialKbName
+                    // T1: keyed on initialKbName — re-entering with a different
+                    // KB name resets stale content; same KB keeps the in-flight
+                    // edit (no-op since createNewNote() sees the same flag).
+                    LaunchedEffect(initialKbName) {
+                        noteViewModel.createNewNote()
+                    }
+                    ReusableNoteEditor(
+                        viewModel = noteViewModel,
+                        initialKbName = resolvedKbName,
+                        onDismiss = { navController.popBackStack() }
                     )
                 }
             }

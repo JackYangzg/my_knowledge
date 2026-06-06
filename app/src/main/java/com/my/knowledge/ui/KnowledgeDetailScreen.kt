@@ -56,7 +56,8 @@ fun KnowledgeDetailScreen(
     allKnowledgeBases: List<KnowledgeBaseEntity>,
     onBack: () -> Unit,
     onOpenItem: (String) -> Unit = {},
-    onOpenIntermediate: (String) -> Unit = {}
+    onOpenIntermediate: (String) -> Unit = {},
+    onOpenNewNote: (String) -> Unit = {}
 ) {
 
     val palette = LocalPalette.current
@@ -163,6 +164,22 @@ fun KnowledgeDetailScreen(
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // "+" FAB — open the ReusableNoteEditor with this KB preselected.
+                    // Hidden for the recycle bin (it's a deletion target, not a
+                    // user-facing knowledge base).
+                    if (currentKb?.type != "recyclebin") {
+                        IconButton(
+                            onClick = { onOpenNewNote(currentKb?.name ?: kbName) },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Add,
+                                contentDescription = "新建知识",
+                                tint = palette.brand,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
                     if (!currentKbId.isNullOrBlank()) {
                         TextButton(
                             onClick = { onOpenIntermediate(currentKbId) },

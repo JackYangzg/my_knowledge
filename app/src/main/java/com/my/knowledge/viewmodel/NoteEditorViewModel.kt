@@ -63,16 +63,20 @@ class NoteEditorViewModel(
 
     private fun loadOrCreateNote() {
         viewModelScope.launch {
+            // T1: respect pendingCreateNewNote flag — when Route.NewNote
+            // enters, it fires createNewNote() which sets this flag; the
+            // init-time draft load should NOT clobber the new blank state.
+            if (pendingCreateNewNote) {
+                pendingCreateNewNote = false
+                currentNote = currentNote ?: createNoteUseCase()
+                return@launch
+            }
             noteRepository.observeCurrentDraft().firstOrNull()?.let { draft ->
                 currentNote = draft
                 val savedTitle = draft.title ?: ""
                 val savedContent = noteRepository.readNoteContent(draft.id)
                 title = savedTitle
                 content = savedContent
-                
-                // If it was already saved to a knowledge base, it's not dirty initially
-                // Actually, currentNote.id and savedKnowledgeItemId are different.
-                // We'd need to track if THIS draft has been pushed.
             } ?: run {
                 currentNote = createNoteUseCase()
             }
@@ -219,6 +223,8 @@ class NoteEditorViewModel(
         inspirationThreadLogs.value.firstOrNull()?.createdAt
 
     fun createNewNote() {
+        // T1: signal init's loadOrCreateNote to skip the prior-draft load.
+        pendingCreateNewNote = true
         viewModelScope.launch {
             currentNote = createNoteUseCase()
             title = ""
@@ -230,6 +236,10 @@ class NoteEditorViewModel(
             savedKnowledgeItemId = null
         }
     }
+
+    // T1: When a new note is requested, init's loadOrCreateNote() should
+    // NOT load the prior session's draft — the new note must start clean.
+    private var pendingCreateNewNote = false
 
     fun markVoiceTranscriptionContent() {
         hasVoiceTranscriptionContent = true
@@ -385,19 +395,25 @@ class NoteEditorViewModel(
         val original = content.trim()
         if (original.isBlank()) return Result.failure(IllegalStateException("内容为空，无法生成标题"))
 
-        val generated = AiGateway().complete(
-            systemPrompt = "你是一个起标题专家。请根据用户提供的内容，生成一个简短、有吸引力且准确的标题（通常在15字以内）。只输出标题文字，不要包含引号、解释或其他修饰。",
-            userMessage = "内容：\n$original"
-        ).trim().cleanModelOutput().removePrefix("\"").removeSuffix("\"")
+        return try {
+            val generated = AiGateway().complete(
+                systemPrompt = "你是一个起标题专家。请根据用户提供的内容，生成一个简短、有吸引力且准确的标题（通常在15字以内）。只输出标题文字，不要包含引号、解释或其他修饰。",
+                userMessage = "内容：\n$original"
+            ).trim().cleanModelOutput().removePrefix("\"").removeSuffix("\"")
 
-        val failurePrefixes = listOf("[配置缺失]", "[AI 调用失败]", "[连接失败]", "[超时]", "[AI 调用异常]", "[API 错误]", "[解析失败]")
-        if (failurePrefixes.any { generated.startsWith(it) }) {
-            return Result.failure(IllegalStateException(generated))
+            val failurePrefixes = listOf("[配置缺失]", "[AI 调用失败]", "[连接失败]", "[超时]", "[AI 调用异常]", "[API 错误]", "[解析失败]")
+            if (failurePrefixes.any { generated.startsWith(it) }) {
+                return Result.failure(IllegalStateException(generated))
+            }
+
+            title = generated
+            forceSaveDraft()
+            Result.success(generated)
+        } catch (e: Exception) {
+            // T4: mirror polishContent pattern; otherwise aiActionStatus
+            // gets stuck on "标题生成中" forever on network errors.
+            Result.failure(e)
         }
-
-        title = generated
-        forceSaveDraft()
-        return Result.success(generated)
     }
 
     suspend fun polishContent(): Result<String> {
