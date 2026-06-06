@@ -33,6 +33,8 @@ import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.data.db.entity.KnowledgeBaseEntity
 import com.my.knowledge.viewmodel.AskViewModel
 import com.my.knowledge.ui.ComposeMarkdown
+import com.my.knowledge.ui.KnowledgeManager
+import com.my.knowledge.ui.ReasoningEffort
 import androidx.compose.ui.res.stringResource
 import com.my.knowledge.R
 import com.my.knowledge.ui.theme.LocalPalette
@@ -562,7 +564,7 @@ fun AiMessageContent(
 ) {
     val palette = LocalPalette.current
     val spacing = LocalSpacing.current
-    if (isUser) {
+    if (!isUser) {
         // Models differ on how they delimit their reasoning:
         //   - <think>...</think>   (DeepSeek-R1, Qwen-QwQ, OpenAI o-series)
         //   - <thinking>...</thinking>
@@ -578,6 +580,13 @@ fun AiMessageContent(
         val thinkPart = parsed.think
         val actualContent = parsed.body
         val isStreaming = parsed.thinkingInProgress
+        // Gate the collapsible "思考过程" surface on the active reasoning
+        // effort: when the user has selected NONE the model is asked not
+        // to emit a reasoning block, so any stray <think> tag should be
+        // hidden from the UI (matches the user's mental model of
+        // "thinking mode off").
+        val showThinkingSection = thinkPart != null &&
+            KnowledgeManager.modelConfig.reasoningEffort != ReasoningEffort.NONE
 
         Column(modifier = modifier) {
             // Collapsible "思考过程" surface. Visible only when the model
@@ -585,7 +594,7 @@ fun AiMessageContent(
             // is a single tap, expanded state persists per-message via
             // rememberSaveable so the user can leave it open while
             // scrolling.
-            if (thinkPart != null) {
+            if (showThinkingSection) {
                 var expanded by rememberSaveable(messageKey) { mutableStateOf(false) }
                 Surface(
                     onClick = { expanded = !expanded },
@@ -630,6 +639,17 @@ fun AiMessageContent(
                 )
             }
         }
+    } else {
+        // User messages render on a brand-tinted bubble (set by the
+        // caller, MessageBubble), so the text has to be white for
+        // contrast. No markdown rendering here — user input is plain
+        // text and shouldn't go through the think/markdown pipeline.
+        Text(
+            text = content,
+            color = Color.White,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = modifier,
+        )
     }
 }
 
