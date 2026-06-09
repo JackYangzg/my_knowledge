@@ -44,8 +44,7 @@ fun KnowledgeScreen(
     onOpenContext: () -> Unit,
     onOpenFragments: () -> Unit,
     onOpenKbDetail: (String) -> Unit,
-    onOpenKbManage: () -> Unit,
-    onOpenNewNote: (String) -> Unit = {}
+    onOpenKbManage: () -> Unit
 ) {
     val palette = LocalPalette.current
     val spacing = LocalSpacing.current
@@ -215,19 +214,8 @@ fun KnowledgeScreen(
                 }
             )
         }
-        // "+" FAB: 从主页快速新建知识到任意 KB(优先当前第一可用 KB)。
-        val nonRecycle = knowledgeBases.firstOrNull { it.type != "recyclebin" }
-        if (nonRecycle != null) {
-            FloatingActionButton(
-                onClick = { onOpenNewNote(nonRecycle.name) },
-                containerColor = palette.brand,
-                contentColor = Color.White,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(end = 20.dp, bottom = 20.dp)
-            ) {
-                Icon(Icons.Default.Add, contentDescription = "新建知识")
-            }
-        }
+        // Home KB-list + FAB removed per design doc §2.A (2026-06-09).
+        // 创建知识入口移至 KB 详情页 + FAB (KnowledgeDetailScreen) —
+        // Material Design 推荐 primary action 放在详情内,不抢导航页。
     }
 }

@@ -168,8 +168,7 @@ fun KnowledgeApp() {
                         onOpenContext = { navController.navigate(Route.Context.path) },
                         onOpenFragments = { navController.navigate(Route.Fragments.path) },
                         onOpenKbDetail = { kbId -> navController.navigate(Route.KnowledgeBaseDetail.create(kbId)) },
-                        onOpenKbManage = { navController.navigate(Route.Manage.path) },
-                        onOpenNewNote = { kbName -> navController.navigate(Route.NewNote.create(kbName)) }
+                        onOpenKbManage = { navController.navigate(Route.Manage.path) }
                     )
                 }
                 composable(Route.Inspiration.path) {
