@@ -56,7 +56,12 @@ data class ProcessingTaskLogEntity(
 
 @Entity(
     tableName = "ask_citation",
-    indices = [Index("messageId"), Index("itemId"), Index("fragmentId")]
+    indices = [
+        Index("messageId"),
+        Index("itemId"),
+        Index("fragmentId"),
+        Index("sourceKnowledgeBaseId")
+    ]
 )
 data class AskCitationEntity(
     @PrimaryKey val id: String,
@@ -65,11 +70,17 @@ data class AskCitationEntity(
     val fragmentId: String?,
     val quote: String,
     val label: String,
-    val createdAt: Long
+    val createdAt: Long,
+    // v13: 来源 KB 标识 — CitationRow 显示「知识库名 · 条目标题」用
+    // null = 老数据/已删除 KB, UI 友好降级显示「(已删除)」
+    val sourceKnowledgeBaseId: String? = null,
+    val sourceKnowledgeBaseName: String? = null
 ) {
     companion object {
         const val LABEL_SOURCE = "来自原文"
         const val LABEL_INFERENCE = "AI推理"
         const val LABEL_INSUFFICIENT = "信息不足"
+        // v13: 共现 tag 关系图扩展的引用,UI 灰蓝色区分于 LABEL_SOURCE
+        const val LABEL_RELATED = "相关"
     }
 }

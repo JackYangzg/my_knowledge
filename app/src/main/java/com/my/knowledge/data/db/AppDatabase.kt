@@ -36,7 +36,7 @@ import com.my.knowledge.data.db.entity.*
         KnowledgeFragmentChainEntity::class,
         KnowledgeFragmentGapEntity::class
     ],
-    version = 12,
+    version = 13,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -77,7 +77,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun buildDatabase(context: Context): AppDatabase {
             return Room.databaseBuilder(context, AppDatabase::class.java, DATABASE_NAME)
-                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                .addMigrations(MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                 .addCallback(FtsDiacriticsCallback)
                 .build()
         }
@@ -538,6 +538,37 @@ abstract class AppDatabase : RoomDatabase() {
                     "MISSING_TAGS", "MEDIUM", "完善知识条目元数据以提高脉络完整度"
                 )
             }
+        }
+    }
+
+    /**
+     * v12 -> v13: AI 全库对话来源透明
+     *
+     * 给 `ask_citation` 加两个 nullable 列:
+     * - `sourceKnowledgeBaseId` — 引用的 KB id,UI 显示「知识库名 · 条目标题」
+     * - `sourceKnowledgeBaseName` — 同上的 KB 名,避免每次渲染都 join 一次
+     *
+     * 老数据 / 已删除 KB 这两列都是 null,UI 友好降级显示「(已删除)」。
+     * 不做 destructive migration (会丢所有 chat 历史),不做 backfill (nullable 即可)。
+     *
+     * 同时给 `sourceKnowledgeBaseId` 加索引,为后续「列出某 KB 的所有引用」查询做铺垫。
+     */
+    val MIGRATION_12_13 = object : Migration(12, 13) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.addColumnIfMissing(
+                "ask_citation",
+                "sourceKnowledgeBaseId",
+                "TEXT"
+            )
+            db.addColumnIfMissing(
+                "ask_citation",
+                "sourceKnowledgeBaseName",
+                "TEXT"
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_ask_citation_sourceKnowledgeBaseId` " +
+                    "ON `ask_citation` (`sourceKnowledgeBaseId`)"
+            )
         }
     }
 
