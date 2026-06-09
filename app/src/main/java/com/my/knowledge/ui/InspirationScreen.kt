@@ -289,7 +289,15 @@ fun InspirationScreen(
         voiceService.startRealtimeTranscription()
     }
 
+    // T6: 200ms 防双击 — voiceService.stopRecording() 是 async,UI 上 isRecording
+    // 翻转需要 50-200ms。用户单击节奏若被识别为系统级 double-tap 抖动,第二次 tap
+    // 会被误判。简单 guard: 200ms 内重复点击视为同一 tap。
+    var lastVoiceTapMs = 0L
+
     fun stopSpeechInput() {
+        val now = System.currentTimeMillis()
+        if (now - lastVoiceTapMs < 200) return  // debounce
+        lastVoiceTapMs = now
         if (voiceState.isRecording) {
             commitVoiceTranscript(voiceState.partialTranscript)
             voiceService.stopRecording()

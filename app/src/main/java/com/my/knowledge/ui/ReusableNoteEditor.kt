@@ -241,7 +241,14 @@ fun ReusableNoteEditor(
         voiceService.startRealtimeTranscription()
     }
 
+    // T6: 200ms 防双击 (跟 InspirationScreen 同步)。根因可能是 stopRecording() async
+    // 导致 voiceState.isRecording 翻转 50-200ms,期间用户单击被识别成 start+stop。
+    var lastVoiceTapMs = 0L
+
     fun stopSpeechInput() {
+        val now = System.currentTimeMillis()
+        if (now - lastVoiceTapMs < 200) return  // debounce
+        lastVoiceTapMs = now
         if (voiceState.isRecording) {
             commitVoiceTranscript(voiceState.partialTranscript)
             voiceService.stopRecording()
