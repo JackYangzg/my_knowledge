@@ -138,4 +138,7 @@ data class ModelConfig(
     val voiceClusterId: String = "volc_ent_asr_streaming",
     val debugPromptEnabled: Boolean = false,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
+    // AI 全库对话检索开关 (T3 AskRetrievalPipeline 用)
+    val askGraphEnabled: Boolean = true,   // 共现 tag 关系图扩展,默认开
+    val askWebEnabled: Boolean = false,    // web 搜索,默认关(成本+幻觉)
 )
