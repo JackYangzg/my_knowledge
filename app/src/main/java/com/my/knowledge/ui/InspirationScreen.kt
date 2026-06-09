@@ -9,7 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.*
@@ -32,7 +32,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -100,11 +99,6 @@ fun InspirationScreen(
     val voiceState by voiceService.stateFlow.collectAsState()
     
     var preVoiceContent by remember { mutableStateOf("") }
-    var isPressingVoiceButton by remember { mutableStateOf(false) }
-    var voicePressProgress by remember { mutableStateOf(0f) }
-    // Held by the press-progress coroutine to tell the gesture loop that the
-    // user kept the button down long enough to actually stop the recording.
-    var voiceStopTriggered by remember { mutableStateOf(false) }
     var sessionCommittedText by remember { mutableStateOf("") }
     // 上次 commit 时服务端 partial 的快照. 用来计算"自上次 commit 以来
     // 服务端新追加的部分" (delta), 避免把服务端用来纠错的累积上文重写一遍.
@@ -536,119 +530,30 @@ fun InspirationScreen(
 
         Surface(
             shape = CircleShape,
-            color = if (voiceState.isRecording) {
-                if (isPressingVoiceButton) palette.semanticError else palette.borderBrand
-            } else palette.brand,
-            contentColor = if (voiceState.isRecording) {
-                if (isPressingVoiceButton) Color.White else palette.brand
-            } else Color.White,
+            color = if (voiceState.isRecording) palette.borderBrand else palette.brand,
+            contentColor = if (voiceState.isRecording) palette.brand else Color.White,
             shadowElevation = 12.dp,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .imePadding()
                 .padding(bottom = 24.dp, end = 24.dp)
                 .size(72.dp)
-                .pointerInput(Unit) {
-                    // Key = Unit (constant) so this coroutine does NOT
-                    // get cancelled+restarted when voiceState.isRecording
-                    // flips. Old code keyed on isRecording, which meant:
-                    // first press → isRecording=false → fires
-                    // startSpeechInput() → key changes → coroutine
-                    // restarts → the still-pressed finger is treated as a
-                    // "new" gesture only on the second press. Net effect:
-                    // user had to long-press TWICE (first to start,
-                    // second to actually trigger the hold timer). Now
-                    // both start and hold-timer run in the same gesture.
-                    awaitEachGesture {
-                        awaitFirstDown()
-                        // One press covers both start and hold. If the
-                        // recording isn't already on (cold first press),
-                        // kick it off here.
-                        if (!voiceState.isRecording) {
-                            val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                            if (hasPermission) {
-                                startSpeechInput()
-                            } else {
-                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                return@awaitEachGesture
-                            }
-                        }
-
-                        // Start the hold timer unconditionally.
-                        isPressingVoiceButton = true
-                        voicePressProgress = 0f
-                        voiceStopTriggered = false
-                        val startedAt = System.currentTimeMillis()
-                        val stopThresholdMs = 1500L
-
-                        val progressJob = scope.launch {
-                            while (isPressingVoiceButton) {
-                                val elapsed = System.currentTimeMillis() - startedAt
-                                voicePressProgress = (elapsed.toFloat() / stopThresholdMs)
-                                    .coerceIn(0f, 1f)
-                                if (elapsed >= stopThresholdMs) {
-                                    voiceStopTriggered = true
-                                    // Held long enough — flag set; keep
-                                    // ticking the progress ring until
-                                    // the user releases.
-                                }
-                                delay(16)
-                            }
-                        }
-
-                        // Block until the user lifts their finger (or
-                        // the gesture is cancelled by the system).
-                        val up = waitForUpOrCancellation()
-                        progressJob.cancel()
-                        isPressingVoiceButton = false
-                        val heldLongEnough = voiceStopTriggered
-                        voiceStopTriggered = false
-                        voicePressProgress = 0f
-
-                        if (up == null) {
-                            // System cancelled the gesture (e.g. an
-                            // interrupting notification). Stop cleanly.
-                            stopSpeechInput()
-                            return@awaitEachGesture
-                        }
-
-                        // Release always stops the recording — the
-                        // whole point of the press is "I'm talking,
-                        // record me; I let go, stop". ONE press = start
-                        // + stop. The 1.5s threshold is just a UX floor
-                        // (visual progress ring) so accidental brushes
-                        // don't silently record.
+                .clickable {
+                    if (voiceState.isRecording) {
                         stopSpeechInput()
-                        if (heldLongEnough) {
-                            Toast.makeText(
-                                context,
-                                "已达到停止时长，录音已结束",
-                                Toast.LENGTH_SHORT
-                            ).show()
+                    } else {
+                        val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                        if (hasPermission) {
+                            startSpeechInput()
+                        } else {
+                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
                         }
-                        // No toast for early-release — the user already
-                        // feels the button release; spamming
-                        // "请长按结束录音" was the old behavior that
-                        // prompted this fix.
                     }
                 }
         ) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                 if (voiceState.isRecording) {
-                    if (isPressingVoiceButton) {
-                        // Show the in-progress ring while the user is holding
-                        // the button. The ring fills from 0 → 1 over 1.5s; when
-                        // it reaches 1 the recording stops and the icon swaps
-                        // back to the resting Mic.
-                        CircularProgressIndicator(
-                            progress = { voicePressProgress },
-                            modifier = Modifier.size(40.dp),
-                            color = Color.White,
-                            strokeWidth = 3.dp
-                        )
-                    } else {
-                        CircularProgressIndicator(modifier = Modifier.size(36.dp), color = palette.brand, strokeWidth = 3.dp)
-                    }
+                    CircularProgressIndicator(modifier = Modifier.size(36.dp), color = palette.brand, strokeWidth = 3.dp)
                 } else {
                     Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(36.dp))
                 }

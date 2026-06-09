@@ -8,9 +8,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -105,9 +103,6 @@ fun ReusableNoteEditor(
     var preVoiceContent by remember { mutableStateOf("") }
     var sessionCommittedText by remember { mutableStateOf("") }
     var lastPartialAtCommit by remember { mutableStateOf("") }
-    var isPressingVoiceButton by remember { mutableStateOf(false) }
-    var voicePressProgress by remember { mutableStateOf(0f) }
-    var voiceStopTriggered by remember { mutableStateOf(false) }
 
     var contentValue by remember {
         mutableStateOf(TextFieldValue(content, selection = TextRange(content.length)))
@@ -492,41 +487,16 @@ fun ReusableNoteEditor(
                 .imePadding()
                 .padding(bottom = 24.dp, end = 24.dp)
                 .size(72.dp)
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown()
-                        if (!voiceState.isRecording) {
-                            val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-                            if (hasPermission) {
-                                startSpeechInput()
-                            } else {
-                                audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-                                return@awaitEachGesture
-                            }
-                        }
-                        isPressingVoiceButton = true
-                        voicePressProgress = 0f
-                        voiceStopTriggered = false
-                        val startedAt = System.currentTimeMillis()
-                        val stopThresholdMs = 1500L
-                        val progressJob = scope.launch {
-                            while (isPressingVoiceButton) {
-                                val elapsed = System.currentTimeMillis() - startedAt
-                                voicePressProgress = (elapsed.toFloat() / stopThresholdMs).coerceIn(0f, 1f)
-                                if (elapsed >= stopThresholdMs) voiceStopTriggered = true
-                                delay(16)
-                            }
-                        }
-                        val up = waitForUpOrCancellation()
-                        progressJob.cancel()
-                        isPressingVoiceButton = false
-                        voiceStopTriggered = false
-                        voicePressProgress = 0f
-                        if (up == null) {
-                            stopSpeechInput()
-                            return@awaitEachGesture
-                        }
+                .clickable {
+                    if (voiceState.isRecording) {
                         stopSpeechInput()
+                    } else {
+                        val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                        if (hasPermission) {
+                            startSpeechInput()
+                        } else {
+                            audioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
                     }
                 }
         ) {
