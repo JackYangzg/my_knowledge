@@ -318,9 +318,19 @@ private fun CitationRow(citation: AskCitationEntity) {
     val palette = LocalPalette.current
 
     val spacing = LocalSpacing.current
+    // T5: 来源透明 — 显示「KB 名」让用户一眼看出引用出处
+    // 老数据 / 已删除 KB 时降级显示「(已删除)」
+    val sourceKbName = citation.sourceKnowledgeBaseName?.takeIf { it.isNotBlank() }
+    val titlePrefix = if (citation.itemId != null) {
+        val kbName = sourceKbName ?: "(已删除)"
+        "〖${citation.label}〗 $kbName"
+    } else {
+        "〖${citation.label}〗"
+    }
     Surface(
         color = when (citation.label) {
             AskCitationEntity.LABEL_SOURCE -> palette.brandSubtle
+            AskCitationEntity.LABEL_RELATED -> Color(0xFFEFF6FF)  // 灰蓝色,T5 与 SOURCE 区分
             AskCitationEntity.LABEL_INFERENCE -> Color(0xFFFFF7ED)
             else -> palette.semanticErrorBg
         },
@@ -329,7 +339,8 @@ private fun CitationRow(citation: AskCitationEntity) {
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
             Text(
-                "〖${citation.label}〗${citation.fragmentId?.let { " 片段 ${it.take(8)}" } ?: ""}", style = MaterialTheme.typography.labelSmall,
+                titlePrefix + (citation.fragmentId?.let { " 片段 ${it.take(8)}" } ?: ""),
+                style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = palette.textPrimary
             )

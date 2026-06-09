@@ -413,7 +413,7 @@ class AskViewModel(
     private suspend fun hydrateItems(results: List<KnowledgeSearchResult>): List<KnowledgeItemEntity> =
         results.mapNotNull { knowledgeRepository.getItemById(it.itemId) }.distinctBy { it.id }
 
-    private fun buildCitations(
+    private suspend fun buildCitations(
         messageId: String,
         results: List<KnowledgeSearchResult>,
         items: List<KnowledgeItemEntity>,
@@ -433,6 +433,11 @@ class AskViewModel(
                 )
             )
         }
+        // T4: 批取 KB 名称 (避免 N+1)
+        val kbIds = items.map { it.knowledgeBaseId }.distinct()
+        val kbNameMap: Map<String, String> = kbIds.associateWith { kbId ->
+            knowledgeRepository.getBaseById(kbId)?.name ?: "(已删除)"
+        }
         val resultCitations = results.map { result ->
             AskCitationEntity(
                 id = UUID.randomUUID().toString(),
@@ -441,7 +446,9 @@ class AskViewModel(
                 fragmentId = result.fragmentId,
                 quote = result.snippet.take(240),
                 label = AskCitationEntity.LABEL_SOURCE,
-                createdAt = now
+                createdAt = now,
+                sourceKnowledgeBaseId = result.knowledgeBaseId,
+                sourceKnowledgeBaseName = kbNameMap[result.knowledgeBaseId]
             )
         }
         return resultCitations.ifEmpty {
@@ -453,7 +460,9 @@ class AskViewModel(
                     fragmentId = null,
                     quote = item.contentMarkdown.take(240),
                     label = AskCitationEntity.LABEL_SOURCE,
-                    createdAt = now
+                    createdAt = now,
+                    sourceKnowledgeBaseId = item.knowledgeBaseId,
+                    sourceKnowledgeBaseName = kbNameMap[item.knowledgeBaseId]
                 )
             }
         } + AskCitationEntity(
