@@ -4,9 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.my.knowledge.data.ai.AiPromptTemplates
 import com.my.knowledge.data.ai.AiGateway
+import com.my.knowledge.data.ai.AskRetrievalPipeline
 import com.my.knowledge.data.ai.AiTextCleaner
 import com.my.knowledge.data.ai.AiTextCleaner.cleanModelOutput
 import com.my.knowledge.data.ai.ContentType
+import com.my.knowledge.data.ai.RetrievalHit
 import com.my.knowledge.data.ai.ScopeType
 import com.my.knowledge.ui.KnowledgeManager
 import com.my.knowledge.data.db.entity.AskCitationEntity
@@ -28,6 +30,11 @@ class AskViewModel(
     private val knowledgeRepository: KnowledgeRepository,
     private val searchEngine: SearchEngine
 ) : ViewModel() {
+
+    // T3: 多源检索 pipeline (跨库 + 共现 tag 关系图 + 可选 web)
+    private val retrievalPipeline = AskRetrievalPipeline(searchEngine, knowledgeRepository)
+    // 暴露 modelConfig 以便取 askGraphEnabled / askWebEnabled 开关
+    private val modelConfig get() = KnowledgeManager.modelConfig
 
     private val _searchQuery = MutableStateFlow("")
     val searchResults: StateFlow<List<KnowledgeItemEntity>> = _searchQuery
@@ -183,8 +190,28 @@ class AskViewModel(
             knowledgeRepository.createMessage(userMsg)
             _messages.value = _messages.value + userMsg
 
-            val relevantResults = searchRelevantResults(question)
-            val relevantItems = hydrateItems(relevantResults)
+            // T3: 用 AskRetrievalPipeline 替 searchRelevantResults
+            // (跨库 + 共现 tag 关系图 + 可选 web,AskRetrievalPipeline.kt:80-105)
+            val retrievalHits = retrievalPipeline.search(
+                question = question,
+                scopeType = _currentScopeType.value,
+                scopeId = _currentScopeId.value,
+                askGraphEnabled = modelConfig.askGraphEnabled,
+                askWebEnabled = modelConfig.askWebEnabled,
+            )
+            val relevantItems: List<KnowledgeItemEntity> = retrievalHits.map { it.item }
+            val relevantResults: List<KnowledgeSearchResult> = relevantItems.map { item ->
+                KnowledgeSearchResult(
+                    itemId = item.id,
+                    fragmentId = null,
+                    knowledgeBaseId = item.knowledgeBaseId,
+                    title = item.title,
+                    snippet = item.contentMarkdown,
+                    sourceType = item.sourceType,
+                    score = 1f,
+                    matchType = "pipeline"
+                )
+            }
             val debugPrompt = buildAskPrompt(question, relevantResults, relevantItems, previousMessages)
             if (KnowledgeManager.modelConfig.debugPromptEnabled) {
                 _debugPrompts.value = _debugPrompts.value + (userMsg.id to debugPrompt)
