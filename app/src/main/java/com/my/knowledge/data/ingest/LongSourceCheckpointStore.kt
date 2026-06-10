@@ -80,10 +80,29 @@ class LongSourceCheckpointStore(
             if (raw.isBlank()) return null
             val parsed = LongSourceCheckpointJson.decode(raw) ?: return null
             if (!isCompatible(parsed, params)) return null
+            if (isStale(parsed)) return null
             parsed
         } catch (e: Exception) {
             null
         }
+    }
+
+    /**
+     * 7-day TTL on checkpoints. Mirrors the design doc §5 spec.
+     *
+     * Legacy pre-TTL files carry `updatedAt = 0`; we treat that as
+     * "never stale" so the first read after this code lands doesn't
+     * mass-purge every existing user's in-flight long-source work.
+     * (Once a legacy file is rewritten by the orchestrator with a
+     * real `updatedAt`, it joins the normal TTL cycle.)
+     *
+     * Clock-jitter safety: we use strict greater-than so a checkpoint
+     * written at exactly the boundary is treated as fresh.
+     */
+    private fun isStale(checkpoint: LongSourceCheckpoint): Boolean {
+        if (checkpoint.updatedAt <= 0L) return false  // legacy: skip TTL
+        val ageMs = System.currentTimeMillis() - checkpoint.updatedAt
+        return ageMs > MAX_AGE_MS
     }
 
     /**
@@ -128,6 +147,10 @@ class LongSourceCheckpointStore(
     companion object {
         const val PROGRESS_SUBDIR = ".my-knowledge/ingest-progress"
         const val CHECKPOINT_VERSION = 1
+        /** Checkpoint TTL. After this many ms, load() returns null so the
+         *  orchestrator restarts from chunk1 instead of resuming a long-
+         *  stale run. Design doc §5 spec. */
+        const val MAX_AGE_MS: Long = 7L * 24 * 60 * 60 * 1000  // 7 days
 
         /**
          * Hex SHA-256 of the source content. Used in the checkpoint
