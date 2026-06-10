@@ -187,7 +187,7 @@ class WikiPageCompiler {
             )
         }
 
-        return pages
+        return pages.map { it.copy(markdown = Sanitize.sanitize(it.markdown)) }
     }
 
     /**
@@ -248,7 +248,7 @@ class WikiPageCompiler {
                 sourceTraceJson = sourceTrace(source, parsed = null, analysis, "wiki/concepts/${concept.name.slug()}.md")
             )
         }
-        return pages
+        return pages.map { it.copy(markdown = Sanitize.sanitize(it.markdown)) }
     }
 
     /**
