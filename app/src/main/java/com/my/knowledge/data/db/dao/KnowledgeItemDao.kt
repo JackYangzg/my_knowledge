@@ -205,6 +205,25 @@ interface KnowledgeItemDao {
     @Query("SELECT * FROM knowledge_item WHERE knowledgeBaseId = :kbId AND sourceType = :sourceType AND title = :title AND deletedAt IS NULL LIMIT 1")
     suspend fun getByKbSourceTypeAndTitle(kbId: String, sourceType: String, title: String): KnowledgeItemEntity?
 
+    /**
+     * P5-merge: kb+sourceType scoped live-row fetch, used as the
+     * fallback in the M2 (MERGE-1 PR-M2) upsert path when the exact
+     * title-keyed lookup misses. The LLM occasionally drifts the
+     * entity name between re-analyses ("Accumulibacter" →
+     * "Candidatus Accumulibacter"), which makes the title-keyed
+     * lookup miss the existing row and `insertOrIgnore` to mint a
+     * duplicate — the original "两个同名文件" symptom. Caller
+     * (`IngestOrchestrator.runGenerationTask`) post-filters the
+     * result with [com.my.knowledge.data.ingest.Slug.slugify] to
+     * collapse soft-collision cases back to in-place updates.
+     *
+     * Returns ALL live rows in (kb, sourceType) regardless of title,
+     * which is small for any one (kb, sourceType) pair in practice
+     * (≤ a few dozen entity / concept pages per source).
+     */
+    @Query("SELECT * FROM knowledge_item WHERE knowledgeBaseId = :kbId AND sourceType = :sourceType AND deletedAt IS NULL")
+    suspend fun getByKbSourceTypeLive(kbId: String, sourceType: String): List<KnowledgeItemEntity>
+
     @Query("SELECT * FROM knowledge_item WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT :limit OFFSET :offset")
     suspend fun getAllActive(limit: Int, offset: Int): List<KnowledgeItemEntity>
 

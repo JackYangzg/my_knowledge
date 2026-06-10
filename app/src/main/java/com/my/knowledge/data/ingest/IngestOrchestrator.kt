@@ -262,6 +262,33 @@ class IngestOrchestrator(
      * chunked code path with a short fixture.
      */
     private val markdownChunker: MarkdownSemanticChunker = MarkdownSemanticChunker(),
+    /**
+     * RELIAB-1 PR-N2 (late landing): how the orchestrator surfaces
+     * the live "remaining work" count to [com.my.knowledge.worker.IngestRuntime],
+     * which in turn updates the foreground-service notification text
+     * ("剩余 N 条"). Called once at the end of every [runTask] —
+     * happy path, error path, and chained-same-source path all
+     * funnel through the same `finally`, so the count is honest
+     * whether the task succeeded or failed.
+     *
+     * Defaults to a no-op so the existing test suite
+     * ([com.my.knowledge.data.ingest.IngestOrchestratorSourceBudgetTest],
+     * [com.my.knowledge.data.ingest.IngestOrchestratorChunkPromptTest],
+     * [com.my.knowledge.data.ingest.IngestCacheTest]) keeps compiling
+     * without injecting a fake. Production wiring
+     * ([com.my.knowledge.worker.IngestRuntime.runOrchestratorOnce])
+     * always passes `IngestRuntime::reportPending`.
+     *
+     * Why a callback, not a direct import of [IngestRuntime]:
+     * [IngestRuntime] is in the `worker` package and already depends
+     * on `data.ingest`; making the orchestrator depend back on
+     * `worker` would create a cycle. The callback inverts the edge
+     * — the worker reaches into the orchestrator, the orchestrator
+     * reports up through the lambda. Same pattern as
+     * [KnowledgeRepository] being injected by the worker, not the
+     * other way round.
+     */
+    private val pendingCountReporter: (Int) -> Unit = {},
 ) : IngestOrchestratorApi {
     private val fragmenter = MarkdownFragmenter()
     private val wikiCompiler = WikiPageCompiler()
@@ -451,6 +478,20 @@ class IngestOrchestrator(
                 markSuccess(task, "Unsupported task skipped", "{}")
             }
             return true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // Cooperative cancel from `IngestRuntime.cancel` /
+            // `IngestRuntimeLoop.cancel`. Re-throw so the
+            // cancellation propagates cleanly and the lane exits
+            // without doing DB work on a dying coroutine (the
+            // `resetInterruptedRunningTasks` call on next process
+            // start flips the still-"running" task row back to
+            // "pending" — the intended recovery path). Treating
+            // cancellation as a regular error and running the
+            // error-path DB writes would (a) mark the task as
+            // "failed" when it was just cancelled, and (b) fire
+            // "secondary failure" log spam because the
+            // coroutine's dispatcher is already tearing down.
+            throw e
         } catch (e: Exception) {
             // Persisted `errorMessage` only carries `e.message`,
             // which for SQLite errors omits the stack trace. The
@@ -532,6 +573,34 @@ class IngestOrchestrator(
             // that nested case correct.
             if (currentCoroutineContext()[Job] == currentJob) {
                 currentJob = null
+            }
+            // Bail out of the side-effect work below if the
+            // coroutine is already cancelled. `runCatching` does
+            // NOT catch `JobCancellationException` raised by a
+            // suspend function inside its lambda — the coroutine's
+            // Job is in `Cancelling` state, so
+            // `db.processingTaskDao().countActive()` rethrows on
+            // resume, leaking a misleading "pipeline stays alive"
+            // warning. The coroutine isn't staying alive; the user
+            // cancelled it. Gate the side effect on Job.isActive.
+            val stillActive = currentCoroutineContext()[Job]?.isActive ?: false
+            if (stillActive) {
+                // RELIAB-1 PR-N2 (late landing): report the live
+                // "remaining work" count so the FG service
+                // notification (text "剩余 N 条") tracks reality.
+                // Runs on every runTask return — success, error,
+                // and chained same-source — so the count is honest
+                // whatever the outcome. The reporter is a no-op
+                // in unit tests (default `{}`); production wires
+                // `IngestRuntime::reportPending` via the constructor.
+                runCatching { pendingCountReporter(db.processingTaskDao().countActive()) }
+                    .onFailure { secondary ->
+                        Log.w(
+                            "IngestOrchestrator",
+                            "pendingCountReporter threw — notification may lag, but the pipeline itself stays alive",
+                            secondary
+                        )
+                    }
             }
         }
     }
@@ -711,8 +780,24 @@ class IngestOrchestrator(
             "诊断:解析后 entities=${parsedAnalysis.entityCount}, concepts=${parsedAnalysis.conceptCount}, relations=${parsedAnalysis.relationCount}, confidence=${parsedAnalysis.confidence}",
             "running"
         )
-        val finalEntitiesJson = parsedAnalysis.entitiesJson
-        val finalConceptsJson = parsedAnalysis.conceptsJson
+        // P5-merge: union old + new entities / concepts by `name` so
+        // a re-analysis preserves the user's previously-saved entity
+        // inventory. Old rows that the new LLM analysis drops (e.g.
+        // the model forgot to emit them) stay in the JSON; new rows
+        // with the same name take precedence. Without this, every
+        // re-analysis would wholesale replace the JSON and the user
+        // would see the "存量实体与概念全部会被清除掉" symptom.
+        val existingAnalysis = db.analysisResultDao().getLatestBySource(source.id)
+        val finalEntitiesJson = if (existingAnalysis == null) {
+            parsedAnalysis.entitiesJson
+        } else {
+            mergeEntityOrConceptByName(existingAnalysis.entitiesJson, parsedAnalysis.entitiesJson)
+        }
+        val finalConceptsJson = if (existingAnalysis == null) {
+            parsedAnalysis.conceptsJson
+        } else {
+            mergeEntityOrConceptByName(existingAnalysis.conceptsJson, parsedAnalysis.conceptsJson)
+        }
         if (parsedAnalysis.entityCount == 0 || parsedAnalysis.conceptCount == 0) {
             appendLog(
                 task,
@@ -812,9 +897,37 @@ class IngestOrchestrator(
         // read-merge-write for identical wiki files is serialized.
         // Android stores wiki pages as rows, so the logical file key is
         // (knowledgeBaseId, sourceType, title).
+        //
+        // P5-merge: title-based lookup is the primary path. The
+        // slug-based fallback below (slug == `Slug.slugify(title)`)
+        // covers the LLM-drift case where the same entity gets a
+        // slightly different `entity.name` across re-analyses
+        // ("Accumulibacter" → "Candidatus Accumulibacter"). Without
+        // it, the M2 path's `insertOrIgnore` would mint a fresh row
+        // because the title-keyed lookup misses the existing one —
+        // and the user reported that as "两个同名文件".
+        val liveCandidatesByType: Map<String, List<KnowledgeItemEntity>> =
+            pageDrafts.map { it.sourceType }.distinct()
+                .associateWith { type ->
+                    db.knowledgeItemDao().getByKbSourceTypeLive(kbId, type)
+                }
+
         val writtenItems = withWikiPageWriteLocks(kbId, pageDrafts) {
             val items = pageDrafts.mapIndexed { index, draft ->
-                val existingPage = db.knowledgeItemDao().getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
+                val exactMatch = db.knowledgeItemDao()
+                    .getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
+                val existingPage = exactMatch ?: run {
+                    // Slug fuzzy match: find a live row in the same
+                    // (kb, sourceType) whose title slugifies to the
+                    // same value as the incoming draft's title. We
+                    // compare on slug, not raw text, to absorb
+                    // punctuation / casing / parenthetical drift.
+                    val draftSlug = com.my.knowledge.data.ingest.Slug.slugify(draft.title)
+                    if (draftSlug.isBlank()) null else liveCandidatesByType[draft.sourceType]
+                        ?.firstOrNull { existing ->
+                            com.my.knowledge.data.ingest.Slug.slugify(existing.title) == draftSlug
+                        }
+                }
                 val mergedMarkdown = mergeWikiPageMarkdown(
                     existingMarkdown = existingPage?.contentMarkdown.orEmpty(),
                     draft = draft,
@@ -972,7 +1085,10 @@ class IngestOrchestrator(
         if (aiDrafts.isEmpty()) return templatePages
         val seen = linkedSetOf<String>()
         val out = mutableListOf<WikiPageDraft>()
-        fun key(page: WikiPageDraft): String = "${page.sourceType}:${page.title.trim().lowercase()}"
+        // Whitespace-normalized dedup so "Foo Bar" and " Foo Bar"
+        // from the AI-vs-template half of the same source don't both
+        // win. See EntityName for the full normalization rules.
+        fun key(page: WikiPageDraft): String = "${page.sourceType}:${EntityName.dedupKey(page.title)}"
         aiDrafts.forEach { draft ->
             val k = key(draft)
             if (seen.add(k)) out += draft
@@ -1081,10 +1197,10 @@ class IngestOrchestrator(
                 )
             }
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:非流式 JSON 请求被取消：${e.message ?: "无附加信息"}", "running", step)
+            logLlmFailure(task, "非流式 JSON", step, e)
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:非流式 JSON 请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
+            logLlmFailure(task, "非流式 JSON", step, t)
             throw t
         }
     }
@@ -1119,10 +1235,10 @@ class IngestOrchestrator(
                 )
             }
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:非流式文本请求被取消：${e.message ?: "无附加信息"}", "running", step)
+            logLlmFailure(task, "非流式文本", step, e)
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:非流式文本请求异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", step)
+            logLlmFailure(task, "非流式文本", step, t)
             throw t
         }
     }
@@ -1194,10 +1310,10 @@ class IngestOrchestrator(
                 }
             )
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:generation 非流式模型调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成 wiki 页面")
+            logLlmFailure(task, "generation", "调用 AI 生成 wiki 页面", e)
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:generation 非流式模型调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成 wiki 页面")
+            logLlmFailure(task, "generation", "调用 AI 生成 wiki 页面", t)
             throw t
         }
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
@@ -1359,10 +1475,10 @@ class IngestOrchestrator(
                 }
             )
         } catch (e: CancellationException) {
-            appendLog(task, "诊断:analysis 非流式 JSON 调用被取消：${e.message ?: "无附加信息"}", "running", "调用 AI 生成结构化分析")
+            logLlmFailure(task, "analysis", "调用 AI 生成结构化分析", e)
             throw e
         } catch (t: Throwable) {
-            appendLog(task, "诊断:analysis 非流式 JSON 调用异常：${t::class.simpleName ?: "Throwable"} ${t.message ?: "无错误信息"}", "running", "调用 AI 生成结构化分析")
+            logLlmFailure(task, "analysis", "调用 AI 生成结构化分析", t)
             throw t
         }
         appendLog(
@@ -1780,9 +1896,14 @@ class IngestOrchestrator(
         if (arr == null) return
         for (i in 0 until arr.length()) {
             val item = arr.optJSONObject(i) ?: continue
-            val name = item.optString("name").trim()
+            // Whitespace-normalize so a chunk-1 emission of "Foo Bar"
+            // and a chunk-2 emission of " Foo Bar" merge into one
+            // entity row. `name.lowercase()` alone would let them
+            // coexist as two entries and waste the user's graph
+            // budget.
+            val name = EntityName.canonical(item.optString("name"))
             if (name.isBlank()) continue
-            val key = name.lowercase()
+            val key = EntityName.dedupKey(name)
             // P1 兼容: 优先 entityType / conceptCategory,回退到 type.
             if (!item.has("entityType") && !item.has("conceptCategory") && !item.has("type")) {
                 item.put("type", defaultType)
@@ -2449,6 +2570,80 @@ class IngestOrchestrator(
 
     private fun String.escapeYaml(): String =
         replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ")
+
+    /**
+     * P5-merge: union two entity/concept JSON arrays by `name` field.
+     * The LLM's freshly-emitted [newJson] wins for any name that
+     * appears in both lists; names only in [oldJson] are kept
+     * (so a re-analysis never deletes a previously-saved entity
+     * the new pass forgot to mention). Empty entries are skipped.
+     * On any parse failure the function falls back to [newJson]
+     * verbatim so a malformed prior row never blocks the new write.
+     */
+    private fun mergeEntityOrConceptByName(oldJson: String, newJson: String): String {
+        val oldArr = runCatching { JSONArray(oldJson) }.getOrNull() ?: return newJson
+        val newArr = runCatching { JSONArray(newJson) }.getOrNull() ?: return newJson
+        val out = JSONArray()
+        val seenNames = HashSet<String>()
+        // Whitespace-normalized dedup so a re-analysis that emits
+        // "Foo Bar" while the previous analysis had " Foo Bar" sees
+        // the two as one row instead of letting the new (with the
+        // extra leading space) leak past the user's saved
+        // inventory. Without this, every re-analysis would inflate
+        // the entity list and the graph would pick up spurious
+        // duplicate nodes.
+        for (i in 0 until newArr.length()) {
+            val obj = newArr.optJSONObject(i) ?: continue
+            val name = EntityName.canonical(obj.optString("name", ""))
+            if (name.isEmpty() || !seenNames.add(EntityName.dedupKey(name))) continue
+            out.put(obj)
+        }
+        for (i in 0 until oldArr.length()) {
+            val obj = oldArr.optJSONObject(i) ?: continue
+            val name = EntityName.canonical(obj.optString("name", ""))
+            if (name.isEmpty() || !seenNames.add(EntityName.dedupKey(name))) continue
+            out.put(obj)
+        }
+        return out.toString()
+    }
+
+    /**
+     * One source of truth for the "诊断:[STAGE] 请求被取消 / 异常"
+     * log lines that used to live inline in the four non-streaming
+     * LLM call sites (non-stream JSON, non-stream text, generation,
+     * analysis). The previous shape — two near-identical `appendLog`
+     * calls per catch block, differing only by stage name + the
+     * `CancellationException` vs `Throwable` branch — produced 8
+     * hard-coded diagnostic strings that had to be edited in four
+     * places to change wording. Centralised here so future tuning
+     * (different prefix, different step label shape, debug-only
+     * gating) is a one-line change.
+     *
+     * Always called from a `catch` block right before `throw e` /
+     * `throw t` — the helper does NOT swallow the exception, only
+     * shapes the log line.
+     */
+    private suspend fun logLlmFailure(
+        task: ProcessingTaskEntity,
+        stageName: String,
+        step: String?,
+        throwable: Throwable,
+    ) {
+        when (throwable) {
+            is CancellationException -> appendLog(
+                task,
+                "诊断:$stageName 请求被取消：${throwable.message ?: "无附加信息"}",
+                "running",
+                step,
+            )
+            else -> appendLog(
+                task,
+                "诊断:$stageName 请求异常：${throwable::class.simpleName ?: "Throwable"} ${throwable.message ?: "无错误信息"}",
+                "running",
+                step,
+            )
+        }
+    }
 
     companion object {
         private val pageWriteMutexes = ConcurrentHashMap<String, Mutex>()
