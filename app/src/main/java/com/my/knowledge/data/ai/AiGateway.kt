@@ -3,6 +3,7 @@ package com.my.knowledge.data.ai
 import android.util.Base64
 import com.my.knowledge.ui.KnowledgeManager
 import com.my.knowledge.ui.ModelConfig
+import com.my.knowledge.ui.ReasoningEffort
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -145,6 +146,8 @@ class AiGateway(
         systemPrompt: String,
         userMessage: String,
         temperature: Float = 0.7f,
+        maxTokens: Int = 8_192,
+        reasoningEffort: ReasoningEffort? = null,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
     ): String {
@@ -158,6 +161,8 @@ class AiGateway(
             systemPrompt = systemPrompt,
             userMessage = userMessage,
             temperature = temperature,
+            maxTokens = maxTokens,
+            reasoningEffort = reasoningEffort,
             maxAttempts = maxAttempts,
             onRetry = onRetry,
         )
@@ -167,6 +172,8 @@ class AiGateway(
         systemPrompt: String,
         userMessage: String,
         temperature: Float = 0.7f,
+        maxTokens: Int = 8_192,
+        reasoningEffort: ReasoningEffort? = null,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
         onChunk: suspend (String) -> Unit = {},
@@ -183,7 +190,15 @@ class AiGateway(
         // a permanent failure the last exception propagates to
         // the caller.
         return retryRemoteCall(maxAttempts, onRetry) {
-            streamSseOnce(config, systemPrompt, userMessage, temperature, onChunk)
+            streamSseOnce(
+                config,
+                systemPrompt,
+                userMessage,
+                temperature,
+                maxTokens,
+                reasoningEffort,
+                onChunk,
+            )
         }
     }
 
@@ -200,7 +215,7 @@ class AiGateway(
         // throws CancellationException inside the read loop and
         // tears the connection down within the next read.
         try {
-            streamSseOnce(config, systemPrompt, userMessage, 0.7f) { delta ->
+            streamSseOnce(config, systemPrompt, userMessage, 0.7f, 8_192, null) { delta ->
                 send(delta)
             }
         } catch (e: CancellationException) {
@@ -275,7 +290,7 @@ class AiGateway(
         // the orchestrator's retry handler decides. A 4xx/5xx
         // surfaces as an exception whose message contains the
         // classified [服务端错误] / [鉴权失败] / ... prefix.
-        val joined = streamSseOnce(config, effectiveSystem, userPrompt, temperature) { delta ->
+        val joined = streamSseOnce(config, effectiveSystem, userPrompt, temperature, 8_192, null) { delta ->
             onChunk(delta)
         }
         return with(AiTextCleaner) { joined.cleanModelOutput() }
@@ -376,13 +391,22 @@ class AiGateway(
         systemPrompt: String?,
         userMessage: String,
         temperature: Float = 0.7f,
+        maxTokens: Int = 8_192,
+        reasoningEffort: ReasoningEffort? = null,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
     ): String = concurrencyLimiter.withPermit {
         withContext(Dispatchers.IO) {
             try {
                 retryRemoteCall(maxAttempts, onRetry) {
-                    callApiOnce(config, systemPrompt, userMessage, temperature)
+                    callApiOnce(
+                        config,
+                        systemPrompt,
+                        userMessage,
+                        temperature,
+                        maxTokens,
+                        reasoningEffort,
+                    )
                 }
             } catch (e: Throwable) {
                 e.toAiErrorMessage(config.baseUrl)
@@ -394,7 +418,9 @@ class AiGateway(
         config: ModelConfig,
         systemPrompt: String?,
         userMessage: String,
-        temperature: Float
+        temperature: Float,
+        maxTokens: Int,
+        reasoningEffort: ReasoningEffort?,
     ): String {
         val messages = buildJsonArray {
             if (systemPrompt != null) {
@@ -412,12 +438,12 @@ class AiGateway(
         val requestBody = buildJsonObject {
             put("model", JsonPrimitive(config.modelName))
             put("messages", messages)
-            put("max_tokens", JsonPrimitive(8192))
+            put("max_tokens", JsonPrimitive(maxTokens))
             put("temperature", JsonPrimitive(temperature))
             // ARCH-8 §2.1: 嵌套 reasoning.effort 字段
             // (MiniMax /v1/responses 规范,枚举 none/minimal/low/medium/high)
             put("reasoning", buildJsonObject {
-                put("effort", JsonPrimitive(config.reasoningEffort.apiValue))
+                put("effort", JsonPrimitive((reasoningEffort ?: config.reasoningEffort).apiValue))
             })
         }
 
@@ -476,6 +502,8 @@ class AiGateway(
         systemPrompt: String,
         userMessage: String,
         temperature: Float,
+        maxTokens: Int,
+        reasoningEffort: ReasoningEffort?,
         // suspend lambda so callers can `send(...)` on a Flow producer
         // (see `completeStream`) or fan out to other suspending sinks
         // without re-entering a dispatcher hop.
@@ -496,13 +524,13 @@ class AiGateway(
                     })
                 },
             )
-            put("max_tokens", JsonPrimitive(8192))
+            put("max_tokens", JsonPrimitive(maxTokens))
             put("temperature", JsonPrimitive(temperature))
             put("stream", JsonPrimitive(true))
             // ARCH-8 §2.1: 嵌套 reasoning.effort 字段
             // (MiniMax /v1/responses 规范,枚举 none/minimal/low/medium/high)
             put("reasoning", buildJsonObject {
-                put("effort", JsonPrimitive(config.reasoningEffort.apiValue))
+                put("effort", JsonPrimitive((reasoningEffort ?: config.reasoningEffort).apiValue))
             })
         }
 

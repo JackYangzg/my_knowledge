@@ -16,7 +16,8 @@ data class WikiPageDraft(
     val markdown: String,
     val summary: String,
     val tagsJson: String,
-    val sourceTraceJson: String
+    val sourceTraceJson: String,
+    val wikiPath: String? = null,
 )
 
 class WikiPageCompiler {
@@ -187,7 +188,14 @@ class WikiPageCompiler {
             )
         }
 
-        return pages.map { it.copy(markdown = Sanitize.sanitize(it.markdown)) }
+        return pages.map {
+            it.copy(
+                markdown = Sanitize.sanitize(it.markdown),
+                wikiPath = runCatching {
+                    JSONObject(it.sourceTraceJson).optString("wikiPath").takeIf(String::isNotBlank)
+                }.getOrNull(),
+            )
+        }
     }
 
     /**
@@ -248,7 +256,14 @@ class WikiPageCompiler {
                 sourceTraceJson = sourceTrace(source, parsed = null, analysis, "wiki/concepts/${concept.name.slug()}.md")
             )
         }
-        return pages.map { it.copy(markdown = Sanitize.sanitize(it.markdown)) }
+        return pages.map {
+            it.copy(
+                markdown = Sanitize.sanitize(it.markdown),
+                wikiPath = runCatching {
+                    JSONObject(it.sourceTraceJson).optString("wikiPath").takeIf(String::isNotBlank)
+                }.getOrNull(),
+            )
+        }
     }
 
     /**
@@ -375,6 +390,32 @@ class WikiPageCompiler {
         if (existingBody.isBlank()) return merged.trim()
         if (existingBody.contains(incomingBody.take(120))) return merged.trim()
         return merged.trim() + "\n\n## 合并自旧页面\n\n" + existingBody
+    }
+
+    fun mergeFrontmatterOnly(
+        existingMarkdown: String,
+        incomingMarkdown: String,
+    ): String {
+        if (existingMarkdown.isBlank()) return incomingMarkdown
+        if (incomingMarkdown.isBlank()) return existingMarkdown
+        var merged = incomingMarkdown
+        for (key in listOf("sources", "tags", "related")) {
+            val incomingList = extractFrontMatterList(incomingMarkdown, key)
+            val existingList = extractFrontMatterList(existingMarkdown, key)
+            merged = rewriteFrontMatterList(
+                merged,
+                key,
+                mergeListsCaseInsensitive(existingList, incomingList),
+            )
+        }
+        for (key in listOf("type", "title", "created")) {
+            frontMatterValue(existingMarkdown, key)
+                ?.takeIf(String::isNotBlank)
+                ?.let { merged = rewriteFrontMatterValue(merged, key, it) }
+        }
+        val today = Instant.ofEpochMilli(System.currentTimeMillis())
+            .atZone(ZoneOffset.UTC).toLocalDate().toString()
+        return rewriteFrontMatterValue(merged, "updated", today).trim()
     }
 
     /**

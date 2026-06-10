@@ -15,6 +15,7 @@ import com.my.knowledge.data.ai.AiTextCleaner.cleanModelOutput
 import com.my.knowledge.data.ai.ContextBudgetCalculator
 import com.my.knowledge.ui.KnowledgeManager
 import com.my.knowledge.ui.ModelConfig
+import com.my.knowledge.ui.ReasoningEffort
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.parser.AudioTranscriptParser
 import com.my.knowledge.data.parser.DocxParser
@@ -716,115 +717,50 @@ class IngestOrchestrator(
             return
         }
 
-        val localSummary = parsed.plainText.trim().take(220)
-        val tags = extractTags("${source.title} ${parsed.plainText}")
-        val baseConfidence = if (parsed.plainText.length > 80) 0.78f else 0.42f
-        updateProgress(task, 45, "调用 AI 生成结构化分析", "模型生成中，等待 JSON 结果")
-        // Stage 1 — call the LLM with the JSON-only analysis prompt, then
-        // PARSE the result into structured entities / concepts / relations.
-        // The previous code dropped the AI output into `summary` and hard-
-        // coded `entitiesJson = "[]"`, `conceptsJson = tags.toJsonArray()`,
-        // `relationsJson = "[]"`, which meant no real entities, tag-named
-        // "concept" pages with empty descriptions, and an empty knowledge
-        // graph. parseAiAnalysisJson is the bridge that fixes that.
-        //
-        // P0-3: long-source path. Sources larger than
-        // [LONG_SOURCE_BUDGET_CHARS] used to be silently truncated by
-        // `parsed.markdown.take(50_000)` (the 50K cap inside
-        // `requestAiAnalysis` below). That truncation dropped late
-        // entities / concepts and broke graph + wiki completeness
-        // for any import over a few chapters. We now route
-        // `parsed.markdown.length > sourceBudget` through
-        // `requestAiAnalysisLongSource` — semantic chunking, one LLM
-        // call per chunk via the existing `chatJson` helper, with
-        // progress persisted to [longSourceCheckpointStore] so a
-        // retry resumes from the last completed chunk instead of
-        // re-paying the full bill. Short sources keep the original
-        // single-call path.
+        updateProgress(task, 45, "调用 AI 分析来源", "模型生成 Stage 1 Markdown")
         val isLongSource = parsed.markdown.length > sourceBudget(KnowledgeManager.modelConfig) &&
             longSourceCheckpointStore != null
         appendLog(
             task,
-            "诊断:analysis 输入 title=${source.title}, markdown=${parsed.markdown.length} 字符, plainText=${parsed.plainText.length} 字符, mode=${if (isLongSource) "chunked" else "non_stream"}",
+            "诊断:analysis 输入 source=${sourceIdentity(source)}, markdown=${parsed.markdown.length} 字符, plainText=${parsed.plainText.length} 字符, mode=${if (isLongSource) "chunked" else "single"}",
             "running",
-            "调用 AI 生成结构化分析"
+            "调用 AI 分析来源"
         )
         val rawAiOutput: String? = if (isLongSource) {
             requestAiAnalysisLongSource(task, source, parsed)
         } else {
             requestAiAnalysis(task, source, parsed)
-                ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
         }
-        // P1 诊断:把 LLM 实际返回写到 ProcessingTaskLog,这样用户能
-        // 直接看到「AI 返回了 N 字符 / 0 个实体」,不用盲猜为什么图谱空。
         val rawSnippet = rawAiOutput?.take(200)?.replace("\n", " ")
         if (rawAiOutput.isNullOrBlank()) {
-            appendLog(task, "诊断:AI 阶段未返回任何内容(可能未配置 API Key / 网络异常 / JSON 解析失败)", "running")
-        } else {
-            appendLog(
-                task,
-                "诊断:AI 返回 ${rawAiOutput.length} 字符,前 200 字符: $rawSnippet",
-                "running"
-            )
+            throw IllegalStateException("Stage 1 analysis returned no content")
         }
-        val parsedAnalysis = parseAiAnalysisJson(
-            raw = rawAiOutput,
-            fallbackTitle = source.title,
-            fallbackSummary = localSummary,
-            fallbackTags = tags,
-            fallbackConfidence = baseConfidence,
-        )
-        updateProgress(task, 70, "分析完成", "识别 ${parsedAnalysis.entityCount} 个实体 / ${parsedAnalysis.conceptCount} 个概念 / ${parsedAnalysis.relationCount} 个关系")
         appendLog(
             task,
-            "诊断:解析后 entities=${parsedAnalysis.entityCount}, concepts=${parsedAnalysis.conceptCount}, relations=${parsedAnalysis.relationCount}, confidence=${parsedAnalysis.confidence}",
+            "诊断:Stage 1 返回 ${rawAiOutput.length} 字符，前 200 字符: $rawSnippet",
             "running"
         )
-        // P5-merge: union old + new entities / concepts by `name` so
-        // a re-analysis preserves the user's previously-saved entity
-        // inventory. Old rows that the new LLM analysis drops (e.g.
-        // the model forgot to emit them) stay in the JSON; new rows
-        // with the same name take precedence. Without this, every
-        // re-analysis would wholesale replace the JSON and the user
-        // would see the "存量实体与概念全部会被清除掉" symptom.
-        val existingAnalysis = db.analysisResultDao().getLatestBySource(source.id)
-        val finalEntitiesJson = if (existingAnalysis == null) {
-            parsedAnalysis.entitiesJson
-        } else {
-            mergeEntityOrConceptByName(existingAnalysis.entitiesJson, parsedAnalysis.entitiesJson)
-        }
-        val finalConceptsJson = if (existingAnalysis == null) {
-            parsedAnalysis.conceptsJson
-        } else {
-            mergeEntityOrConceptByName(existingAnalysis.conceptsJson, parsedAnalysis.conceptsJson)
-        }
-        if (parsedAnalysis.entityCount == 0 || parsedAnalysis.conceptCount == 0) {
-            appendLog(
-                task,
-                "AI 抽取结果保留原样：entities=${parsedAnalysis.entityCount}, concepts=${parsedAnalysis.conceptCount}；未使用本地启发式补集",
-                "running"
-            )
-        }
+        updateProgress(task, 70, "分析完成", "Stage 1 Markdown 已生成")
         val analysis = AnalysisResultEntity(
             id = UUID.randomUUID().toString(),
             sourceId = source.id,
             parsedContentId = parsed.id,
-            summary = parsedAnalysis.summary.take(3000),
-            tagsJson = parsedAnalysis.tagsJson,
-            entitiesJson = finalEntitiesJson,
-            conceptsJson = finalConceptsJson,
-            relationsJson = parsedAnalysis.relationsJson,
-            claimsJson = parsedAnalysis.claimsJson,
-            gapsJson = parsedAnalysis.gapsJson,
-            archiveRecommendationJson = parsedAnalysis.archiveRecommendationJson,
-            confidence = parsedAnalysis.confidence,
-            modelName = if (rawAiOutput != null) "configured-ai" else null,
+            summary = rawAiOutput,
+            tagsJson = "[]",
+            entitiesJson = "[]",
+            conceptsJson = "[]",
+            relationsJson = "[]",
+            claimsJson = "[]",
+            gapsJson = "[]",
+            archiveRecommendationJson = "{}",
+            confidence = 1f,
+            modelName = "configured-ai",
             promptVersion = PromptVersions.INGEST_ANALYSIS_V1,
-            analysisHash = fileStore.sha256Text(parsed.parseHash + parsedAnalysis.tagsJson + finalEntitiesJson + finalConceptsJson + parsedAnalysis.relationsJson),
+            analysisHash = fileStore.sha256Text(parsed.parseHash + rawAiOutput),
             createdAt = System.currentTimeMillis()
         )
         db.analysisResultDao().insert(analysis)
-        updateProgress(task, 80, "分析完成，准备生成知识页面", "实体 ${JSONArray(finalEntitiesJson).length()} / 概念 ${JSONArray(finalConceptsJson).length()} / 关系 ${parsedAnalysis.relationCount}")
+        updateProgress(task, 80, "分析完成，准备生成知识页面", "Stage 2 将消费完整分析结果")
         markSuccess(task, "Analysis completed", """{"analysisResultId":"${analysis.id}"}""")
         enqueue(source.id, "generation", 8, """{"analysisResultId":"${analysis.id}"}""")
     }
@@ -914,23 +850,20 @@ class IngestOrchestrator(
 
         val writtenItems = withWikiPageWriteLocks(kbId, pageDrafts) {
             val items = pageDrafts.mapIndexed { index, draft ->
-                val exactMatch = db.knowledgeItemDao()
-                    .getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
-                val existingPage = exactMatch ?: run {
-                    // Slug fuzzy match: find a live row in the same
-                    // (kb, sourceType) whose title slugifies to the
-                    // same value as the incoming draft's title. We
-                    // compare on slug, not raw text, to absorb
-                    // punctuation / casing / parenthetical drift.
-                    val draftSlug = com.my.knowledge.data.ingest.Slug.slugify(draft.title)
-                    if (draftSlug.isBlank()) null else liveCandidatesByType[draft.sourceType]
-                        ?.firstOrNull { existing ->
-                            com.my.knowledge.data.ingest.Slug.slugify(existing.title) == draftSlug
-                        }
+                val pathMatch = draft.wikiPath?.let { path ->
+                    liveCandidatesByType[draft.sourceType]
+                        ?.firstOrNull { wikiPathOf(it.sourceTraceJson) == path }
+                }
+                val existingPage = if (draft.wikiPath != null) {
+                    pathMatch
+                } else {
+                    db.knowledgeItemDao()
+                        .getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
                 }
                 val mergedMarkdown = mergeWikiPageMarkdown(
                     existingMarkdown = existingPage?.contentMarkdown.orEmpty(),
                     draft = draft,
+                    sourceTitle = sourceIdentity(source),
                 )
                 if (index % 3 == 0) {
                     updateProgress(
@@ -1028,6 +961,7 @@ class IngestOrchestrator(
                 )
             )
         }
+        clearLongSourceCheckpoint(source, parsed)
         ingestStateMachine.transitionToGenerated(source.id, now)
         markSuccess(task, "Generated ${writtenItems.size} processed wiki pages", """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         enqueue(source.id, "embedding", 5, """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
@@ -1085,17 +1019,17 @@ class IngestOrchestrator(
         if (aiDrafts.isEmpty()) return templatePages
         val seen = linkedSetOf<String>()
         val out = mutableListOf<WikiPageDraft>()
-        // Whitespace-normalized dedup so "Foo Bar" and " Foo Bar"
-        // from the AI-vs-template half of the same source don't both
-        // win. See EntityName for the full normalization rules.
-        fun key(page: WikiPageDraft): String = "${page.sourceType}:${EntityName.dedupKey(page.title)}"
+        fun key(page: WikiPageDraft): String =
+            page.wikiPath ?: "${page.sourceType}:${EntityName.dedupKey(page.title)}"
         aiDrafts.forEach { draft ->
             val k = key(draft)
             if (seen.add(k)) out += draft
         }
-        templatePages.forEach { template ->
-            val k = key(template)
-            if (seen.add(k)) out += template
+        if (aiDrafts.none { it.sourceType == "wiki_source" }) {
+            templatePages.firstOrNull { it.sourceType == "wiki_source" }?.let { template ->
+                val k = key(template)
+                if (seen.add(k)) out += template
+            }
         }
         return out
     }
@@ -1150,9 +1084,14 @@ class IngestOrchestrator(
             markdown = cleaned,
             summary = stripFrontMatter(cleaned).take(240).ifBlank { analysis.summary.take(240) },
             tagsJson = analysis.tagsJson,
-            sourceTraceJson = """{"wikiPath":"${path.escapeJson()}","sourceId":"${source.id}","parsedContentId":"${parsed.id}","analysisResultId":"${analysis.id}"}"""
+            sourceTraceJson = """{"wikiPath":"${path.escapeJson()}","sourceId":"${source.id}","parsedContentId":"${parsed.id}","analysisResultId":"${analysis.id}"}""",
+            wikiPath = path,
         )
     }
+
+    private fun wikiPathOf(sourceTraceJson: String): String? =
+        runCatching { JSONObject(sourceTraceJson).optString("wikiPath").takeIf(String::isNotBlank) }
+            .getOrNull()
 
     /**
      * ARCH-8 §2.2: thin wrapper around [ai.chatJsonObserved] (the
@@ -1209,6 +1148,8 @@ class IngestOrchestrator(
         systemPrompt: String,
         userPrompt: String,
         temperature: Float,
+        maxTokens: Int = 8_192,
+        reasoningEffort: ReasoningEffort? = null,
         task: ProcessingTaskEntity,
         step: String,
         onRetry: suspend (com.my.knowledge.data.ai.AiRetryEvent) -> Unit = {},
@@ -1224,6 +1165,8 @@ class IngestOrchestrator(
                 systemPrompt = systemPrompt,
                 userMessage = userPrompt,
                 temperature = temperature,
+                maxTokens = maxTokens,
+                reasoningEffort = reasoningEffort,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
             ).also { result ->
@@ -1252,34 +1195,25 @@ class IngestOrchestrator(
         if (!ai.isAvailable()) return null
         val kbId = source.targetKnowledgeBaseId
         val currentIndex = buildCurrentIndex(kbId)
-        // ARCH-7.1 PR2-G §3.3: cap overview to 5K (was unbounded — full file inlined into system prompt).
         val overview = buildCurrentOverview(kbId)
         val analysisText = analysis.summary
-        // In addition to the prose summary, surface the structured
-        // entities / concepts / relations extracted by Stage 1 so the
-        // Stage 2 model can write FILE blocks that line up with the
-        // real nodes (and so the LLM doesn't re-derive its own
-        // entities from the raw text and end up with a different set
-        // than what KnowledgeRepositoryImpl.rebuildGraphForBase will
-        // materialize). This is the bridge that turns the analysis
-        // stage from a text blob into a real source of truth.
-        val structuredContext = buildStructuredAnalysisContext(analysis)
-
+        val identity = sourceIdentity(source)
+        val sourceSummaryPath = "wiki/sources/${IngestParityCore.sourceSummarySlug(identity)}.md"
+        val sourceContext = resolveGenerationSourceContext(source, parsed)
         val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector.detect(parsed.markdown)
-        val systemPrompt = com.my.knowledge.data.ai.AiPromptTemplates.generationPrompt(
-            fileName = source.title,
-            analysisResult = analysisText + structuredContext,
-            sourceContent = parsed.markdown,
+        val systemPrompt = IngestParityCore.generationPrompt(
             schema = WIKI_SCHEMA,
             purpose = WIKI_PURPOSE,
-            currentIndex = currentIndex,
+            index = currentIndex,
             overview = overview,
-            language = detectedLanguage
+            sourceIdentity = identity,
+            language = detectedLanguage,
+            sourceSummaryPath = sourceSummaryPath,
         )
-        val userPrompt = buildGenerationUserMessage(source.title, analysisText, parsed.markdown, structuredContext)
+        val userPrompt = IngestParityCore.generationUserMessage(identity, analysisText, sourceContext)
         appendLog(
             task,
-            "诊断:generation 输入 title=${source.title}, markdown=${parsed.markdown.length} 字符, analysis=${analysisText.length} 字符, structured=${structuredContext.length} 字符, systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符",
+            "诊断:generation 输入 source=$identity, sourceContext=${sourceContext.length} 字符, analysis=${analysisText.length} 字符, systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符",
             "running",
             "调用 AI 生成 wiki 页面"
         )
@@ -1298,6 +1232,10 @@ class IngestOrchestrator(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
                 temperature = 0.1f,
+                maxTokens = ContextBudgetCalculator.computeIngestGenerationMaxTokens(
+                    KnowledgeManager.modelConfig.maxContextSize
+                ),
+                reasoningEffort = ReasoningEffort.NONE,
                 task = task,
                 step = "调用 AI 生成 wiki 页面",
                 onRetry = { event ->
@@ -1325,6 +1263,66 @@ class IngestOrchestrator(
         )
         throwIfAiFailure(cleaned)
         return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
+    }
+
+    private fun sourceIdentity(source: SourceDocumentEntity): String =
+        IngestParityCore.sourceIdentity(source.title, source.folderHint)
+
+    private fun longSourceCheckpointData(
+        source: SourceDocumentEntity,
+        parsed: ParsedContentEntity,
+    ): Triple<java.io.File, LongSourceCheckpointParams, List<SourceChunk>>? {
+        val store = longSourceCheckpointStore ?: return null
+        val sourceBudget = sourceBudget(KnowledgeManager.modelConfig)
+        if (parsed.markdown.length <= sourceBudget) return null
+        val targetChars = (sourceBudget * 0.55).toInt()
+            .coerceIn(LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
+        val overlapChars = (targetChars * 0.08).toInt()
+            .coerceIn(LONG_SOURCE_OVERLAP_MIN, LONG_SOURCE_OVERLAP_MAX)
+        val chunks = IngestParityCore.splitSourceIntoSemanticChunks(
+            parsed.markdown,
+            targetChars,
+            overlapChars,
+        )
+        val identity = sourceIdentity(source)
+        val hash = IngestParityCore.longSourceHash(parsed.markdown)
+        val path = store.checkpointPath(IngestParityCore.sourceSummarySlug(identity), hash)
+        val params = LongSourceCheckpointParams(
+            sourceIdentity = identity,
+            sourceHash = hash,
+            sourceLength = parsed.markdown.length,
+            sourceBudget = sourceBudget,
+            targetChars = targetChars,
+            overlapChars = overlapChars,
+            chunkTotal = chunks.size,
+        )
+        return Triple(path, params, chunks)
+    }
+
+    private fun resolveGenerationSourceContext(
+        source: SourceDocumentEntity,
+        parsed: ParsedContentEntity,
+    ): String {
+        val store = longSourceCheckpointStore ?: return parsed.markdown
+        val (path, params, chunks) = longSourceCheckpointData(source, parsed)
+            ?: return parsed.markdown
+        val checkpoint = store.load(path, params) ?: return parsed.markdown
+        return IngestParityCore.consolidatedLongAnalysis(
+            sourceIdentity = params.sourceIdentity,
+            analyses = checkpoint.analyses,
+            globalDigest = checkpoint.globalDigest,
+            chunks = chunks,
+            sourceBudget = params.sourceBudget,
+        ).second
+    }
+
+    private fun clearLongSourceCheckpoint(
+        source: SourceDocumentEntity,
+        parsed: ParsedContentEntity,
+    ) {
+        val store = longSourceCheckpointStore ?: return
+        val data = longSourceCheckpointData(source, parsed) ?: return
+        store.clear(data.first)
     }
 
     /**
@@ -1405,24 +1403,54 @@ class IngestOrchestrator(
         incomingContent: String,
         sourceTitle: String
     ): String {
-        val prompt = com.my.knowledge.data.ai.AiPromptTemplates.mergePrompt(
-            existingContent = existingContent,
-            incomingContent = incomingContent,
-            sourceFileName = sourceTitle
+        val systemPrompt = """
+            You are merging two versions of the same wiki page into one coherent document.
+            Both versions describe the same entity / concept; one is already on disk,
+            the other was just generated from a different source document.
+
+            Output ONE merged version that:
+            - Preserves every factual claim from both versions (do not drop content)
+            - Eliminates redundancy when both versions state the same fact
+            - Reorganizes sections so the structure is logical for the merged topic,
+              not just a concatenation of the two inputs
+            - Uses consistent markdown structure (headings, tables, lists, callouts)
+            - Keeps `[[wikilink]]` references intact
+
+            Output requirements:
+            - The FIRST character of your response MUST be `-` (the opening of `---`)
+            - Output the COMPLETE file: YAML frontmatter + body
+            - No preamble (no "Here is the merged version:"), no analysis prose
+            - The caller will overwrite `sources`/`tags`/`related`/`updated` with
+              deterministic values — your job is the body and any other fields
+        """.trimIndent()
+        val userMessage = """
+            ## Existing version on disk
+
+            $existingContent
+
+            ---
+
+            ## Newly generated version (from $sourceTitle)
+
+            $incomingContent
+
+            ---
+
+            Now output the merged file. Start with `---` on the first line.
+        """.trimIndent()
+        val response = ai.completeObserved(
+            systemPrompt = systemPrompt,
+            userMessage = userMessage,
+            temperature = 0.1f,
+            maxTokens = ContextBudgetCalculator.computeIngestGenerationMaxTokens(
+                KnowledgeManager.modelConfig.maxContextSize
+            ),
+            reasoningEffort = ReasoningEffort.NONE,
+            maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
         )
-        val response = ai.complete(
-            systemPrompt = "You are a wiki merging assistant. Output only the merged markdown content starting with '---'.",
-            userMessage = prompt
-        )
-        // Strip think + fence before validating the leading "---" sentinel
-        // — otherwise a model's preamble-think-then-merge pattern would
-        // make the response look invalid and force a template fallback.
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
         throwIfAiFailure(cleaned)
-        return if (cleaned.startsWith("---")) cleaned else {
-            // Fallback to template merge if AI output is invalid
-            wikiCompiler.merge(existingContent, incomingContent, sourceTitle)
-        }
+        return cleaned
     }
 
     private suspend fun requestAiAnalysis(
@@ -1434,58 +1462,55 @@ class IngestOrchestrator(
 
         val kbId = source.targetKnowledgeBaseId
         val currentIndex = buildCurrentIndex(kbId)
-        val purpose = "建立一个可读、可维护、可进化的本地知识库（Wiki），用于深度学习和长期记忆。"
-
+        val identity = sourceIdentity(source)
         val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector.detect(parsed.markdown)
-        val systemPrompt = com.my.knowledge.data.ai.AiPromptTemplates.analysisPrompt(
-            title = source.title,
-            sourceType = source.sourceType,
-            currentIndex = currentIndex,
-            purpose = purpose,
-            fragments = emptyList(),
-            // `ai.chatJson` appends ANALYSIS_SCHEMA at the end of the
-            // system prompt. Keeping it there avoids duplicating the
-            // full schema while preserving the strongest tail-anchor.
-            schemaHint = "",
-            language = detectedLanguage
+        val systemPrompt = IngestParityCore.analysisPrompt(
+            purpose = WIKI_PURPOSE,
+            index = currentIndex,
+            language = detectedLanguage,
         )
-        val userPrompt = buildAnalysisUserMessage(source, parsed.markdown)
+        val userPrompt = IngestParityCore.analysisUserMessage(
+            sourceIdentity = identity,
+            folderContext = source.folderHint,
+            sourceContent = parsed.markdown,
+        )
 
         appendLog(
             task,
-            "诊断:analysis 使用非流式 JSON 调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, schema=${ANALYSIS_SCHEMA.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS",
+            "诊断:analysis 使用文本调用，systemPrompt=${systemPrompt.length} 字符, userPrompt=${userPrompt.length} 字符, readTimeout=${AI_READ_TIMEOUT_MS}ms, remoteAttempts=$INGEST_AI_REMOTE_ATTEMPTS",
             "running",
-            "调用 AI 生成结构化分析"
+            "调用 AI 分析来源"
         )
         val cleaned = try {
-            streamJsonWithThrottledProgress(
+            streamTextWithThrottledProgress(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
-                schemaHint = ANALYSIS_SCHEMA,
                 temperature = 0.1f,
+                maxTokens = 4_096,
+                reasoningEffort = ReasoningEffort.NONE,
                 task = task,
-                step = "调用 AI 生成结构化分析",
+                step = "调用 AI 分析来源",
                 onRetry = { event ->
                     appendLog(
                         task,
                         "诊断:analysis 远端请求第 ${event.attempt}/${event.maxAttempts} 次失败：${event.errorType} ${event.message}，${event.delayMs / 1000}s 后重试",
                         "running",
-                        "调用 AI 生成结构化分析"
+                        "调用 AI 分析来源"
                     )
                 }
             )
         } catch (e: CancellationException) {
-            logLlmFailure(task, "analysis", "调用 AI 生成结构化分析", e)
+            logLlmFailure(task, "analysis", "调用 AI 分析来源", e)
             throw e
         } catch (t: Throwable) {
-            logLlmFailure(task, "analysis", "调用 AI 生成结构化分析", t)
+            logLlmFailure(task, "analysis", "调用 AI 分析来源", t)
             throw t
         }
         appendLog(
             task,
-            "诊断:analysis 非流式 JSON 返回 ${cleaned.length} 字符",
+            "诊断:analysis 文本返回 ${cleaned.length} 字符",
             "running",
-            "调用 AI 生成结构化分析"
+            "调用 AI 分析来源"
         )
         throwIfAiFailure(cleaned)
         return cleaned.takeIf { it.isNotBlank() && !it.startsWith("[") }
@@ -1553,7 +1578,11 @@ class IngestOrchestrator(
         val overlapChars = ((targetChars * 0.08).toInt())
             .coerceIn(LONG_SOURCE_OVERLAP_MIN, LONG_SOURCE_OVERLAP_MAX)
 
-        val chunks = markdownChunker.split(content)
+        val chunks = IngestParityCore.splitSourceIntoSemanticChunks(
+            content = content,
+            targetChars = targetChars,
+            overlapChars = overlapChars,
+        )
         if (chunks.size <= 1) {
             // MarkdownSemanticChunker collapsed the whole thing into
             // one oversized chunk. Cheaper to just run the normal
@@ -1565,9 +1594,9 @@ class IngestOrchestrator(
         }
 
         val detectedLanguage = com.my.knowledge.data.ai.LanguageDetector.detect(content)
-        val sourceIdentity = "${source.id}:${source.sha256}"
-        val sourceHash = LongSourceCheckpointStore.sha256Hex(content)
-        val sourceSlug = LongSourceCheckpointStore.slugify(source.title)
+        val sourceIdentity = sourceIdentity(source)
+        val sourceHash = IngestParityCore.longSourceHash(content)
+        val sourceSlug = IngestParityCore.sourceSummarySlug(sourceIdentity)
         val checkpointFile = store.checkpointPath(sourceSlug, sourceHash)
         val params = LongSourceCheckpointParams(
             sourceIdentity = sourceIdentity,
@@ -1624,26 +1653,24 @@ class IngestOrchestrator(
                 "running"
             )
 
-            val systemPrompt = buildChunkAnalysisSystemPrompt(
+            val systemPrompt = IngestParityCore.chunkAnalysisSystemPrompt(
                 purpose = purpose,
                 schema = "",
-                index = if (chunk.index <= 1) currentIndex else currentIndex.take(CURRENT_INDEX_PROMPT_CHARS_REST),
+                index = currentIndex,
                 language = detectedLanguage,
-                chunkTotal = chunks.size,
-                chunkIndex = chunk.index,
-                globalDigest = globalDigest
             )
-            val userPrompt = buildChunkAnalysisUserPrompt(
+            val userPrompt = IngestParityCore.chunkAnalysisUserPrompt(
                 sourceIdentity = sourceIdentity,
                 folderContext = source.folderHint,
                 chunk = chunk,
                 globalDigest = globalDigest
             )
-            val raw = streamJsonWithThrottledProgress(
+            val raw = streamTextWithThrottledProgress(
                 systemPrompt = systemPrompt,
                 userPrompt = userPrompt,
-                schemaHint = ANALYSIS_SCHEMA,
                 temperature = 0.1f,
+                maxTokens = 4_096,
+                reasoningEffort = ReasoningEffort.NONE,
                 task = task,
                 step = "分块 ${chunk.index}/${chunks.size} 分析中",
                 onRetry = { event ->
@@ -1665,13 +1692,12 @@ class IngestOrchestrator(
                 throw IllegalStateException("P0-3: 分块 ${chunk.index}/${chunks.size} 未返回任何内容")
             }
 
-            analyses.add(raw)
+            val chunkAnalysis = IngestParityCore.extractMarkedSection(raw, "Chunk Analysis")
+                .ifBlank { raw.trim() }
+            val updatedDigest = IngestParityCore.extractMarkedSection(raw, "Updated Global Digest")
+            analyses.add(chunkAnalysis)
             completedThrough = chunk.index
-            // The next-chunk global digest is whatever the latest
-            // chunk's `summary` field was, so subsequent chunks
-            // can preserve cross-boundary naming without re-reading
-            // the full prior chunk set.
-            globalDigest = extractChunkDigest(raw) ?: globalDigest
+            if (updatedDigest.isNotBlank()) globalDigest = updatedDigest
             val ok = store.save(
                 checkpointFile,
                 LongSourceCheckpoint(
@@ -1694,20 +1720,15 @@ class IngestOrchestrator(
             }
         }
 
-        // Merge per-chunk JSONs into one consolidated analysis JSON
-        // shaped like the short-path output. parseAiAnalysisJson
-        // can then read it through the normal column-extraction
-        // path.
-        val merged = mergeChunkAnalyses(
+        val consolidated = IngestParityCore.consolidatedLongAnalysis(
+            sourceIdentity = sourceIdentity,
             analyses = analyses,
-            fallbackTitle = source.title
+            globalDigest = globalDigest,
+            chunks = chunks,
+            sourceBudget = sourceBudget,
         )
-        // Clean up the checkpoint on success so the next re-import
-        // of the same file doesn't see a stale "all done" state and
-        // confuse the cache-hit logic. Best-effort.
-        store.clear(checkpointFile)
-        updateProgress(task, 80, "分块分析完成", "合并 ${chunks.size} 段结果，识别实体 / 概念 / 关系")
-        return merged
+        updateProgress(task, 80, "分块分析完成", "已汇总 ${chunks.size} 段 Stage 1 结果")
+        return consolidated.first
     }
 
     /**
@@ -2155,19 +2176,45 @@ class IngestOrchestrator(
      * to [WikiPageCompiler.merge]. AI merge is avoided on the hot path
      * to keep the KB write lock short.
      */
-    private fun mergeWikiPageMarkdown(existingMarkdown: String, draft: WikiPageDraft): String {
-        return when (draft.sourceType) {
-            "wiki_index", "wiki_overview" -> mergeListingPage(
-                existing = existingMarkdown,
-                incoming = draft.markdown,
-                pageTitle = draft.title,
+    private suspend fun mergeWikiPageMarkdown(
+        existingMarkdown: String,
+        draft: WikiPageDraft,
+        sourceTitle: String,
+    ): String {
+        if (existingMarkdown.isBlank()) return draft.markdown
+        if (existingMarkdown == draft.markdown) return existingMarkdown
+        if (draft.sourceType == "wiki_log") {
+            return existingMarkdown.trimEnd() + "\n\n" + stripFrontMatter(draft.markdown).trim()
+        }
+        if (draft.sourceType == "wiki_index" || draft.sourceType == "wiki_overview") {
+            return draft.markdown
+        }
+        val arrayMerged = wikiCompiler.mergeFrontmatterOnly(existingMarkdown, draft.markdown)
+        if (stripFrontMatter(existingMarkdown).trim() == stripFrontMatter(arrayMerged).trim()) {
+            return arrayMerged
+        }
+        return try {
+            val candidate = requestAiMerge(existingMarkdown, arrayMerged, sourceTitle)
+            if (!IngestParityCore.acceptsLlmMerge(existingMarkdown, arrayMerged, candidate)) {
+                backupMergeFallback(draft, existingMarkdown)
+                arrayMerged
+            } else {
+                wikiCompiler.mergeFrontmatterOnly(existingMarkdown, candidate)
+            }
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            backupMergeFallback(draft, existingMarkdown)
+            arrayMerged
+        }
+    }
+
+    private fun backupMergeFallback(draft: WikiPageDraft, existingMarkdown: String) {
+        runCatching {
+            val page = draft.wikiPath ?: draft.title
+            fileStore.writeBackup(
+                "wiki-merge-${page}-${System.currentTimeMillis()}.md",
+                existingMarkdown,
             )
-            "wiki_entity", "wiki_concept" -> mergeEntityPageMarkdown(
-                existing = existingMarkdown,
-                incoming = draft.markdown,
-                pageTitle = draft.title,
-            )
-            else -> wikiCompiler.merge(existingMarkdown, draft.markdown, draft.title)
         }
     }
 

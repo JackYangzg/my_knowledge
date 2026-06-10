@@ -5,22 +5,12 @@ import com.my.knowledge.data.db.entity.ProcessingTaskEntity
 import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * CQ-12 / ARCH-6: contract for the ingest cache fast-path.
- *
- *   1. Cache hit requires a *different* `source_document.id` with
- *      the same `sha256` whose status reached `STATUS_GENERATED`.
- *   2. The previous source's `analysis_result.promptVersion` must
- *      match [PromptVersions.INGEST_ANALYSIS_V1] — a previous
- *      analysis produced under an older prompt invalidates the hit
- *      so the pipeline reruns against the new prompt.
- *   3. `"reprocess": true` in the task inputJson is an explicit
- *      user override that always returns a miss.
- *   4. A blank sha256, a self-match, a missing analysis row, or a
- *      previous source still in flight all return a miss.
+ * llm_wiki parity contract: content hash alone is never enough to
+ * reuse ingest artifacts because the source path is written into
+ * page frontmatter.
  */
 class IngestCacheTest {
 
@@ -92,7 +82,7 @@ class IngestCacheTest {
     )
 
     @Test
-    fun `cache hit when sibling source is generated under current prompt`() = runBlocking {
+    fun `same bytes under a different source identity never hit`() = runBlocking {
         val sourceDao = IngestCacheFakeSourceDao(
             byId = mapOf("src-new" to makeSource("src-new", "abc")),
             bySha = mapOf("abc" to makeSource("src-prev", "abc")),
@@ -101,7 +91,7 @@ class IngestCacheTest {
             bySource = mapOf("src-prev" to makeAnalysis("src-prev")),
         )
         val cache = IngestCache(sourceDao, analysisDao)
-        assertTrue(cache.isHit(makeTask("src-new")))
+        assertFalse(cache.isHit(makeTask("src-new")))
     }
 
     @Test

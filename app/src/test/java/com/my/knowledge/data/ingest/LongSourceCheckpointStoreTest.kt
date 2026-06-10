@@ -9,22 +9,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 
-/**
- * T3 migration test — locks the7-day TTL contract for
- * [LongSourceCheckpointStore.load]. Mirrors the design's
- * "Checkpoint TTL & invalidation spec" §5:
- *
- *   - TTL = 7 days
- *   - checkpoint older than 7d → load returns null (start from chunk 1)
- *   - checkpoint within 7d → load returns the checkpoint as before
- *
- * Boundary semantics:
- *   - now - 7d + 1s → PASS (still within TTL)
- *   - now - 7d - 1ms → FAIL (TTL expired)
- *   - updatedAt = 0 (legacy pre-TTL field) → treat as never-stale
- *     so existing on-disk P0-3 checkpoints aren't mass-purged on first
- *     read after this code lands.
- */
+/** Checkpoints remain resumable until the complete ingest succeeds. */
 class LongSourceCheckpointStoreTest {
 
     @get:Rule
@@ -76,7 +61,7 @@ class LongSourceCheckpointStoreTest {
     }
 
     @Test
-    fun load_returnsNullWhenCheckpointIsStale() {
+    fun load_keepsOldCompatibleCheckpointUntilSuccessfulIngestClearsIt() {
         val eightDaysAgoMs = nowMs() - (7L * 24 * 60 * 60 * 1000) - 1
         val cp = validCheckpoint(
             updatedAt = eightDaysAgoMs,
@@ -85,7 +70,7 @@ class LongSourceCheckpointStoreTest {
         )
         assertTrue("save must succeed", store().save(path(), cp))
         val loaded = store().load(path(), matchingParams())
-        assertNull("checkpoint older than 7d must return null", loaded)
+        assertNotNull("age alone must not discard resumable work", loaded)
     }
 
     @Test
