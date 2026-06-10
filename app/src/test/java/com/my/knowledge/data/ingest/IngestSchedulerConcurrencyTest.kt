@@ -199,6 +199,7 @@ private class FakeTaskDao : ProcessingTaskDao {
     override suspend fun getRetryableTask() = notImpl("getRetryableTask")
     override fun observeActiveTaskCount() = notImpl("observeActiveTaskCount")
     override fun observeFailedTaskCount() = notImpl("observeFailedTaskCount")
+    override suspend fun countActive() = notImpl("countActive")
     override suspend fun insert(task: ProcessingTaskEntity) = notImpl("insert")
     override suspend fun update(task: ProcessingTaskEntity) = notImpl("update")
     override suspend fun updateStatus(id: String, status: String, updatedAt: Long, finishedAt: Long?) = notImpl("updateStatus")
