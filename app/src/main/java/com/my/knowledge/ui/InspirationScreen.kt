@@ -120,8 +120,7 @@ fun InspirationScreen(
     // Append a finalized voice transcript to the editor. Live partial
     // frames are NOT mirrored into the editor — they only render inside
     // the popup VoiceRealtimePanel. The editor receives the utterance
-    // once, on finalization (or when the user taps stop while a partial
-    // is still in flight).
+    // once, when the server marks the utterance as definite.
     fun appendVoiceFinal(rawText: String) {
         val transcript = rawText.trim()
         if (transcript.isBlank()) return
@@ -241,7 +240,6 @@ fun InspirationScreen(
     // recomposition and the system back is free to navigate again.
     BackHandler(enabled = showEditor) {
         if (voiceState.isRecording) {
-            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
         if (viewModel.isDirty) {
@@ -267,19 +265,8 @@ fun InspirationScreen(
         voiceService.startRealtimeTranscription()
     }
 
-    // T6: 200ms 防双击 — voiceService.stopRecording() 是 async,UI 上 isRecording
-    // 翻转需要 50-200ms。用户单击节奏若被识别为系统级 double-tap 抖动,第二次 tap
-    // 会被误判。简单 guard: 200ms 内重复点击视为同一 tap。
-    var lastVoiceTapMs = 0L
-
     fun stopSpeechInput() {
-        val now = System.currentTimeMillis()
-        if (now - lastVoiceTapMs < 200) return  // debounce
-        lastVoiceTapMs = now
-        if (voiceState.isRecording) {
-            appendVoiceFinal(voiceState.partialTranscript)
-            voiceService.stopRecording()
-        }
+        voiceService.stopRecording()
     }
 
     fun saveDirectly() {
@@ -291,7 +278,6 @@ fun InspirationScreen(
 
     fun requestSave() {
         if (voiceState.isRecording) {
-            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
         saveDirectly()
@@ -331,7 +317,6 @@ fun InspirationScreen(
                     IconButton(
                         onClick = {
                             if (voiceState.isRecording) {
-                                appendVoiceFinal(voiceState.partialTranscript)
                                 voiceService.stopRecording()
                             }
                             // Unsaved-changes guard. Read `isDirty`
@@ -415,13 +400,10 @@ fun InspirationScreen(
 
             // Quick Actions / Voice (Hidden in preview mode)
             if (mode == "edit") {
-                if (voiceState.isRecording || voiceState.partialTranscript.isNotBlank() || voiceState.errorMessage != null) {
+                if (voiceState.isRecording || voiceState.isStopping || voiceState.partialTranscript.isNotBlank() || voiceState.errorMessage != null) {
                     VoiceRealtimePanel(
                         state = voiceState,
-                        onStop = {
-                            appendVoiceFinal(voiceState.partialTranscript)
-                            voiceService.stopRecording()
-                        },
+                        onStop = ::stopSpeechInput,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 } else {
@@ -511,8 +493,8 @@ fun InspirationScreen(
 
         Surface(
             shape = CircleShape,
-            color = if (voiceState.isRecording) palette.borderBrand else palette.brand,
-            contentColor = if (voiceState.isRecording) palette.brand else Color.White,
+            color = if (voiceState.isRecording || voiceState.isStopping) palette.borderBrand else palette.brand,
+            contentColor = if (voiceState.isRecording || voiceState.isStopping) palette.brand else Color.White,
             shadowElevation = 12.dp,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
@@ -520,7 +502,7 @@ fun InspirationScreen(
                 .padding(bottom = 24.dp, end = 24.dp)
                 .size(72.dp)
                 .clickable {
-                    if (voiceState.isRecording) {
+                    if (voiceState.isRecording || voiceState.isStopping) {
                         stopSpeechInput()
                     } else {
                         val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -533,7 +515,7 @@ fun InspirationScreen(
                 }
         ) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                if (voiceState.isRecording) {
+                if (voiceState.isRecording || voiceState.isStopping) {
                     CircularProgressIndicator(modifier = Modifier.size(36.dp), color = palette.brand, strokeWidth = 3.dp)
                 } else {
                     Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(36.dp))
@@ -942,7 +924,9 @@ fun VoiceRealtimePanel(state: VoiceRecognitionState, onStop: () -> Unit, modifie
                 Box(modifier = Modifier.size(10.dp).background(if (state.errorMessage == null) Color(0xFF22C55E) else palette.semanticError, CircleShape))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = state.statusMessage, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-                TextButton(onClick = onStop) { Text(stringResource(R.string.auto_a17f70a8)) }
+                TextButton(onClick = onStop, enabled = !state.isStopping) {
+                    Text(stringResource(R.string.auto_a17f70a8))
+                }
             }
             val displayText = state.errorMessage ?: state.partialTranscript.ifBlank { "正在等待语音..." }
             Text(text = displayText, fontSize = 14.sp, lineHeight = 21.sp, color = Color(0xFF334155))

@@ -155,7 +155,6 @@ fun ReusableNoteEditor(
 
     LaunchedEffect(voiceState.isRecording, voiceState.statusMessage) {
         if (!voiceState.isRecording && voiceState.statusMessage.contains("30 秒")) {
-            appendVoiceFinal(voiceState.partialTranscript)
             Toast.makeText(context, "30 秒未检测到人声，已停止录音", Toast.LENGTH_SHORT).show()
         }
     }
@@ -241,23 +240,12 @@ fun ReusableNoteEditor(
         voiceService.startRealtimeTranscription()
     }
 
-    // T6: 200ms 防双击 (跟 InspirationScreen 同步)。根因可能是 stopRecording() async
-    // 导致 voiceState.isRecording 翻转 50-200ms,期间用户单击被识别成 start+stop。
-    var lastVoiceTapMs = 0L
-
     fun stopSpeechInput() {
-        val now = System.currentTimeMillis()
-        if (now - lastVoiceTapMs < 200) return  // debounce
-        lastVoiceTapMs = now
-        if (voiceState.isRecording) {
-            appendVoiceFinal(voiceState.partialTranscript)
-            voiceService.stopRecording()
-        }
+        voiceService.stopRecording()
     }
 
     fun requestSave() {
         if (voiceState.isRecording) {
-            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
         scope.launch {
@@ -275,7 +263,6 @@ fun ReusableNoteEditor(
 
     BackHandler {
         if (voiceState.isRecording) {
-            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
         if (viewModel.isDirty) {
@@ -297,7 +284,6 @@ fun ReusableNoteEditor(
                     IconButton(
                         onClick = {
                             if (voiceState.isRecording) {
-                                appendVoiceFinal(voiceState.partialTranscript)
                                 voiceService.stopRecording()
                             }
                             if (viewModel.isDirty) {
@@ -396,13 +382,10 @@ fun ReusableNoteEditor(
 
             // Quick actions (image / attachment) in edit mode
             if (mode == "edit") {
-                if (voiceState.isRecording || voiceState.partialTranscript.isNotBlank() || voiceState.errorMessage != null) {
+                if (voiceState.isRecording || voiceState.isStopping || voiceState.partialTranscript.isNotBlank() || voiceState.errorMessage != null) {
                     VoiceRealtimePanel(
                         state = voiceState,
-                        onStop = {
-                            appendVoiceFinal(voiceState.partialTranscript)
-                            voiceService.stopRecording()
-                        },
+                        onStop = ::stopSpeechInput,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
                     )
                 } else {
@@ -481,7 +464,7 @@ fun ReusableNoteEditor(
         // Voice button (long-press)
         Surface(
             shape = CircleShape,
-            color = if (voiceState.isRecording) palette.borderBrand else palette.brand,
+            color = if (voiceState.isRecording || voiceState.isStopping) palette.borderBrand else palette.brand,
             contentColor = Color.White,
             shadowElevation = 12.dp,
             modifier = Modifier
@@ -490,7 +473,7 @@ fun ReusableNoteEditor(
                 .padding(bottom = 24.dp, end = 24.dp)
                 .size(72.dp)
                 .clickable {
-                    if (voiceState.isRecording) {
+                    if (voiceState.isRecording || voiceState.isStopping) {
                         stopSpeechInput()
                     } else {
                         val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
@@ -503,7 +486,7 @@ fun ReusableNoteEditor(
                 }
         ) {
             Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                if (voiceState.isRecording) {
+                if (voiceState.isRecording || voiceState.isStopping) {
                     CircularProgressIndicator(modifier = Modifier.size(36.dp), color = palette.brand, strokeWidth = 3.dp)
                 } else {
                     Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(36.dp))
@@ -599,4 +582,3 @@ private fun DropdownMenuTextItem(
  * Voice append helper lives in `VoiceTextAppender.kt` so it can be
  * unit-tested directly. See [appendVoiceText].
  */
-

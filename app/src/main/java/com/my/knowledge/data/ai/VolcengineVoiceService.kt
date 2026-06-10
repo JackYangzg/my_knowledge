@@ -28,7 +28,6 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import okio.ByteString.Companion.toByteString
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -42,6 +41,7 @@ import kotlin.math.sqrt
 
 data class VoiceRecognitionState(
     val isRecording: Boolean = false,
+    val isStopping: Boolean = false,
     val isConnected: Boolean = false,
     val statusMessage: String = "语音待命",
     val partialTranscript: String = "",
@@ -72,14 +72,18 @@ class VolcengineVoiceService(private val context: Context) {
 
     private var webSocket: WebSocket? = null
     private var recordingJob: Job? = null
+    private var finishJob: Job? = null
     private var sequence = 1
     @Volatile private var shouldRecord = false
+    @Volatile private var isStopping = false
     @Volatile private var lastVoiceAt = 0L
+    private var pendingStopMessage = "语音识别已停止"
+    private val transcriptParser = VolcengineTranscriptParser()
 
     private val config get() = KnowledgeManager.modelConfig
 
     fun startRealtimeTranscription() {
-        if (shouldRecord) return
+        if (shouldRecord || isStopping) return
         val apiKey = config.voiceApiKey.trim()
         val appId = config.voiceAppId.trim()
         if (apiKey.isBlank() || appId.isBlank()) {
@@ -91,6 +95,7 @@ class VolcengineVoiceService(private val context: Context) {
         }
 
         shouldRecord = true
+        transcriptParser.reset()
         lastVoiceAt = System.currentTimeMillis()
         sequence = 1
         _state.value = VoiceRecognitionState(
@@ -109,6 +114,11 @@ class VolcengineVoiceService(private val context: Context) {
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (!shouldRecord) {
+                    webSocket.close(1000, "client stopped before connection")
+                    markStopped(pendingStopMessage)
+                    return
+                }
                 _state.update {
                     it.copy(isConnected = true, statusMessage = "正在听写，中英双语实时识别中")
                 }
@@ -139,16 +149,52 @@ class VolcengineVoiceService(private val context: Context) {
     }
 
     fun stopRecording() {
-        if (!shouldRecord && !_state.value.isRecording) return
+        requestStop("语音识别已停止")
+    }
+
+    private fun requestStop(message: String) {
+        if (isStopping || (!shouldRecord && !_state.value.isRecording)) return
         shouldRecord = false
-        _state.update { it.copy(statusMessage = "正在停止语音识别...") }
+        isStopping = true
+        pendingStopMessage = message
+        _state.update {
+            it.copy(
+                isRecording = false,
+                isStopping = true,
+                statusMessage = "正在完成最后一句..."
+            )
+        }
+        val socket = webSocket
+        if (socket == null || !_state.value.isConnected) {
+            socket?.close(1000, "client stopped")
+            markStopped(message)
+            return
+        }
+
+        socket.send(
+            buildFrame(
+                AUDIO_ONLY_REQUEST,
+                NEG_WITH_SEQUENCE,
+                ByteArray(0),
+                -sequence++
+            ).toByteString()
+        )
         recordingJob?.cancel()
-        webSocket?.close(1000, "client stopped")
-        markStopped("语音识别已停止")
+        finishJob?.cancel()
+        finishJob = serviceScope.launch {
+            delay(FINAL_RESULT_GRACE_MS)
+            socket.close(1000, "final result timeout")
+            markStopped(message)
+        }
     }
 
     fun release() {
-        stopRecording()
+        shouldRecord = false
+        isStopping = false
+        finishJob?.cancel()
+        recordingJob?.cancel()
+        webSocket?.cancel()
+        webSocket = null
         serviceScope.cancel()
     }
 
@@ -168,7 +214,7 @@ class VolcengineVoiceService(private val context: Context) {
             })
             put("request", JSONObject().apply {
                 put("model_name", "bigmodel")
-                put("result_type", "partial")
+                put("result_type", "single")
                 put("show_utterances", true)
                 put("enable_punc", true)
                 put("enable_itn", true)
@@ -234,7 +280,7 @@ class VolcengineVoiceService(private val context: Context) {
                         )
 
                         if (now - lastVoiceAt >= SILENCE_TIMEOUT_MS) {
-                            markStopped("30 秒未检测到人声，已自动停止")
+                            requestStop("30 秒未检测到人声，已自动停止")
                             break
                         }
                     }
@@ -254,8 +300,9 @@ class VolcengineVoiceService(private val context: Context) {
                     }
                 }
                 audioRecord.release()
-                // Do not send finish frame on manual stop to avoid extra processing
-                webSocket.close(1000, "audio finished")
+                if (!isStopping) {
+                    webSocket.close(1000, "audio finished")
+                }
             }
         }
     }
@@ -320,64 +367,22 @@ class VolcengineVoiceService(private val context: Context) {
     private fun handleJsonPayload(text: String) {
         runCatching {
             val json = JSONObject(text)
-            val transcript = findTranscript(json).trim()
-            if (transcript.isBlank()) return
-            if (isFinalPayload(json)) {
-                serviceScope.launch { _finalTranscriptFlow.emit(transcript) }
-                _state.update { it.copy(partialTranscript = "") }
-            } else {
-                _state.update { it.copy(partialTranscript = transcript) }
+            val update = transcriptParser.parse(json)
+            if (update.finalized.isNotEmpty()) {
+                serviceScope.launch {
+                    update.finalized.forEach { transcript ->
+                        _finalTranscriptFlow.emit(transcript)
+                    }
+                }
+            }
+            _state.update { it.copy(partialTranscript = update.partial) }
+            if (isStopping && update.finalized.isNotEmpty()) {
+                val message = pendingStopMessage
+                webSocket?.close(1000, "final result received")
+                markStopped(message)
             }
         }.onFailure {
             Log.e(TAG, "Failed to parse ASR JSON: $text", it)
-        }
-    }
-
-    private fun findTranscript(value: Any?): String {
-        return when (value) {
-            is JSONObject -> {
-                // With show_utterances=true, Volcengine returns an
-                // "utterances" array. Each utterance is a recognized
-                // segment and the LATEST one is the new content since
-                // the last partial. The top-level "text" is the
-                // cumulative full transcript (server's "context for
-                // error correction") — using it makes the consumer see
-                // every previous utterance re-emitted and the text
-                // box fills with duplicates. Prefer the last utterance.
-                value.optJSONArray("utterances")?.let { arr ->
-                    if (arr.length() > 0) {
-                        val last = arr.optJSONObject(arr.length() - 1)
-                        val text = last?.optString("text")?.takeIf { it.isNotBlank() }
-                        if (text != null) return text
-                    }
-                }
-                // Fall back to top-level text fields (cumulative).
-                // Used when show_utterances is off or absent.
-                val directKeys = listOf("text", "utterance", "transcript", "sentence")
-                directKeys.firstNotNullOfOrNull { key ->
-                    value.optString(key).takeIf { it.isNotBlank() }
-                } ?: value.keys().asSequence()
-                    .mapNotNull { key -> findTranscript(value.opt(key)).takeIf { it.isNotBlank() } }
-                    .firstOrNull()
-                .orEmpty()
-            }
-            is JSONArray -> (value.length() - 1 downTo 0)
-                .mapNotNull { index -> findTranscript(value.opt(index)).takeIf { it.isNotBlank() } }
-                .firstOrNull()
-                .orEmpty()
-            else -> ""
-        }
-    }
-
-    private fun isFinalPayload(value: Any?): Boolean {
-        return when (value) {
-            is JSONObject -> {
-                listOf("definite", "is_final", "final").any { key ->
-                    value.has(key) && value.optBoolean(key, false)
-                } || value.keys().asSequence().any { key -> isFinalPayload(value.opt(key)) }
-            }
-            is JSONArray -> (0 until value.length()).any { index -> isFinalPayload(value.opt(index)) }
-            else -> false
         }
     }
 
@@ -401,11 +406,16 @@ class VolcengineVoiceService(private val context: Context) {
 
     private fun markStopped(message: String, error: String? = null) {
         shouldRecord = false
+        isStopping = false
+        finishJob?.cancel()
+        finishJob = null
         recordingJob?.cancel()
+        recordingJob = null
         webSocket = null
         _state.update {
             it.copy(
                 isRecording = false,
+                isStopping = false,
                 isConnected = false,
                 statusMessage = message,
                 rms = 0f,
@@ -431,6 +441,7 @@ class VolcengineVoiceService(private val context: Context) {
         private const val SAMPLE_RATE = 16_000
         private const val AUDIO_FRAME_BYTES = 3_200
         private const val SILENCE_TIMEOUT_MS = 30_000L
+        private const val FINAL_RESULT_GRACE_MS = 1_500L
         private const val VOICE_RMS_THRESHOLD = 0.012f
 
         private const val PROTOCOL_VERSION = 1
