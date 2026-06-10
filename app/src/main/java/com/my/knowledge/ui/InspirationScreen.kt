@@ -97,12 +97,13 @@ fun InspirationScreen(
 
     val voiceService = remember { VolcengineVoiceService(context) }
     val voiceState by voiceService.stateFlow.collectAsState()
-    
-    var preVoiceContent by remember { mutableStateOf("") }
-    var sessionCommittedText by remember { mutableStateOf("") }
-    // 上次 commit 时服务端 partial 的快照. 用来计算"自上次 commit 以来
-    // 服务端新追加的部分" (delta), 避免把服务端用来纠错的累积上文重写一遍.
-    var lastPartialAtCommit by remember { mutableStateOf("") }
+
+    // Per-session dedup tracker. Each voice session starts fresh; we
+    // append every distinct final transcript exactly once. The editor's
+    // prior content is ALWAYS preserved — voice never overwrites typed
+    // text, and a second recording session starts from whatever the
+    // first session left behind.
+    var lastAppendedFinal by remember { mutableStateOf("") }
 
     var contentValue by remember {
         mutableStateOf(TextFieldValue(content, selection = TextRange(content.length)))
@@ -116,53 +117,29 @@ fun InspirationScreen(
         }
     }
 
-    fun commitVoiceTranscript(rawText: String) {
-        val transcript = normalizeVoiceText(rawText)
+    // Append a finalized voice transcript to the editor. Live partial
+    // frames are NOT mirrored into the editor — they only render inside
+    // the popup VoiceRealtimePanel. The editor receives the utterance
+    // once, on finalization (or when the user taps stop while a partial
+    // is still in flight).
+    fun appendVoiceFinal(rawText: String) {
+        val transcript = rawText.trim()
         if (transcript.isBlank()) return
+        if (transcript == lastAppendedFinal) return  // dedup
+        lastAppendedFinal = transcript
 
-        // 服务端 partial 是**累积**的 (每一帧都带全部上文, 服务端用上
-        // 文来纠错, 比如把"很"改成"真"的时候会把整句重发). 上一轮
-        // fix (delta 模式) 算两次 partial 的 LCP 试图抠增量, 但服务
-        // 端纠错后整段重发的话, LCP 命中不到, 把"旧段+新段"重写一
-        // 遍导致"今天天气很好今天天气真好"这种重复. 再上一轮 fix
-        // (service 端取最后一个 utterance) 也是猜 API 结构, 没
-        // 真正修.
-
-        // 唯一对所有服务端行为都正确的策略: **用最新 partial 覆盖**
-        // session. 累积型 partial 的"最新一帧"永远是当前最全的最正
-        // 的文本, 没有重复. delta 累加是错的根源, 直接放弃累加.
-        if (transcript == sessionCommittedText) {
-            // 已经是最新的 (可能是同一次按停里被多次 commit). 仍要刷
-            // lastPartialAtCommit, 否则下一次 commit 看到的是陈旧值.
-            lastPartialAtCommit = transcript
-            return
-        }
-        sessionCommittedText = transcript
-        lastPartialAtCommit = transcript
-
-        val base = preVoiceContent.trimEnd()
-        val nextTotalText = mergeWithOverlap(base, sessionCommittedText)
-
-        contentValue = TextFieldValue(nextTotalText, selection = TextRange(nextTotalText.length))
-        viewModel.content = nextTotalText
+        val current = contentValue.text
+        val joined = appendVoiceText(current, transcript)
+        contentValue = TextFieldValue(joined, selection = TextRange(joined.length))
+        viewModel.content = joined
         viewModel.markVoiceTranscriptionContent()
     }
 
-    /**
-     * 算两个连续 partial 之间的 delta (服务端新追加的内容).
-     *
-     *  - prev == "" (首次 commit)       → 全部都是新内容, 返回 curr
-     *  - prev 是 curr 的前缀           → delta = curr.removePrefix(prev)
-     *  - curr 是 prev 的子串           → 服务端做了回退/纠错缩短, 没有新内容
-     *  - 部分重叠 (服务端重处理了上文)  → 返回整个 curr, 由后续 mergeWithOverlap
-     *                                    跟 sessionCommittedText 做去重
-     */
-
-    val commitVoiceTranscriptLatest by rememberUpdatedState(newValue = ::commitVoiceTranscript)
+    val appendVoiceFinalLatest by rememberUpdatedState(newValue = ::appendVoiceFinal)
 
     LaunchedEffect(voiceService) {
         voiceService.finalTranscriptFlow.collect { finalTranscript ->
-            commitVoiceTranscriptLatest(finalTranscript)
+            appendVoiceFinalLatest(finalTranscript)
         }
     }
 
@@ -185,7 +162,7 @@ fun InspirationScreen(
 
     LaunchedEffect(voiceState.isRecording, voiceState.statusMessage) {
         if (!voiceState.isRecording && voiceState.statusMessage.contains("30 秒")) {
-            commitVoiceTranscriptLatest(voiceState.partialTranscript)
+            appendVoiceFinalLatest(voiceState.partialTranscript)
             Toast.makeText(context, "30 秒未检测到人声，已停止录音", Toast.LENGTH_SHORT).show()
         }
     }
@@ -264,7 +241,7 @@ fun InspirationScreen(
     // recomposition and the system back is free to navigate again.
     BackHandler(enabled = showEditor) {
         if (voiceState.isRecording) {
-            commitVoiceTranscript(voiceState.partialTranscript)
+            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
         if (viewModel.isDirty) {
@@ -283,9 +260,10 @@ fun InspirationScreen(
         if (voiceState.isRecording) {
             return
         }
-        preVoiceContent = contentValue.text
-        sessionCommittedText = ""
-        lastPartialAtCommit = ""
+        // New session: dedup tracker reset; the editor's current text
+        // is left untouched and any subsequent finalized utterance will
+        // be appended to it.
+        lastAppendedFinal = ""
         voiceService.startRealtimeTranscription()
     }
 
@@ -299,7 +277,7 @@ fun InspirationScreen(
         if (now - lastVoiceTapMs < 200) return  // debounce
         lastVoiceTapMs = now
         if (voiceState.isRecording) {
-            commitVoiceTranscript(voiceState.partialTranscript)
+            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
     }
@@ -313,7 +291,7 @@ fun InspirationScreen(
 
     fun requestSave() {
         if (voiceState.isRecording) {
-            commitVoiceTranscript(voiceState.partialTranscript)
+            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
         saveDirectly()
@@ -353,7 +331,7 @@ fun InspirationScreen(
                     IconButton(
                         onClick = {
                             if (voiceState.isRecording) {
-                                commitVoiceTranscript(voiceState.partialTranscript)
+                                appendVoiceFinal(voiceState.partialTranscript)
                                 voiceService.stopRecording()
                             }
                             // Unsaved-changes guard. Read `isDirty`
@@ -441,7 +419,7 @@ fun InspirationScreen(
                     VoiceRealtimePanel(
                         state = voiceState,
                         onStop = {
-                            commitVoiceTranscript(voiceState.partialTranscript)
+                            appendVoiceFinal(voiceState.partialTranscript)
                             voiceService.stopRecording()
                         },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
@@ -503,13 +481,8 @@ fun InspirationScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         
                         TextField(
-                            value = if (voiceState.isRecording) {
-                                val liveText = mergeWithOverlap(preVoiceContent, mergeWithOverlap(sessionCommittedText, voiceState.partialTranscript))
-                                TextFieldValue(liveText, selection = TextRange(liveText.length))
-                            } else {
-                                contentValue
-                            },
-                            onValueChange = { 
+                            value = contentValue,
+                            onValueChange = {
                                 if (!voiceState.isRecording) {
                                     contentValue = it
                                     viewModel.content = it.text
@@ -691,20 +664,9 @@ private fun InspirationHomeScreen(
             contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // RELIAB-1 N4: if the user hasn't whitelisted us from
-            // battery optimizations, the in-flight LLM request can be
-            // silently killed by aggressive OEM ROMs once the screen
-            // turns off. A one-tap banner pointing at the system
-            // settings page fixes ~80% of "为什么后台跑着跑着就断流"
-            // support load. isIgnoring() is a no-op on API < 23, so
-            // the banner stays hidden on older devices.
-            if (!BatteryOptimizationPrompt.isIgnoring(context)) {
-                item {
-                    BatteryWhitelistBanner(
-                        onClick = { BatteryOptimizationPrompt.launch(context) }
-                    )
-                }
-            }
+            // RELIAB-1 N4: battery-optimization banner removed at
+            // user request; the whitelist check still runs at ingest
+            // entry via ProcessingTaskScheduler.warnIfNotIgnoring().
             item {
                 InspirationThreadCard(thread = thread, itemCount = items.size)
             }
@@ -988,134 +950,14 @@ fun VoiceRealtimePanel(state: VoiceRecognitionState, onStop: () -> Unit, modifie
     }
 }
 
-private fun normalizeVoiceText(text: String): String = text.replace(Regex("\\s+"), " ").replace(Regex("([，。！？,.!?])\\1+"), "$1").trim()
-
 /**
- * 算两个连续 partial 之间的 delta (服务端新追加的内容).
- *
- *  - prev == "" (首次 commit)       → 全部都是新内容, 返回 curr
- *  - prev 是 curr 的前缀           → delta = curr.removePrefix(prev)
- *  - curr 是 prev 的子串           → 服务端做了回退/纠错缩短, 没有新内容
- *  - 部分重叠 (服务端重处理了上文)  → 返回整个 curr, 由后续 mergeWithOverlap
- *                                    跟 sessionCommittedText 做去重
+ * Voice append helper lives in `VoiceTextAppender.kt` so it can be
+ * unit-tested directly. See [appendVoiceText].
  */
-private fun extractDelta(prev: String, curr: String): String {
-    if (prev.isEmpty()) return curr
-    if (curr.isEmpty()) return ""
-    val maxLen = minOf(prev.length, curr.length)
-    var i = 0
-    while (i < maxLen && prev[i] == curr[i]) i++
-    return when {
-        i == prev.length -> curr.substring(i)
-        i == curr.length -> ""
-        else -> curr
-    }
-}
 
-private fun mergeWithOverlap(old: String, new: String): String {
-    val s1 = old.trim()
-    val s2 = new.trim()
-    if (s1.isEmpty()) return s2
-    if (s2.isEmpty()) return s1
-
-    if (isSimilar(s1, s2)) return s2
-    if (containsSimilar(s1, s2)) return s1
-    if (containsSimilar(s2, s1)) return s2
-
-    val maxSearch = minOf(s1.length, s2.length, 100)
-    for (len in maxSearch downTo 1) {
-        val suffix = s1.takeLast(len)
-        val prefix = s2.take(len)
-        if (isSimilar(suffix, prefix)) {
-            return s1.dropLast(len) + s2
-        }
-    }
-
-    val lastChar = s1.lastOrNull() ?: ' '
-    return when {
-        lastChar == '\n' -> s1 + s2
-        isChinese(lastChar) -> s1 + s2
-        lastChar.isLetterOrDigit() -> "$s1 $s2"
-        else -> "$s1\n$s2"
-    }
-}
-
-private fun isSimilar(a: String, b: String): Boolean {
-    val ca = cleanText(a)
-    val cb = cleanText(b)
-    return ca.isNotEmpty() && ca == cb
-}
-
-private fun containsSimilar(container: String, content: String): Boolean {
-    val cContainer = cleanText(container)
-    val cContent = cleanText(content)
-    return cContainer.contains(cContent)
-}
-
-private fun cleanText(text: String): String =
-    text.lowercase().replace(Regex("[\\p{P}\\s]+"), "")
-
-private fun isChinese(c: Char): Boolean = c.code in 0x4E00..0x9FFF
 
 private fun formatInspirationTime(timestamp: Long): String =
     SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(timestamp))
-
-/**
- * N4 (RELIAB-1 PR-N4): lightweight banner that nudges the user to
- * whitelist us from battery optimizations. Sits at the top of the
- * inspiration home so the user sees it before kicking off any
- * AI analysis. The click target is a single Surface (not a wrapping
- * Box + Text) so the whole card is tappable, which matters on
- * small phones — the user shouldn't have to aim for a 16dp icon.
- */
-@Composable
-private fun BatteryWhitelistBanner(onClick: () -> Unit) {
-
-    val palette = LocalPalette.current
-
-    val spacing = LocalSpacing.current
-    Surface(
-        onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(spacing.sm),
-        color = Color(0xFFFFF7ED),
-        border = BorderStroke(1.dp, Color(0xFFFDBA74))
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Default.BatteryAlert,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = Color(0xFFEA580C)
-            )
-            Spacer(modifier = Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "后台任务可能被系统中断",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFF9A3412)
-                )
-                Text(
-                    "为避免 AI 分析被中断,建议在系统设置中将本应用加入电池白名单",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFC2410C),
-                    lineHeight = 18.sp
-                )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                "去设置 ›",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFFEA580C)
-            )
-        }
-    }
-}
 
 /**
  * THREAD-E3: the "重新演化" button. We keep the same visual weight

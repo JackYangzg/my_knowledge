@@ -98,4 +98,23 @@ object BatteryOptimizationPrompt {
             }
         }
     }
+
+    /**
+     * P1-REL: fire-and-forget warning for callers that are about to
+     * start a long-running background task but don't have a UI
+     * surface to host the full settings prompt. Logs the issue,
+     * shows a Toast (works from the calling Activity scope), and
+     * leaves it to the user to decide whether to whitelist. Never
+     * blocks, never throws — the caller's background work continues
+     * regardless of the whitelist state.
+     */
+    fun warnIfNotIgnoring(context: Context) {
+        if (isIgnoring(context)) return
+        Log.w(TAG, "App is NOT in battery-optimization whitelist; long-running tasks may be killed by OEM doze.")
+        Toast.makeText(
+            context,
+            "后台任务可能因电池优化被中断：建议在设置中将本应用设为「不优化」",
+            Toast.LENGTH_LONG,
+        ).show()
+    }
 }

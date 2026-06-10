@@ -163,6 +163,13 @@ class ProcessingTaskScheduler(
     }
 
     fun scheduleIngestQueue() {
+        // P1-REL: warn the user once they're about to kick off a long
+        // ingest while the app isn't on the battery-optimization
+        // whitelist. OEM ROMs (MIUI / EMUI / ColorOS / OriginOS) freeze
+        // background processes even when our FGS is up, so the user
+        // needs to explicitly whitelist for the long LLM stages to
+        // actually finish in the background.
+        com.my.knowledge.ui.BatteryOptimizationPrompt.warnIfNotIgnoring(appContext)
         IngestRuntime.start(appContext)
         val request = OneTimeWorkRequestBuilder<IngestWorker>()
             .setConstraints(

@@ -33,13 +33,23 @@ class IngestForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val pendingCount = intent?.getIntExtra(EXTRA_PENDING_COUNT, 0) ?: 0
-        // FOREGROUND_SERVICE_TYPE_DATA_SYNC is required on API 30+;
-        // the manifest also declares `dataSync` so the platform can
-        // validate the type matches the actual workload (ingest = sync).
+        // FOREGROUND_SERVICE_TYPE_SPECIAL_USE is required on API 30+;
+        // the manifest declares `specialUse` plus the
+        // PROPERTY_SPECIAL_USE_FGS_SUBTYPE property so the platform
+        // can validate the type matches the actual workload.
+        //
+        // Why specialUse (and not dataSync): `dataSync` FGS is no
+        // longer exempted from Doze on API 28+ — long-running ingest
+        // streams were getting throttled after light-Doze kicked in,
+        // which is exactly the failure mode this service is meant to
+        // prevent. `specialUse` is the only FGS type that fits a
+        // long-running AI pipeline; the manifest property carries
+        // the human-readable reason so Play Store / Doze auditors can
+        // see why we're not using a more specific type.
         startForeground(
             NOTIFICATION_ID,
             buildNotification(pendingCount),
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE,
         )
         return START_STICKY
     }

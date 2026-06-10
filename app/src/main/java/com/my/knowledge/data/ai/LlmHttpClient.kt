@@ -4,6 +4,8 @@ import com.my.knowledge.BuildConfig
 import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
+import java.net.Socket
+import javax.net.SocketFactory
 import java.util.concurrent.TimeUnit
 
 /**
@@ -37,8 +39,24 @@ object LlmHttpClient {
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.MINUTES)
             .writeTimeout(30, TimeUnit.SECONDS)
+            // P1-REL: HTTP/2 PING every 30s. Without this the TCP
+            // socket sits idle while the model is "thinking" between
+            // SSE chunks, and most NATs / carrier gateways silently
+            // drop the connection after ~60-300s of silence. With
+            // HTTP/2 PING the connection stays warm and a silent
+            // half-open surfaces as a failed stream instead of a
+            // 10-minute read timeout. Falls back to no-op on HTTP/1.1.
+            .pingInterval(30, TimeUnit.SECONDS)
             .callTimeout(0, TimeUnit.MILLISECONDS)
             .connectionPool(ConnectionPool(5, 5, TimeUnit.MINUTES))
+            // P1-REL: TCP-level keep-alive on every socket OkHttp opens.
+            // The default Android SocketFactory doesn't enable it, so a
+            // long SSE stream sitting idle between model "thinking"
+            // chunks gets silently dropped by NAT / carrier gateways.
+            // OkHttp's `pingInterval` above covers HTTP/2; this covers
+            // HTTP/1.1 fallbacks (some upstream providers still serve
+            // the `/chat/completions` endpoint over 1.1).
+            .socketFactory(KeepAliveSocketFactory)
             .retryOnConnectionFailure(true)
             .apply {
                 if (BuildConfig.DEBUG) {
@@ -49,4 +67,48 @@ object LlmHttpClient {
             }
             .build()
     }
+}
+
+/**
+ * P1-REL: SocketFactory that flips `SO_KEEPALIVE` (and a short
+ * `SO_LINGER`) on every socket OkHttp opens. We delegate creation to
+ * the platform default factory — only the keep-alive options are
+ * ours — so DNS resolution, TCP setup, and SSL/TLS handshake all
+ * stay on the standard Android path.
+ *
+ * `SO_KEEPALIVE` alone uses the OS default idle probe cadence
+ * (typically 2 hours on Linux), which is far too long for an SSE
+ * stream. We rely on OkHttp's `pingInterval(30s)` to keep HTTP/2
+ * connections warm; for HTTP/1.1, the OS keep-alive is a last-ditch
+ * safety net that catches cases where the gateway drops a silent
+ * socket without sending RST. Better to surface a fast EOF than
+ * wait out the 10-minute read timeout.
+ */
+private object KeepAliveSocketFactory : SocketFactory() {
+    private val delegate: SocketFactory = SocketFactory.getDefault()
+
+    private fun Socket.applyKeepAlive() {
+        try {
+            keepAlive = true
+            // SO_LINGER 5s — force a clean FIN close when the
+            // gateway hangs up, instead of a half-open socket that
+            // confuses OkHttp's connection pool for the next 5
+            // minutes.
+            setSoLinger(true, 5)
+        } catch (_: Throwable) {
+            // Some socket implementations reject setSoLinger
+            // (e.g. already-closed streams); keep-alive is a best-
+            // effort hint, never a hard requirement.
+        }
+    }
+
+    override fun createSocket(): Socket = delegate.createSocket().apply { applyKeepAlive() }
+    override fun createSocket(host: String, port: Int): Socket =
+        delegate.createSocket(host, port).apply { applyKeepAlive() }
+    override fun createSocket(host: String, port: Int, localHost: java.net.InetAddress, localPort: Int): Socket =
+        delegate.createSocket(host, port, localHost, localPort).apply { applyKeepAlive() }
+    override fun createSocket(host: java.net.InetAddress, port: Int): Socket =
+        delegate.createSocket(host, port).apply { applyKeepAlive() }
+    override fun createSocket(address: java.net.InetAddress, port: Int, localAddress: java.net.InetAddress, localPort: Int): Socket =
+        delegate.createSocket(address, port, localAddress, localPort).apply { applyKeepAlive() }
 }
