@@ -28,6 +28,7 @@ class WorkerDependencies private constructor(
             val appContext = context.applicationContext
             val db = AppDatabase.getInstance(appContext)
             val repo: KnowledgeRepository = KnowledgeRepositoryImpl(
+                db,
                 db.knowledgeBaseDao(), db.knowledgeItemDao(),
                 db.processingTaskDao(), db.archiveRecommendationDao(),
                 db.aiConversationDao(), db.aiMessageDao(),

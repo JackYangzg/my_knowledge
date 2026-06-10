@@ -402,6 +402,7 @@ class LlmInspirationThreadWorker(
     }
 
     private fun newRepository(db: AppDatabase): KnowledgeRepository = KnowledgeRepositoryImpl(
+        db,
         db.knowledgeBaseDao(), db.knowledgeItemDao(),
         db.processingTaskDao(), db.archiveRecommendationDao(),
         db.aiConversationDao(), db.aiMessageDao(),

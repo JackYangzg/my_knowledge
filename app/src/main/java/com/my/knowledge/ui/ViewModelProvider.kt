@@ -62,6 +62,7 @@ object DependencyProvider {
     )
 
     fun provideKnowledgeRepository(context: Context) = KnowledgeRepositoryImpl(
+        provideDatabase(context),
         provideDatabase(context).knowledgeBaseDao(),
         provideDatabase(context).knowledgeItemDao(),
         provideDatabase(context).processingTaskDao(),
