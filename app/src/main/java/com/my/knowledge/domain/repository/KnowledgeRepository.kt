@@ -32,6 +32,8 @@ interface KnowledgeRepository {
     suspend fun createItem(item: KnowledgeItemEntity): KnowledgeItemEntity
     suspend fun createUnfiledItemFromNote(noteId: String?, title: String, content: String, sourceType: String = "note"): KnowledgeItemEntity
     suspend fun getItemById(id: String): KnowledgeItemEntity?
+    // T9: 批取 — 避免 N+1
+    suspend fun getItemsByIds(ids: List<String>): List<KnowledgeItemEntity>
     suspend fun getItemBySourceId(sourceId: String): KnowledgeItemEntity?
     suspend fun getByRawNoteId(noteId: String): KnowledgeItemEntity?
     fun observeProcessedItemsBySource(sourceId: String): Flow<List<KnowledgeItemEntity>>

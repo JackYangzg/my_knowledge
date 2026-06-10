@@ -18,6 +18,10 @@ interface KnowledgeItemDao {
     @Query("SELECT COUNT(*) FROM knowledge_item WHERE knowledgeBaseId = :kbId AND deletedAt IS NULL AND sourceType NOT LIKE 'wiki_%'")
     fun observeCountByKb(kbId: String): Flow<Int>
 
+    // T9: 批取 — 避免 N 个 getById N+1。pipeline 一次拿全所有 item,然后本地 Map<id, item>
+    @Query("SELECT * FROM knowledge_item WHERE id IN (:ids) AND deletedAt IS NULL")
+    suspend fun getByIds(ids: List<String>): List<KnowledgeItemEntity>
+
     // Unfiled items
     @Query("""
         SELECT ki.* FROM knowledge_item ki

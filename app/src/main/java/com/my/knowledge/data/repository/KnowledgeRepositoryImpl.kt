@@ -225,6 +225,9 @@ class KnowledgeRepositoryImpl(
 
     override suspend fun getItemById(id: String): KnowledgeItemEntity? = itemDao.getById(id)
 
+    override suspend fun getItemsByIds(ids: List<String>): List<KnowledgeItemEntity> =
+        if (ids.isEmpty()) emptyList() else itemDao.getByIds(ids)
+
     override suspend fun getItemBySourceId(sourceId: String): KnowledgeItemEntity? =
         itemDao.getBySourceId(sourceId)
 

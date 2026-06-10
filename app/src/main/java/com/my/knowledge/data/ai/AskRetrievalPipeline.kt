@@ -56,7 +56,8 @@ class AskRetrievalPipeline(
         askWebEnabled: Boolean = false,
     ): List<RetrievalHit> {
         val topHits = localSearch(question, scopeType, scopeId)
-        val items = topHits.mapNotNull { knowledgeRepository.getItemById(it.itemId) }
+        // T9: 批取 — 一次 DB hit 替代 N 个 getItemById
+        val items = knowledgeRepository.getItemsByIds(topHits.map { it.itemId })
             .distinctBy { it.id }
 
         val relatedItems: List<RetrievalHit> = if (
