@@ -36,7 +36,9 @@
         <activity
             android:name=".ui.share.ShareEntryActivity"
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
             android:label="导入到知识库"
             android:exported="true">
             <intent-filter>
