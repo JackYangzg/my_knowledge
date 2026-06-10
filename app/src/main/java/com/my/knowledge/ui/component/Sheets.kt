@@ -456,9 +456,9 @@ fun AskSheet(
                 }
             } else if (activeConversationId == null) {
                 val suggestions = listOf(
-                    "这个知识库现在主要在讲什么？",
-                    "帮我整理明天会议可以讲的观点",
-                    "最近导入的内容有哪些值得归档？"
+                    "总结这篇文章的核心思想，简明扼要表达",
+                    "提取这篇文章的摘要",
+                    "该文章的主要逻辑和知识脉络是什么"
                 )
                 suggestions.forEach { q ->
                     Surface(
