@@ -513,6 +513,125 @@ class AppDatabaseMigrationTest {
         migrated.close()
     }
 
+    @Test
+    fun migration12To13_addsAskCitationColumnsPreservesRows() {
+        // v12 -> v13: AI 全库对话来源透明
+        // - 加 sourceKnowledgeBaseId (索引) 和 sourceKnowledgeBaseName (无索引)
+        //   到 ask_citation 表
+        // - 老行这两列为 NULL (UI 降级显示「(已删除)」)
+        // - 不 destructive migration,保留所有历史 chat 引用
+        val dbName = "migration-12-13-test"
+        helper.createDatabase(dbName, 12).apply {
+            // v12 ask_citation shape (无 source KB cols)
+            execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `ask_citation` (
+                    `id` TEXT NOT NULL,
+                    `messageId` TEXT NOT NULL,
+                    `itemId` TEXT,
+                    `fragmentId` TEXT,
+                    `quote` TEXT NOT NULL,
+                    `label` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL,
+                    PRIMARY KEY(`id`)
+                )
+                """.trimIndent()
+            )
+            execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_ask_citation_messageId` " +
+                    "ON `ask_citation` (`messageId`)"
+            )
+            execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_ask_citation_itemId` " +
+                    "ON `ask_citation` (`itemId`)"
+            )
+            execSQL(
+                "CREATE INDEX IF NOT EXISTS `index_ask_citation_fragmentId` " +
+                    "ON `ask_citation` (`fragmentId`)"
+            )
+
+            // Seed 2 行历史引用 (没有 source KB 字段)
+            execSQL(
+                "INSERT INTO `ask_citation` " +
+                    "(`id`, `messageId`, `itemId`, `fragmentId`, `quote`, `label`, `createdAt`) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                arrayOf(
+                    "cite-1", "msg-1", "item-1", null,
+                    "历史引用 quote 1", "来自原文", 1_700_000_000_000L,
+                )
+            )
+            execSQL(
+                "INSERT INTO `ask_citation` " +
+                    "(`id`, `messageId`, `itemId`, `fragmentId`, `quote`, `label`, `createdAt`) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                arrayOf(
+                    "cite-2", "msg-2", "item-2", null,
+                    "历史引用 quote 2", "AI推理", 1_700_000_001_000L,
+                )
+            )
+
+            close()
+        }
+
+        val migrated = helper.runMigrationsAndValidate(
+            dbName,
+            13,
+            false,
+            AppDatabase.MIGRATION_12_13
+        )
+
+        // 加了 2 列
+        assertTrue(migrated.hasColumn("ask_citation", "sourceKnowledgeBaseId"))
+        assertTrue(migrated.hasColumn("ask_citation", "sourceKnowledgeBaseName"))
+
+        // 加了新索引
+        assertTrue(
+            "sourceKnowledgeBaseId index should exist post-migration",
+            migrated.hasIndex("index_ask_citation_sourceKnowledgeBaseId")
+        )
+
+        // 2 行老数据保留,新列都为 NULL
+        assertEquals(2, migrated.countOf("ask_citation"))
+        val rowCount = mutableMapOf<String, Pair<String?, String?>>()
+        migrated.query(
+            "SELECT id, sourceKnowledgeBaseId, sourceKnowledgeBaseName FROM ask_citation ORDER BY id ASC"
+        ).use { c ->
+            while (c.moveToNext()) {
+                val id = c.getString(0)
+                val kbId = if (c.isNull(1)) null else c.getString(1)
+                val kbName = if (c.isNull(2)) null else c.getString(2)
+                rowCount[id] = kbId to kbName
+            }
+        }
+        assertEquals(null to null, rowCount["cite-1"])
+        assertEquals(null to null, rowCount["cite-2"])
+
+        // Post-migration smoke: 新插入一行带 source KB 字段,验证读写正常
+        migrated.execSQL(
+            "INSERT INTO `ask_citation` " +
+                "(`id`, `messageId`, `itemId`, `fragmentId`, `quote`, `label`, " +
+                " `createdAt`, `sourceKnowledgeBaseId`, `sourceKnowledgeBaseName`) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            arrayOf(
+                "cite-3", "msg-3", "item-3", null,
+                "新插入的引用", "来自原文",
+                1_700_000_002_000L, "kb-product", "产品手册",
+            )
+        )
+        assertEquals(3, migrated.countOf("ask_citation"))
+
+        migrated.close()
+    }
+
+    private fun androidx.sqlite.db.SupportSQLiteDatabase.hasIndex(indexName: String): Boolean {
+        query(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name=?",
+            arrayOf(indexName)
+        ).use { cursor ->
+            return cursor.moveToFirst()
+        }
+    }
+
     private fun androidx.sqlite.db.SupportSQLiteDatabase.countOf(table: String): Int {
         // FTS4 with `content=` external content tables don't expose
         // a normal rowid count, so we use the docid column directly.
