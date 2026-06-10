@@ -100,20 +100,18 @@ fun ReusableNoteEditor(
     var aiActionStatus by remember { mutableStateOf<String?>(null) }
     var completionMessage by remember { mutableStateOf<String?>(null) }
 
-    var preVoiceContent by remember { mutableStateOf("") }
-    var sessionCommittedText by remember { mutableStateOf("") }
-    var lastPartialAtCommit by remember { mutableStateOf("") }
+    // Per-session dedup so a final transcript isn't appended twice
+    // (e.g. user taps stop right after a final emit — partialTranscript
+    // is already "" by then, but belt-and-braces).
+    var lastAppendedFinal by remember { mutableStateOf("") }
 
     var contentValue by remember {
         mutableStateOf(TextFieldValue(content, selection = TextRange(content.length)))
     }
 
-    // T7: reset voice state on entry so the first commit lands (no leak from
-    // a prior KB session).
+    // Reset transient banners on entry.
     LaunchedEffect(Unit) {
-        preVoiceContent = ""
-        sessionCommittedText = ""
-        lastPartialAtCommit = ""
+        lastAppendedFinal = ""
         aiActionStatus = null
         completionMessage = null
     }
@@ -126,25 +124,26 @@ fun ReusableNoteEditor(
         onDispose { voiceService.release() }
     }
 
-    fun commitVoiceTranscript(rawText: String) {
+    // Append a finalized voice transcript to the editor. The editor's
+    // prior content is ALWAYS preserved — voice never overwrites typed
+    // text, and a second recording session starts from whatever the
+    // first session left behind.
+    fun appendVoiceFinal(rawText: String) {
         val transcript = rawText.trim()
         if (transcript.isBlank()) return
-        if (transcript == sessionCommittedText) {
-            lastPartialAtCommit = transcript
-            return
-        }
-        sessionCommittedText = transcript
-        lastPartialAtCommit = transcript
-        val base = preVoiceContent.trimEnd()
-        val nextTotalText = mergeWithOverlap(base, sessionCommittedText)
-        contentValue = TextFieldValue(nextTotalText, selection = TextRange(nextTotalText.length))
-        viewModel.content = nextTotalText
+        if (transcript == lastAppendedFinal) return  // dedup
+        lastAppendedFinal = transcript
+
+        val current = contentValue.text
+        val joined = appendVoiceText(current, transcript)
+        contentValue = TextFieldValue(joined, selection = TextRange(joined.length))
+        viewModel.content = joined
         viewModel.markVoiceTranscriptionContent()
     }
 
     LaunchedEffect(voiceService) {
         voiceService.finalTranscriptFlow.collect { finalTranscript ->
-            commitVoiceTranscript(finalTranscript)
+            appendVoiceFinal(finalTranscript)
         }
     }
 
@@ -156,7 +155,7 @@ fun ReusableNoteEditor(
 
     LaunchedEffect(voiceState.isRecording, voiceState.statusMessage) {
         if (!voiceState.isRecording && voiceState.statusMessage.contains("30 秒")) {
-            commitVoiceTranscript(voiceState.partialTranscript)
+            appendVoiceFinal(voiceState.partialTranscript)
             Toast.makeText(context, "30 秒未检测到人声，已停止录音", Toast.LENGTH_SHORT).show()
         }
     }
@@ -235,9 +234,10 @@ fun ReusableNoteEditor(
             return
         }
         if (voiceState.isRecording) return
-        preVoiceContent = contentValue.text
-        sessionCommittedText = ""
-        lastPartialAtCommit = ""
+        // New session: dedup tracker reset; the editor's current text
+        // is left untouched and any subsequent finalized utterance will
+        // be appended to it.
+        lastAppendedFinal = ""
         voiceService.startRealtimeTranscription()
     }
 
@@ -250,14 +250,14 @@ fun ReusableNoteEditor(
         if (now - lastVoiceTapMs < 200) return  // debounce
         lastVoiceTapMs = now
         if (voiceState.isRecording) {
-            commitVoiceTranscript(voiceState.partialTranscript)
+            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
     }
 
     fun requestSave() {
         if (voiceState.isRecording) {
-            commitVoiceTranscript(voiceState.partialTranscript)
+            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
         scope.launch {
@@ -275,7 +275,7 @@ fun ReusableNoteEditor(
 
     BackHandler {
         if (voiceState.isRecording) {
-            commitVoiceTranscript(voiceState.partialTranscript)
+            appendVoiceFinal(voiceState.partialTranscript)
             voiceService.stopRecording()
         }
         if (viewModel.isDirty) {
@@ -297,7 +297,7 @@ fun ReusableNoteEditor(
                     IconButton(
                         onClick = {
                             if (voiceState.isRecording) {
-                                commitVoiceTranscript(voiceState.partialTranscript)
+                                appendVoiceFinal(voiceState.partialTranscript)
                                 voiceService.stopRecording()
                             }
                             if (viewModel.isDirty) {
@@ -400,7 +400,7 @@ fun ReusableNoteEditor(
                     VoiceRealtimePanel(
                         state = voiceState,
                         onStop = {
-                            commitVoiceTranscript(voiceState.partialTranscript)
+                            appendVoiceFinal(voiceState.partialTranscript)
                             voiceService.stopRecording()
                         },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp)
@@ -450,12 +450,7 @@ fun ReusableNoteEditor(
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                         TextField(
-                            value = if (voiceState.isRecording) {
-                                val liveText = mergeWithOverlap(preVoiceContent, mergeWithOverlap(sessionCommittedText, voiceState.partialTranscript))
-                                TextFieldValue(liveText, selection = TextRange(liveText.length))
-                            } else {
-                                contentValue
-                            },
+                            value = contentValue,
                             onValueChange = {
                                 if (!voiceState.isRecording) {
                                     contentValue = it
@@ -601,19 +596,7 @@ private fun DropdownMenuTextItem(
 }
 
 /**
- * Merge two strings with overlap handling — used by the live voice preview
- * to combine the prior content with the in-flight partial transcript.
+ * Voice append helper lives in `VoiceTextAppender.kt` so it can be
+ * unit-tested directly. See [appendVoiceText].
  */
-private fun mergeWithOverlap(left: String, right: String): String {
-    if (left.isEmpty()) return right
-    if (right.isEmpty()) return left
-    if (right.startsWith(left)) return right
-    if (left.endsWith(right)) return left
-    val maxOverlap = minOf(left.length, right.length, 200)
-    for (i in maxOverlap downTo 1) {
-        if (left.endsWith(right.substring(0, i))) {
-            return left + right.substring(i)
-        }
-    }
-    return if (left.isEmpty()) right else "$left\n$right"
-}
+

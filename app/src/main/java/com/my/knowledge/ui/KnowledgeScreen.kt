@@ -1,6 +1,7 @@
 package com.my.knowledge.ui
 
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -21,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -49,11 +51,24 @@ fun KnowledgeScreen(
     val palette = LocalPalette.current
     val spacing = LocalSpacing.current
     val knowledgeBases by viewModel.knowledgeBases.collectAsState()
+    val context = LocalContext.current
 
     var showAskSheet by remember { mutableStateOf(false) }
     var showImportSheet by remember { mutableStateOf(false) }
     var selectedFileUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
     val selectedFileUri = selectedFileUris.firstOrNull()
+
+    // Collect one-shot import outcomes from the ViewModel. The user
+    // asked for a "已导入" prompt when re-importing an existing
+    // document; the SharedFlow has replay = 0 + DROP_OLDEST so we
+    // never re-show a stale toast on configuration change.
+    LaunchedEffect(Unit) {
+        viewModel.importResults.collect { result ->
+            if (result.isDuplicate) {
+                Toast.makeText(context, "已导入", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments(),

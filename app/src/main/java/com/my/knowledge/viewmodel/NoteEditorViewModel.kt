@@ -390,7 +390,10 @@ class NoteEditorViewModel(
         }
 
         // First-time save: create a fresh source + item, but link the item
-        // back to the note so subsequent saves deduplicate.
+        // back to the note so subsequent saves deduplicate. We don't
+        // surface a duplicate toast here — the inspiration editor
+        // re-saves the same note frequently, and the source-of-truth
+        // is the note's own `content`, not the underlying source row.
         val newSourceId = importSourceUseCase.importText(
             title = savedTitle,
             text = savedContent,
@@ -398,7 +401,7 @@ class NoteEditorViewModel(
             importFrom = "manual",
             folderHint = "灵感空间",
             linkedNoteId = noteId
-        )
+        ).sourceId
         lastPushedTitle = title
         lastPushedContent = content
         val newItem = knowledgeRepository.getItemBySourceId(newSourceId)
