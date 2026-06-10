@@ -15,6 +15,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -76,27 +77,57 @@ object IngestRuntime {
     val lockStatus: StateFlow<LockStatus> = _lockStatus.asStateFlow()
 
     /**
-     * RELIAB-1 PR-N1: live pending-count surfaced to the foreground
-     * service so the notification text can update on each item. The
-     * orchestrator (PR-N2) will call [reportPending] after each
-     * `runUntilIdle` decrement; this PR only adds the surface.
+     * RELIAB-1 PR-N1 + PR-N2: live pending-count surfaced to the
+     * foreground service so the notification text updates on each
+     * item. The orchestrator calls [reportPending] at the end of
+     * every `runTask` (success and error paths) via the
+     * `pendingCountReporter` constructor callback it receives; this
+     * function both updates the StateFlow and pushes a fresh
+     * notification when an FG service is running.
      */
     private val _pendingCount = MutableStateFlow(0)
     val pendingCount: StateFlow<Int> = _pendingCount.asStateFlow()
 
     fun reportPending(count: Int) {
         _pendingCount.value = count
+        // PR-N2 wiring: if a foreground service is already up
+        // (i.e. `start()` was called and `lastAppContext` is
+        // cached), push the new count into the notification now.
+        // If start() was never called (e.g. WorkManager-only
+        // path that goes straight through `runOnce`), there's no
+        // notification to update, so we silently no-op.
+        lastAppContext?.let { ctx ->
+            runCatching { IngestForegroundService.notify(ctx, count) }
+        }
     }
 
     fun start(context: Context) {
         val appContext = context.applicationContext
         lastAppContext = appContext
+        // PR-N2 wiring: read the *actual* pending count from the
+        // DB before the FG service starts, so the initial
+        // notification text isn't a hard-coded "0 条". `start()` is
+        // a non-suspend public entrypoint (called from
+        // `ProcessingTaskScheduler.scheduleIngestQueue`); we run the
+        // suspend DAO call in a launched coroutine on the runtime
+        // scope and seed the StateFlow eagerly with 0 so the FG
+        // service's first paint isn't blank. The launched coroutine
+        // then `reportPending()`s the real count (which also
+        // re-notifies the FG service via `lastAppContext` already
+        // being set).
+        _pendingCount.value = 0
+        scope.launch {
+            val initialCount = runCatching {
+                AppDatabase.getInstance(appContext).processingTaskDao().countActive()
+            }.getOrDefault(0)
+            reportPending(initialCount)
+        }
         // RELIAB-1 PR-N1: promote to FG service *before* the
         // idempotent re-entry check, because even a no-op re-entry
         // (active loop just polls again) must keep the process
         // boosted while the screen is off. Re-starting an already
         // running FG service is a cheap no-op (system dedupes by id).
-        IngestForegroundService.start(appContext, pendingCount = _pendingCount.value)
+        IngestForegroundService.start(appContext, pendingCount = 0)
         val active = loop
         if (active?.isActive() == true) {
             // Idempotent re-entry: the active loop sees the new
@@ -169,6 +200,15 @@ object IngestRuntime {
             scheduler = DependencyProvider.provideScheduler(appContext),
             rebuildDebouncer = DependencyProvider.provideRebuildDebouncer(appContext),
             longSourceCheckpointStore = com.my.knowledge.data.ingest.LongSourceCheckpointStore(appContext.filesDir),
+            // RELIAB-1 PR-N2 (late landing): wire the live
+            // "remaining work" reporter. The orchestrator calls
+            // this from the end of every `runTask`'s `finally`,
+            // which is exactly the point where the DB row is in
+            // its post-task state (success: marked complete, error:
+            // marked failed / pending-retry). Counting the
+            // pending+running rows at that moment gives the
+            // notification an honest "剩余 N 条" at all times.
+            pendingCountReporter = ::reportPending,
         )
         orchestrator.runUntilIdle()
     }

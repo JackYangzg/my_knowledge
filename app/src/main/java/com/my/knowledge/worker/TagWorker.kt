@@ -94,6 +94,7 @@ $text
     private fun getRepository(): KnowledgeRepository {
         val db = AppDatabase.getInstance(applicationContext)
         return KnowledgeRepositoryImpl(
+            db,
             db.knowledgeBaseDao(), db.knowledgeItemDao(),
             db.processingTaskDao(), db.archiveRecommendationDao(),
             db.aiConversationDao(), db.aiMessageDao(),

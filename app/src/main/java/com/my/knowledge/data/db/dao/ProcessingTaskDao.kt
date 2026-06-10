@@ -88,6 +88,17 @@ interface ProcessingTaskDao {
     @Query("SELECT COUNT(*) FROM processing_task WHERE status = 'pending' OR status = 'running' OR status = 'pending_network'")
     fun observeActiveTaskCount(): Flow<Int>
 
+    /**
+     * RELIAB-1 PR-N2 (late landing): one-shot snapshot of remaining
+     * work. Used by [com.my.knowledge.worker.IngestRuntime] to push
+     * the live count into the foreground-service notification after
+     * each `runTask` returns. The Flow variant above is for UI; this
+     * suspend variant is for the worker pipeline where we need a
+     * consistent snapshot at a known moment.
+     */
+    @Query("SELECT COUNT(*) FROM processing_task WHERE status = 'pending' OR status = 'running' OR status = 'pending_network'")
+    suspend fun countActive(): Int
+
     @Query("SELECT COUNT(*) FROM processing_task WHERE status = 'failed'")
     fun observeFailedTaskCount(): Flow<Int>
 

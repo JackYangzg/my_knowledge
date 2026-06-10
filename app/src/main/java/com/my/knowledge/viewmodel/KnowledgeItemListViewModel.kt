@@ -168,6 +168,13 @@ class KnowledgeItemListViewModel(
         if (items.isEmpty()) return
         viewModelScope.launch {
             for (item in items) {
+                // Discard the result here — the KB-internal picker
+                // doesn't surface a duplicate toast (the picker is
+                // for picking files that already live in the KB
+                // context, so a duplicate is rare and a silent
+                // no-op is acceptable). The KnowledgeHomeViewModel
+                // path is where the user-facing duplicate prompt
+                // lives.
                 importSourceUseCase.importUri(
                     uri = item.uri,
                     displayName = item.displayName,

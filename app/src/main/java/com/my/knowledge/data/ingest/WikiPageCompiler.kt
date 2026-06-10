@@ -187,7 +187,7 @@ class WikiPageCompiler {
             )
         }
 
-        return pages
+        return pages.map { it.copy(markdown = Sanitize.sanitize(it.markdown)) }
     }
 
     /**
@@ -248,7 +248,7 @@ class WikiPageCompiler {
                 sourceTraceJson = sourceTrace(source, parsed = null, analysis, "wiki/concepts/${concept.name.slug()}.md")
             )
         }
-        return pages
+        return pages.map { it.copy(markdown = Sanitize.sanitize(it.markdown)) }
     }
 
     /**
@@ -268,7 +268,12 @@ class WikiPageCompiler {
     ): Map<String, List<String>> {
         if (relationsJson.isBlank() || relationsJson == "[]") return emptyMap()
         val arr = runCatching { JSONArray(relationsJson) }.getOrNull() ?: return emptyMap()
-        val known = allKnownNames.map { it.lowercase() }.toSet()
+        // Use the same dedup key as `parseNamedObjects` so relations
+        // emitted for "Foo Bar" can resolve to a page titled " Foo Bar"
+        // (and vice versa). With the old `.lowercase()` only, a relation
+        // for the canonical name missed its whitespace-variant node and
+        // got silently dropped here.
+        val known = allKnownNames.map { EntityName.dedupKey(it) }.toSet()
         val out = linkedMapOf<String, LinkedHashSet<String>>()
         for (i in 0 until arr.length()) {
             val rel = arr.optJSONObject(i) ?: continue
@@ -466,6 +471,13 @@ class WikiPageCompiler {
             tags = tags,
             related = related,
             sources = listOf(sourceRef),
+            // P5-merge: emit a `description` field in the frontmatter
+            // so llm_wiki's dedup module
+            // (nashsu/llm_wiki/src/lib/dedup.ts:124) can use it as a
+            // one-line summary for soft-collision clustering.
+            // Truncated to 200 chars to keep the frontmatter header
+            // scannable in the file viewer.
+            description = entity.description.ifBlank { null }?.take(200),
             extraFields = extraFrontMatterFields(entityType = entity.semanticType),
         )
         appendLine("# ${entity.name}")
@@ -509,6 +521,9 @@ class WikiPageCompiler {
             tags = tags,
             related = related,
             sources = listOf(sourceRef),
+            // See note on `buildEntityPage` — llm_wiki dedup reads
+            // the `description` field as a one-line summary.
+            description = concept.description.ifBlank { null }?.take(200),
             extraFields = extraFrontMatterFields(conceptCategory = concept.semanticType),
         )
         appendLine("# ${concept.name}")
@@ -562,12 +577,22 @@ class WikiPageCompiler {
         related: List<String>,
         sources: List<String>,
         extraFields: List<Pair<String, String>> = emptyList(),
+        description: String? = null,
     ) {
         appendLine("---")
         appendLine("type: ${type.escapeYaml()}")
         appendLine("title: ${title.escapeYaml()}")
         appendLine("created: $created")
         appendLine("updated: $updated")
+        // P5-merge: emit `description` only when non-blank, so
+        // frontmatter stays clean for entities whose LLM did not
+        // return any description text. Empty-string would otherwise
+        // produce `description: ""` which llm_wiki's YAML parser
+        // accepts but the dedup module would treat as a real
+        // (and useless) summary.
+        if (!description.isNullOrBlank()) {
+            appendLine("description: ${description.escapeYaml()}")
+        }
         appendLine("tags: ${tags.toYamlArray()}")
         appendLine("related: ${related.toYamlArray()}")
         appendLine("sources: ${sources.toYamlArray()}")
@@ -581,7 +606,13 @@ class WikiPageCompiler {
             (0 until array.length()).mapNotNull { index ->
                 when (val value = array.opt(index)) {
                     is JSONObject -> {
-                        val name = value.optString("name").ifBlank { value.optString("title") }.trim()
+                        // Whitespace-collapse + Unicode-normalize the name
+                        // before storing / dedup. " Foo Bar" / "Foo  Bar" /
+                        // "Foo Bar" all collapse to "Foo Bar". Casing
+                        // is preserved (EntityName.canonical does NOT
+                        // lowercase) so "iOS" stays "iOS" on the wiki page.
+                        val rawName = value.optString("name").ifBlank { value.optString("title") }
+                        val name = EntityName.canonical(rawName)
                         if (name.isBlank()) null else WikiObject(
                             name = name,
                             // P1: 语义类型走 `entityType` / `conceptCategory`,fallback
@@ -598,13 +629,13 @@ class WikiPageCompiler {
                                 parseStringArray(value.optJSONArray("related_entities"))
                         )
                     }
-                    is String -> WikiObject(name = value, semanticType = fallbackType)
+                    is String -> WikiObject(name = EntityName.canonical(value), semanticType = fallbackType)
                     else -> null
                 }
             }
         }.getOrElse {
-            parseStringArray(json).map { WikiObject(name = it, semanticType = fallbackType) }
-        }.distinctBy { it.name.lowercase() }.take(24)
+            parseStringArray(json).map { WikiObject(name = EntityName.canonical(it), semanticType = fallbackType) }
+        }.distinctBy { EntityName.dedupKey(it.name) }.take(24)
     }
 
     private fun parseStringArray(json: String): List<String> =

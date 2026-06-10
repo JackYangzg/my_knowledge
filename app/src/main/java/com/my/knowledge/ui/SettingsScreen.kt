@@ -68,6 +68,12 @@ fun SettingsScreen(onBack: () -> Unit) {
     var voiceClusterId by remember { mutableStateOf(currentConfig.voiceClusterId) }
     var debugPromptEnabled by remember { mutableStateOf(currentConfig.debugPromptEnabled) }
     var reasoningEffort by remember { mutableStateOf(currentConfig.reasoningEffort) }
+    // Context window in characters. 0 / blank → ContextBudgetCalculator
+    // falls back to DEFAULT_MAX_CTX = 204_800. Phase 1 of the
+    // llm_wiki alignment; see Models.kt.effectiveMaxContextSize.
+    var maxContextSizeText by remember { mutableStateOf(
+        if (currentConfig.maxContextSize > 0) currentConfig.maxContextSize.toString() else ""
+    ) }
     var statusMessage by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -116,7 +122,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                 voiceAppId = voiceAppId,
                 voiceClusterId = voiceClusterId,
                 debugPromptEnabled = debugPromptEnabled,
-                reasoningEffort = reasoningEffort
+                reasoningEffort = reasoningEffort,
+                maxContextSize = maxContextSizeText.toIntOrNull()?.coerceAtLeast(0) ?: 0
             )
         )
         statusMessage = "配置已保存"
@@ -220,6 +227,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                     SettingsTextField(label = "API Key", value = apiKey, onValueChange = { apiKey = it }, placeholder = "输入模型 API Key", isPassword = true)
                     SettingsTextField(label = "OpenAI 兼容 Base URL", value = baseUrl, onValueChange = { baseUrl = it }, placeholder = "https://api.minimaxi.com/v1")
                     ReasoningEffortDropdown(value = reasoningEffort, onValueChange = { reasoningEffort = it })
+                    SettingsTextField(
+                        label = "Context Window (字符)",
+                        value = maxContextSizeText,
+                        onValueChange = { input ->
+                            // Accept only digits to keep parsing safe.
+                            maxContextSizeText = input.filter { it.isDigit() }.take(9)
+                        },
+                        placeholder = "留空 = 默认 204800"
+                    )
                     SaveButton(
                         statusMessage = statusMessage,
                         onSave = { saveConfig() },

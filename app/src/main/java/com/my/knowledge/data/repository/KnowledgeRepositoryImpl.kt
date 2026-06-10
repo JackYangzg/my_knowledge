@@ -1,5 +1,7 @@
 package com.my.knowledge.data.repository
 
+import androidx.room.withTransaction
+import com.my.knowledge.data.db.AppDatabase
 import com.my.knowledge.data.db.dao.AnalysisResultDao
 import com.my.knowledge.data.db.dao.ArchiveRecommendationDao
 import com.my.knowledge.data.db.dao.KnowledgeBaseDao
@@ -40,6 +42,7 @@ import com.my.knowledge.data.db.entity.KnowledgeThreadLogEntity
 import com.my.knowledge.data.db.entity.AiMessageEntity
 import com.my.knowledge.data.db.entity.AiConversationEntity
 import com.my.knowledge.data.ai.AiPromptTemplates
+import com.my.knowledge.data.ingest.EntityName
 import com.my.knowledge.data.ingest.WikiPageCompiler
 import com.my.knowledge.data.ingest.WikiPageDraft
 import com.my.knowledge.domain.model.isKnowledgeConceptType
@@ -55,6 +58,7 @@ import kotlinx.coroutines.flow.map
 import java.util.*
 
 class KnowledgeRepositoryImpl(
+    private val db: AppDatabase,
     private val kbDao: KnowledgeBaseDao,
     private val itemDao: KnowledgeItemDao,
     private val taskDao: ProcessingTaskDao,
@@ -679,6 +683,22 @@ class KnowledgeRepositoryImpl(
     }
 
     override suspend fun rebuildGraphForBase(kbId: String) {
+        // Wrap the full clear-then-rebuild in a single Room
+        // transaction. The previous implementation ran the soft-delete
+        // (graphDao.clear*) and the re-derive (graphDao.upsert*) as
+        // separate implicit transactions: if anything between them
+        // threw (e.g. an analysis-JSON relation parser crash), the KB
+        // was left with all entities soft-deleted and no live rows,
+        // and the user observed "existing entities vanished" until the
+        // next successful rebuild landed. withTransaction rolls the
+        // whole rebuild back on any throw, so a partial failure
+        // preserves the previous snapshot.
+        db.withTransaction {
+            rebuildGraphForBaseInternal(kbId)
+        }
+    }
+
+    private suspend fun rebuildGraphForBaseInternal(kbId: String) {
         // 优先走 wiki-only 查询(刚加的 getAllWikiByKb)——脉络/图谱重建
         // 只需要 wiki 页面,KB 笔记量很大时,这一步把内存 + Room I/O 减少
         // 一个数量级。原 `getAllByKb` 仅在没有任何 wiki 页时作为兜底
@@ -705,23 +725,30 @@ class KnowledgeRepositoryImpl(
         // filter on `deletedAt`) — derive both views from a single
         // SELECT so we don't pay 2x table-scan cost on a 1K+ entity
         // graph rebuild.
+        //
+        // Whitespace-normalized dedup: old code used `name.lowercase()`
+        // only, which let "Foo Bar" and " Foo Bar" coexist as TWO graph
+        // nodes even though the wiki pages had already been merged.
+        // `EntityName.dedupKey` collapses internal / leading / trailing
+        // whitespace and Unicode whitespace (NBSP, U+3000) so all
+        // variants of the same logical name share one graph node.
         val allEntitiesInKb = graphDao.getAllEntitiesByKb(kbId)
         val manuallyDeletedEntityKeys = allEntitiesInKb
             .filter { it.deletedAt != null }
-            .map { it.name.lowercase(Locale.ROOT) to it.type }
+            .map { com.my.knowledge.data.ingest.EntityName.dedupKey(it.name) to it.type }
             .toSet()
         val allEntitiesInKbByName = allEntitiesInKb.associateBy { it.id }
         val manuallyDeletedRelationKeys: Set<Pair<String, String>> = graphDao.getAllRelationsByKb(kbId)
             .filter { it.deletedAt != null }
             .mapNotNull { rel ->
-                val fromName = allEntitiesInKbByName[rel.fromEntityId]?.name?.lowercase(Locale.ROOT)
-                val toName = allEntitiesInKbByName[rel.toEntityId]?.name?.lowercase(Locale.ROOT)
+                val fromName = allEntitiesInKbByName[rel.fromEntityId]?.name?.let { com.my.knowledge.data.ingest.EntityName.dedupKey(it) }
+                val toName = allEntitiesInKbByName[rel.toEntityId]?.name?.let { com.my.knowledge.data.ingest.EntityName.dedupKey(it) }
                 if (fromName != null && toName != null) fromName to toName else null
             }
             .toSet()
         val manuallyDeletedCommunityNames = graphDao.getAllCommunitiesByKb(kbId)
             .filter { it.deletedAt != null }
-            .map { it.name.lowercase(Locale.ROOT) }
+            .map { com.my.knowledge.data.ingest.EntityName.dedupKey(it.name) }
             .toSet()
 
         graphDao.clearEntities(kbId, now)
@@ -746,9 +773,13 @@ class KnowledgeRepositoryImpl(
         // collapses to a single node, merging their sourceItemIds and aliases.
         // We also fold aliases coming from the analysis JSON (entities[i].aliases)
         // — those were silently dropped before.
+        //
+        // Key uses `EntityName.dedupKey` (whitespace-normalized lowercase)
+        // so "Foo Bar" and " Foo Bar" share one graph node. See the note
+        // on `manuallyDeletedEntityKeys` above for the rationale.
         val mergedByKey = linkedMapOf<Pair<String, String>, KnowledgeEntityEntity>()
         for (page in pageMeta) {
-            val key = page.title.lowercase(Locale.ROOT) to page.type
+            val key = com.my.knowledge.data.ingest.EntityName.dedupKey(page.title) to page.type
             if (key in manuallyDeletedEntityKeys) continue
             val existing = mergedByKey[key]
             val aliasFromAnalysis = aliasesFromItem(page.item)
@@ -783,19 +814,19 @@ class KnowledgeRepositoryImpl(
             .toList()
         graphDao.upsertEntities(entities)
 
-        val byName = entities.associateBy { it.name.lowercase(Locale.ROOT) }
+        val byName = entities.associateBy { com.my.knowledge.data.ingest.EntityName.dedupKey(it.name) }
         val relations = mutableListOf<KnowledgeRelationEntity>()
         val relationKeys = mutableSetOf<Pair<String, String>>()
 
         // --- Wikilink edges --------------------------------------------------
         pageMeta.forEach { page ->
-            val from = byName[page.title.lowercase(Locale.ROOT)] ?: return@forEach
+            val from = byName[com.my.knowledge.data.ingest.EntityName.dedupKey(page.title)] ?: return@forEach
             page.links.forEach { link ->
-                val to = byName[link.lowercase(Locale.ROOT)] ?: return@forEach
+                val to = byName[com.my.knowledge.data.ingest.EntityName.dedupKey(link)] ?: return@forEach
                 if (from.id == to.id) return@forEach
                 // Skip if the user previously deleted the (from, to) edge in
                 // "中间处理数据"; otherwise the next rebuild would resurrect it.
-                val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                val nameKey = (com.my.knowledge.data.ingest.EntityName.dedupKey(from.name) to com.my.knowledge.data.ingest.EntityName.dedupKey(to.name))
                 if (nameKey in manuallyDeletedRelationKeys) return@forEach
                 val key = from.id to to.id
                 if (key in relationKeys) return@forEach
@@ -826,10 +857,10 @@ class KnowledgeRepositoryImpl(
             val sourceId = page.item.sourceId ?: continue
             val analysis = analysisResultDao.getLatestBySource(sourceId) ?: continue
             for (rel in parseRelations(analysis.relationsJson)) {
-                val from = byName[rel.source.lowercase(Locale.ROOT)] ?: continue
-                val to = byName[rel.target.lowercase(Locale.ROOT)] ?: continue
+                val from = byName[com.my.knowledge.data.ingest.EntityName.dedupKey(rel.source)] ?: continue
+                val to = byName[com.my.knowledge.data.ingest.EntityName.dedupKey(rel.target)] ?: continue
                 if (from.id == to.id) continue
-                val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                val nameKey = (com.my.knowledge.data.ingest.EntityName.dedupKey(from.name) to com.my.knowledge.data.ingest.EntityName.dedupKey(to.name))
                 if (nameKey in manuallyDeletedRelationKeys) continue
                 val key = from.id to to.id
                 if (key in relationKeys) continue
@@ -864,9 +895,9 @@ class KnowledgeRepositoryImpl(
                     val right = bucket[j]
                     val leftSet = left.sources.toSet()
                     if (right.sources.none { it in leftSet }) continue
-                    val from = byName[left.title.lowercase(Locale.ROOT)] ?: continue
-                    val to = byName[right.title.lowercase(Locale.ROOT)] ?: continue
-                    val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                    val from = byName[com.my.knowledge.data.ingest.EntityName.dedupKey(left.title)] ?: continue
+                    val to = byName[com.my.knowledge.data.ingest.EntityName.dedupKey(right.title)] ?: continue
+                    val nameKey = (com.my.knowledge.data.ingest.EntityName.dedupKey(from.name) to com.my.knowledge.data.ingest.EntityName.dedupKey(to.name))
                     if (nameKey in manuallyDeletedRelationKeys) continue
                     val key = from.id to to.id
                     if (key in relationKeys) continue
@@ -904,14 +935,14 @@ class KnowledgeRepositoryImpl(
                 // Honour the user's prior "delete this community" choice in
                 // 中间处理数据; otherwise the same group would re-form on the
                 // next rebuild (ThreadEvolutionWorker, every ingest, etc.).
-                if (communityName.lowercase(Locale.ROOT) in manuallyDeletedCommunityNames) {
+                if (com.my.knowledge.data.ingest.EntityName.dedupKey(communityName) in manuallyDeletedCommunityNames) {
                     null
                 } else {
                     KnowledgeCommunityEntity(
                         id = UUID.randomUUID().toString(),
                         knowledgeBaseId = kbId,
                         name = communityName,
-                        entityIdsJson = group.mapNotNull { byName[it.title.lowercase(Locale.ROOT)] }
+                        entityIdsJson = group.mapNotNull { byName[com.my.knowledge.data.ingest.EntityName.dedupKey(it.title)] }
                             .joinToString(",", "[", "]") { "\"${it.id}\"" },
                         summary = group.take(6).joinToString("、") { it.title },
                         createdAt = now,
@@ -1026,21 +1057,21 @@ class KnowledgeRepositoryImpl(
         // resurrect it.
         val manuallyDeletedEntityKeys = allEntities
             .filter { it.deletedAt != null }
-            .map { it.name.lowercase(Locale.ROOT) to it.type }
+            .map { EntityName.dedupKey(it.name) to it.type }
             .toSet()
         val entityIndexForManualKey = (survivingEntities + allEntities.filter { it.id in affectedEntityIds })
             .associateBy { it.id }
         val manuallyDeletedRelationKeys: Set<Pair<String, String>> = allRelations
             .filter { it.deletedAt != null }
             .mapNotNull { rel ->
-                val fromName = entityIndexForManualKey[rel.fromEntityId]?.name?.lowercase(Locale.ROOT)
-                val toName = entityIndexForManualKey[rel.toEntityId]?.name?.lowercase(Locale.ROOT)
+                val fromName = entityIndexForManualKey[rel.fromEntityId]?.name?.let { EntityName.dedupKey(it) }
+                val toName = entityIndexForManualKey[rel.toEntityId]?.name?.let { EntityName.dedupKey(it) }
                 if (fromName != null && toName != null) fromName to toName else null
             }
             .toSet()
         val manuallyDeletedCommunityNames = allCommunities
             .filter { it.deletedAt != null }
-            .map { it.name.lowercase(Locale.ROOT) }
+            .map { EntityName.dedupKey(it.name) }
             .toSet()
 
         val pageMeta = affectedItems.map { item ->
@@ -1056,11 +1087,11 @@ class KnowledgeRepositoryImpl(
         // --- Build entities -------------------------------------------------
         val mergedByKey = linkedMapOf<Pair<String, String>, KnowledgeEntityEntity>()
         for (entity in survivingEntities) {
-            val key = entity.name.lowercase(Locale.ROOT) to entity.type
+            val key = EntityName.dedupKey(entity.name) to entity.type
             mergedByKey[key] = entity
         }
         for (page in pageMeta) {
-            val key = page.title.lowercase(Locale.ROOT) to page.type
+            val key = EntityName.dedupKey(page.title) to page.type
             if (key in manuallyDeletedEntityKeys) continue
             val existing = mergedByKey[key]
             val aliasFromAnalysis = aliasesFromItem(page.item)
@@ -1095,7 +1126,7 @@ class KnowledgeRepositoryImpl(
             .toList()
         graphDao.upsertEntities(entities)
 
-        val byName = entities.associateBy { it.name.lowercase(Locale.ROOT) }
+        val byName = entities.associateBy { EntityName.dedupKey(it.name) }
         val relations = mutableListOf<KnowledgeRelationEntity>()
         val relationKeys = mutableSetOf<Pair<String, String>>()
         // Seed with survivors so we don't re-derive or duplicate
@@ -1107,11 +1138,11 @@ class KnowledgeRepositoryImpl(
 
         // --- Wikilink edges (only for the affected pages) ------------------
         pageMeta.forEach { page ->
-            val from = byName[page.title.lowercase(Locale.ROOT)] ?: return@forEach
+            val from = byName[EntityName.dedupKey(page.title)] ?: return@forEach
             page.links.forEach { link ->
-                val to = byName[link.lowercase(Locale.ROOT)] ?: return@forEach
+                val to = byName[EntityName.dedupKey(link)] ?: return@forEach
                 if (from.id == to.id) return@forEach
-                val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                val nameKey = (EntityName.dedupKey(from.name) to EntityName.dedupKey(to.name))
                 if (nameKey in manuallyDeletedRelationKeys) return@forEach
                 val key = from.id to to.id
                 if (key in relationKeys) return@forEach
@@ -1136,10 +1167,10 @@ class KnowledgeRepositoryImpl(
             val sourceId = page.item.sourceId ?: continue
             val analysis = analysisResultDao.getLatestBySource(sourceId) ?: continue
             for (rel in parseRelations(analysis.relationsJson)) {
-                val from = byName[rel.source.lowercase(Locale.ROOT)] ?: continue
-                val to = byName[rel.target.lowercase(Locale.ROOT)] ?: continue
+                val from = byName[EntityName.dedupKey(rel.source)] ?: continue
+                val to = byName[EntityName.dedupKey(rel.target)] ?: continue
                 if (from.id == to.id) continue
-                val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                val nameKey = (EntityName.dedupKey(from.name) to EntityName.dedupKey(to.name))
                 if (nameKey in manuallyDeletedRelationKeys) continue
                 val key = from.id to to.id
                 if (key in relationKeys) continue
@@ -1169,9 +1200,9 @@ class KnowledgeRepositoryImpl(
                     val right = bucket[j]
                     val leftSet = left.sources.toSet()
                     if (right.sources.none { it in leftSet }) continue
-                    val from = byName[left.title.lowercase(Locale.ROOT)] ?: continue
-                    val to = byName[right.title.lowercase(Locale.ROOT)] ?: continue
-                    val nameKey = (from.name.lowercase(Locale.ROOT) to to.name.lowercase(Locale.ROOT))
+                    val from = byName[EntityName.dedupKey(left.title)] ?: continue
+                    val to = byName[EntityName.dedupKey(right.title)] ?: continue
+                    val nameKey = (EntityName.dedupKey(from.name) to EntityName.dedupKey(to.name))
                     if (nameKey in manuallyDeletedRelationKeys) continue
                     val key = from.id to to.id
                     if (key in relationKeys) continue
@@ -1203,14 +1234,14 @@ class KnowledgeRepositoryImpl(
             .mapNotNull { (key, group) ->
                 val keyStr = key ?: ""
                 val communityName = "来源群 $keyStr"
-                if (communityName.lowercase(Locale.ROOT) in manuallyDeletedCommunityNames) {
+                if (EntityName.dedupKey(communityName) in manuallyDeletedCommunityNames) {
                     null
                 } else {
                     KnowledgeCommunityEntity(
                         id = UUID.randomUUID().toString(),
                         knowledgeBaseId = kbId,
                         name = communityName,
-                        entityIdsJson = group.mapNotNull { byName[it.title.lowercase(Locale.ROOT)] }
+                        entityIdsJson = group.mapNotNull { byName[EntityName.dedupKey(it.title)] }
                             .joinToString(",", "[", "]") { "\"${it.id}\"" },
                         summary = group.take(6).joinToString("、") { it.title },
                         createdAt = now,
@@ -1526,7 +1557,20 @@ class KnowledgeRepositoryImpl(
         val now = System.currentTimeMillis()
         taskDao.deleteByTarget("source_document", sourceId)
         parsedContentDao.deleteBySource(sourceId)
-        analysisResultDao.deleteBySource(sourceId)
+        // P5-merge: do NOT delete the previous analysis_result row.
+        // The new run's `runAnalysisTask` reads it via
+        // `analysisResultDao.getLatestBySource(source.id)` and unions
+        // its entities / concepts JSON into the new analysis by
+        // `name` (see `mergeEntityOrConceptByName` in
+        // `IngestOrchestrator`). Without keeping the prior row, the
+        // merge input is empty and re-analysis would wholesale
+        // replace the entity inventory — the "存量实体与概念
+        // 全部会被清除掉" symptom. The relations JSON is still
+        // overwritten because the LLM has the global picture and
+        // its new relations supersede any prior partial result.
+        // (Callers that need a clean-slate re-derive should set
+        // `inputJson = {"resetAnalysis":true}` and have
+        // `runAnalysisTask` honour it — out of scope here.)
         val oldItems = itemDao.getAllBySourceId(sourceId)
         oldItems.forEach { item ->
             taskDao.deleteByTarget("knowledge_item", item.id)
@@ -1541,10 +1585,35 @@ class KnowledgeRepositoryImpl(
             }
             conversationDao.deleteByScope("knowledge_item", item.id)
         }
-        // Soft-delete old wiki pages tied to this source. The graph
-        // rebuilder will mint fresh rows for the new run; deleting the
-        // items also keeps item counts in sync.
-        itemDao.softDeleteBySource(sourceId, now)
+        // P5-merge: do NOT softDelete the wiki pages for this source.
+        // The M2 (MERGE-1 PR-M2) upsert path in `runGenerationTask`
+        // (`IngestOrchestrator.kt:858-911`) now does exact-then-slug
+        // lookup: tries `getByKbSourceTypeAndTitle` first, and on
+        // miss falls back to slug equality via
+        // `Slug.slugify(title)`. This collapses the LLM-drift case
+        // ("Accumulibacter" → "Candidatus Accumulibacter" between
+        // re-ingest runs) back to in-place update instead of
+        // inserting a duplicate row. With this in place, the old
+        // `itemDao.softDeleteBySource` here would actively HIDE the
+        // existing wiki pages from the M2 path (its queries filter
+        // `deletedAt IS NULL`), forcing the slug-fallback path to
+        // miss too, and re-introducing the "两个同名文件" symptom.
+        //
+        // Net effect of removing the softDelete:
+        //   - M2 path's exact-title lookup: finds the existing row,
+        //     updates in place (including clearing `deletedAt`).
+        //   - M2 path's slug-fallback lookup: same — finds the row,
+        //     updates in place. (Slug equality survives name drift.)
+        //   - Items the new pipeline drops entirely: stay as live
+        //     rows with their old content. Item count stays correct
+        //     (M2 updates don't add rows). User can prune manually
+        //     via the recycle bin if desired.
+        //
+        // Pre-existing page drafts that the new pipeline rewrites
+        // keep their `id`; the per-item cleanup above (fragments,
+        // embeddings, recommendations, conversations) still runs
+        // against the *old* items and is safe because M2 restores
+        // the row immediately after with `deletedAt = null`.
         sourceDocumentDao.updateStatus(
             sourceId,
             SourceDocumentEntity.STATUS_IMPORTED,
