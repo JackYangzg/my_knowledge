@@ -141,4 +141,18 @@ data class ModelConfig(
     // AI 全库对话检索开关 (T3 AskRetrievalPipeline 用)
     val askGraphEnabled: Boolean = true,   // 共现 tag 关系图扩展,默认开
     val askWebEnabled: Boolean = false,    // web 搜索,默认关(成本+幻觉)
-)
+    /** 模型 context window (字符). 0/未配置 → ContextBudgetCalculator 回退到 204_800.
+     *  Phase 1: 仅数据层字段,Phase 6 在 SettingsScreen 加 UI 输入框.
+     *  ⚠️ JSON 序列化警告:maxContextSize=0 会被序列化为 0;调用方走 effectiveMaxContextSize()
+     *  而不是裸读字段,以避免把"未配置"状态泄漏给服务端的请求体. */
+    val maxContextSize: Int = 0,
+) {
+    /** 真实 context window. 把 0/未配置 映射到 DEFAULT_MAX_CTX(204_800),
+     *  保证消费方(预算计算、max_tokens 缩放)始终拿到有效值. */
+    fun effectiveMaxContextSize(): Int =
+        if (maxContextSize > 0) maxContextSize else DEFAULT_MAX_CTX
+
+    companion object {
+        const val DEFAULT_MAX_CTX: Int = 204_800
+    }
+}

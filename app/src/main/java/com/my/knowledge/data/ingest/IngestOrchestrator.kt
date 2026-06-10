@@ -12,6 +12,9 @@ import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.my.knowledge.data.ai.AiGateway
 import com.my.knowledge.data.ai.AiTextCleaner
 import com.my.knowledge.data.ai.AiTextCleaner.cleanModelOutput
+import com.my.knowledge.data.ai.ContextBudgetCalculator
+import com.my.knowledge.ui.KnowledgeManager
+import com.my.knowledge.ui.ModelConfig
 import com.my.knowledge.data.file.LocalFileStore
 import com.my.knowledge.data.parser.AudioTranscriptParser
 import com.my.knowledge.data.parser.DocxParser
@@ -669,7 +672,7 @@ class IngestOrchestrator(
         // retry resumes from the last completed chunk instead of
         // re-paying the full bill. Short sources keep the original
         // single-call path.
-        val isLongSource = parsed.markdown.length > LONG_SOURCE_BUDGET_CHARS &&
+        val isLongSource = parsed.markdown.length > sourceBudget(KnowledgeManager.modelConfig) &&
             longSourceCheckpointStore != null
         appendLog(
             task,
@@ -1424,7 +1427,11 @@ class IngestOrchestrator(
                 ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
 
         val content = parsed.markdown
-        val sourceBudget = LONG_SOURCE_BUDGET_CHARS
+        // Model-aware source budget. Previously hardcoded to 30K (LONG_SOURCE_BUDGET_CHARS),
+        // which silently truncated any model with ctx >= 60K and over-budgeted 8K models.
+        // New: computeIngestSourceBudget reserves response + instruction + stable-context,
+        // then gives the remainder to the source, clamped to [8K, 60% of maxCtx].
+        val sourceBudget = sourceBudget(KnowledgeManager.modelConfig)
         val targetChars = ((sourceBudget * 0.55).toInt())
             .coerceIn(LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
         val overlapChars = ((targetChars * 0.08).toInt())
@@ -2447,6 +2454,24 @@ class IngestOrchestrator(
         private val pageWriteMutexes = ConcurrentHashMap<String, Mutex>()
         private fun wikiPageLockKey(kbId: String, sourceType: String, title: String): String =
             "${kbId.ifBlank { "_unfiled" }}:${sourceType.trim().lowercase()}:${title.trim().lowercase()}"
+
+        /**
+         * Model-aware per-source character budget for ingest analysis.
+         * Replaces the previous flat 30K cap (LONG_SOURCE_BUDGET_CHARS, kept
+         * for backward compat with code that still references it).
+         *
+         * Reserves response + instruction + stable-context room from the
+         * model's effective context window, then gives the remainder to
+         * the source, clamped to [8K, 60% of maxCtx]. For a default
+         * 128K model with 0 stable context this returns 76_800 — a 2.5×
+         * increase over the legacy 30K, which is the whole point.
+         */
+        @JvmStatic
+        fun sourceBudget(model: ModelConfig, stableContextLength: Int = 0): Int =
+            ContextBudgetCalculator.computeIngestSourceBudget(
+                maxContextSize = model.effectiveMaxContextSize(),
+                stableContextLength = stableContextLength,
+            )
 
         // INGEST_IDLE_POLLS / INGEST_IDLE_POLL_MS moved to
         // [IngestScheduler] companion in P0-1 — the orchestrator
