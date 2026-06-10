@@ -176,7 +176,10 @@ class AskViewModel(
         viewModelScope.launch {
             val conversationId = ensureActiveConversation()
             _isLoading.value = true
-            val previousMessages = _messages.value
+            // T8: 一次性 hoist _messages.value 快照,避免后续对它的多次 read
+            // 在并发场景下读到不同中间状态 (userMsg 已插入但 streaming 还没动)。
+            val messagesSnapshot = _messages.value
+            val previousMessages = messagesSnapshot
             val systemPrompt = AiPromptTemplates.systemPromptFor(_currentScopeType.value)
 
             val userMsg = AiMessageEntity(
@@ -188,7 +191,8 @@ class AskViewModel(
                 createdAt = System.currentTimeMillis()
             )
             knowledgeRepository.createMessage(userMsg)
-            _messages.value = _messages.value + userMsg
+            // T8: 用 snapshot 派生新列表,而不是再读 _messages.value
+            _messages.value = messagesSnapshot + userMsg
 
             // T3: 用 AskRetrievalPipeline 替 searchRelevantResults
             // (跨库 + 共现 tag 关系图 + 可选 web,AskRetrievalPipeline.kt:80-105)
