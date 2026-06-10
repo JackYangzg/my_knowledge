@@ -455,11 +455,26 @@ fun AskSheet(
                     }
                 }
             } else if (activeConversationId == null) {
-                val suggestions = listOf(
-                    "总结这篇文章的核心思想，简明扼要表达",
-                    "提取这篇文章的摘要",
-                    "该文章的主要逻辑和知识脉络是什么"
-                )
+                val currentScopeType by askViewModel.currentScopeType.collectAsState()
+                val suggestions = if (currentScopeType == "KNOWLEDGE_ITEM") {
+                    // Article-scope suggestions (single knowledge page).
+                    listOf(
+                        "总结这篇文章的核心思想，简明扼要表达",
+                        "提取这篇文章的摘要",
+                        "该文章的主要逻辑和知识脉络是什么"
+                    )
+                } else {
+                    // Knowledge-base scope suggestions (KNOWLEDGE_BASE,
+                    // GLOBAL, THREAD). All three ask the LLM to surface
+                    // the KB's actual content rather than meta-operations
+                    // like '整理会议观点' / '归档候选' which were the
+                    // previous KB defaults.
+                    listOf(
+                        "这个知识库主要的知识内容包括哪些，请罗列",
+                        "最近导入的知识中，有哪些关键信息需要我关注",
+                        "请使用一段话简明扼要告诉我知识库中的知识内容"
+                    )
+                }
                 suggestions.forEach { q ->
                     Surface(
                         onClick = {
