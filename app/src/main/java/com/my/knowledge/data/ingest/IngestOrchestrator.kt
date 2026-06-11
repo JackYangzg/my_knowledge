@@ -396,33 +396,6 @@ class IngestOrchestrator(
         currentJob?.cancel()
     }
 
-    /**
-     * Mirrors llm_wiki's project mutex, but narrows the lock to the
-     * actual wiki page key. Analysis / generation can run concurrently;
-     * only the read-merge-write of the same logical file is serialized.
-     */
-    private suspend fun <T> withWikiPageWriteLocks(
-        kbId: String,
-        drafts: List<WikiPageDraft>,
-        block: suspend () -> T
-    ): T {
-        val keys = drafts
-            .map { draft -> wikiPageLockKey(kbId, draft.sourceType, draft.title) }
-            .distinct()
-            .sorted()
-        return withLocks(keys, 0, block)
-    }
-
-    private suspend fun <T> withLocks(
-        keys: List<String>,
-        index: Int,
-        block: suspend () -> T
-    ): T {
-        if (index >= keys.size) return block()
-        val mutex = pageWriteMutexes.getOrPut(keys[index]) { Mutex() }
-        return mutex.withLock { withLocks(keys, index + 1, block) }
-    }
-
     // P0-1: the 4-lane claim loop, idle detection, and cold-start
     // recovery moved to [IngestScheduler]. The orchestrator keeps
     // `runTask` (per-task business logic) and `currentJob` (LLM
@@ -831,8 +804,9 @@ class IngestOrchestrator(
 
         // Same rule as llm_wiki: model work stays parallel; only the
         // read-merge-write for identical wiki files is serialized.
-        // Android stores wiki pages as rows, so the logical file key is
-        // (knowledgeBaseId, sourceType, title).
+        // Android stores wiki pages as rows, but the logical file key is
+        // (knowledgeBaseId, wikiPath); sourceType/title is only the fallback
+        // for legacy template drafts without a path.
         //
         // P5-merge: title-based lookup is the primary path. The
         // slug-based fallback below (slug == `Slug.slugify(title)`)
@@ -842,20 +816,15 @@ class IngestOrchestrator(
         // it, the M2 path's `insertOrIgnore` would mint a fresh row
         // because the title-keyed lookup misses the existing one —
         // and the user reported that as "两个同名文件".
-        val liveCandidatesByType: Map<String, List<KnowledgeItemEntity>> =
-            pageDrafts.map { it.sourceType }.distinct()
-                .associateWith { type ->
-                    db.knowledgeItemDao().getByKbSourceTypeLive(kbId, type)
-                }
-
-        val writtenItems = withWikiPageWriteLocks(kbId, pageDrafts) {
-            val items = pageDrafts.mapIndexed { index, draft ->
-                val pathMatch = draft.wikiPath?.let { path ->
-                    liveCandidatesByType[draft.sourceType]
-                        ?.firstOrNull { wikiPathOf(it.sourceTraceJson) == path }
-                }
+        val writtenItems = pageDrafts.mapIndexed { index, draft ->
+            wikiPageWriteLocks.withLock(kbId, draft) {
+                // Resolve the current row after acquiring this page's lock.
+                // Looking it up before the lock lets two sources both observe
+                // "missing" and race to insert/overwrite the same wikiPath.
                 val existingPage = if (draft.wikiPath != null) {
-                    pathMatch
+                    db.knowledgeItemDao()
+                        .getByKbSourceTypeLive(kbId, draft.sourceType)
+                        .firstOrNull { wikiPathOf(it.sourceTraceJson) == draft.wikiPath }
                 } else {
                     db.knowledgeItemDao()
                         .getByKbSourceTypeAndTitle(kbId, draft.sourceType, draft.title)
@@ -910,7 +879,6 @@ class IngestOrchestrator(
                 }
                 item
             }
-            items
         }
         updateProgress(
             task,
@@ -2693,9 +2661,7 @@ class IngestOrchestrator(
     }
 
     companion object {
-        private val pageWriteMutexes = ConcurrentHashMap<String, Mutex>()
-        private fun wikiPageLockKey(kbId: String, sourceType: String, title: String): String =
-            "${kbId.ifBlank { "_unfiled" }}:${sourceType.trim().lowercase()}:${title.trim().lowercase()}"
+        private val wikiPageWriteLocks = WikiPageWriteLockRegistry()
 
         /**
          * Model-aware per-source character budget for ingest analysis.
@@ -2840,6 +2806,35 @@ under the default bucket.
   "reviewReasons": ["string"]
 }
 """
+    }
+}
+
+/**
+ * Serializes only the read-merge-write of one logical wiki file.
+ *
+ * `wikiPath` is authoritative when present. Titles are model-generated
+ * display metadata and can drift between runs, so using them as the lock
+ * identity allowed two writers to mutate the same file concurrently.
+ */
+internal class WikiPageWriteLockRegistry {
+    private val mutexes = ConcurrentHashMap<String, Mutex>()
+
+    internal suspend fun <T> withLock(
+        kbId: String,
+        draft: WikiPageDraft,
+        block: suspend () -> T,
+    ): T {
+        val key = lockKey(kbId, draft)
+        return mutexes.computeIfAbsent(key) { Mutex() }.withLock { block() }
+    }
+
+    internal fun lockKey(kbId: String, draft: WikiPageDraft): String {
+        val pageIdentity = draft.wikiPath
+            ?.trim()
+            ?.lowercase()
+            ?.takeIf { it.isNotBlank() }
+            ?: "${draft.sourceType.trim().lowercase()}:${draft.title.trim().lowercase()}"
+        return "${kbId.ifBlank { "_unfiled" }}:$pageIdentity"
     }
 }
 

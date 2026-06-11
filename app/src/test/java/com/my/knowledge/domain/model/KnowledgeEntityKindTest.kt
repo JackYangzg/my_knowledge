@@ -19,5 +19,9 @@ class KnowledgeEntityKindTest {
 
         assertEquals("concept", knowledgeEntityTopLevelKind("algorithm"))
         assertEquals("entity", knowledgeEntityTopLevelKind("person"))
+        assertEquals("entity", knowledgeEntityTopLevelKind("entity:Algorithm"))
+        assertEquals("concept", knowledgeEntityTopLevelKind("concept:Organization"))
+        assertEquals("algorithm", normalizeKnowledgeEntityType("entity:Algorithm"))
+        assertEquals("organization", normalizeKnowledgeEntityType("concept:Organization"))
     }
 }

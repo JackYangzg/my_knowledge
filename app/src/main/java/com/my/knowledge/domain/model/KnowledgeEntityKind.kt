@@ -20,11 +20,17 @@ val KNOWLEDGE_CONCEPT_TYPE_NAMES = setOf(
     "category"
 )
 
-fun normalizeKnowledgeEntityType(type: String): String =
-    type.trim().lowercase().ifBlank { "entity" }
+fun normalizeKnowledgeEntityType(type: String): String {
+    val normalized = type.trim().lowercase().ifBlank { "entity" }
+    return normalized.substringAfter(':', normalized).ifBlank { "entity" }
+}
 
-fun isKnowledgeConceptType(type: String): Boolean =
-    normalizeKnowledgeEntityType(type) in KNOWLEDGE_CONCEPT_TYPE_NAMES
+fun isKnowledgeConceptType(type: String): Boolean {
+    val normalized = type.trim().lowercase()
+    return normalized.startsWith("concept:") ||
+        (!normalized.startsWith("entity:") &&
+            normalizeKnowledgeEntityType(normalized) in KNOWLEDGE_CONCEPT_TYPE_NAMES)
+}
 
 fun knowledgeEntityTopLevelKind(type: String): String =
     if (isKnowledgeConceptType(type)) "concept" else "entity"

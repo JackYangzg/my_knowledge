@@ -2008,9 +2008,11 @@ class KnowledgeRepositoryImpl(
         return when (item.sourceType) {
             "wiki_entity" -> frontMatterValue(item.contentMarkdown, "entityType")
                 ?.takeIf { it.isNotBlank() }
+                ?.let { "entity:$it" }
                 ?: "entity"
             "wiki_concept" -> frontMatterValue(item.contentMarkdown, "conceptCategory")
                 ?.takeIf { it.isNotBlank() }
+                ?.let { "concept:$it" }
                 ?: "concept"
             "wiki_source" -> "source"
             "wiki_overview" -> "overview"

@@ -31,7 +31,7 @@ import kotlinx.coroutines.sync.withLock
  * persisted pending/running task rows plus WorkManager restart the
  * pipeline on the next opportunity.
  *
- * P1-A.4: the lifecycle policy (start / re-entry / rerun / cancel)
+ * P1-A.4: the lifecycle policy (start / idempotent re-entry / cancel)
  * is now hosted by [IngestRuntimeLoop]. This object is a thin
  * singleton wrapper that owns the app-process scope + the wake /
  * wifi locks and hands its `runOnce` body into a loop instance.
@@ -130,14 +130,23 @@ object IngestRuntime {
         IngestForegroundService.start(appContext, pendingCount = 0)
         val active = loop
         if (active?.isActive() == true) {
-            // Idempotent re-entry: the active loop sees the new
-            // task on its next `rerunRequested` poll.
-            rerunActiveLoop()
+            // Idempotent re-entry. The active scheduler polls the DB
+            // for newly enqueued tasks; do not force a second full pass
+            // after embedding completes.
             return
         }
         val newLoop = IngestRuntimeLoop(
             scope = scope,
-            runOnce = { runOnceInLocks(appContext) }
+            // The process runner and WorkManager recovery entry must share
+            // one mutex. Previously only WorkManager's runOnce() acquired
+            // runMutex, so two orchestrators could overlap; the second one's
+            // cold-start recovery reset the first one's running rows back to
+            // pending and caused a fresh ingest after embedding.
+            runOnce = {
+                runMutex.withLock {
+                    runOnceInLocks(appContext)
+                }
+            }
         )
         loop = newLoop
         newLoop.start()
@@ -166,12 +175,6 @@ object IngestRuntime {
         // service isn't started.
         return lastAppContext
             ?: throw IllegalStateException("IngestRuntime.appContext not initialized; call start() before cancel()")
-    }
-
-    private fun rerunActiveLoop() {
-        // The active loop reads `rerunRequested` between passes;
-        // setting it here is enough to queue a follow-up run.
-        loop?.start()
     }
 
     private suspend fun runOnceInLocks(appContext: Context) {

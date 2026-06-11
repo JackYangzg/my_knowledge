@@ -40,13 +40,13 @@ class IngestRestartRegressionTest {
         // Give the coroutine a moment to clean up.
         delay(100)
         scope.cancel()
-        // After one start() with no rerun, exactly one pass runs.
+        // After one start(), exactly one pass runs.
         assertEquals("single start() must run exactly one pass, no restart",
             1, calls.get())
     }
 
     @Test
-    fun `loop with start during in-flight pass runs at most two passes`() = runBlocking {
+    fun `loop with start during in-flight pass does not schedule another pass`() = runBlocking {
         val firstEntered = CompletableDeferred<Unit>()
         val releaseFirst = CompletableDeferred<Unit>()
         val calls = AtomicInteger(0)
@@ -60,20 +60,16 @@ class IngestRestartRegressionTest {
         }
         loop.start()  // pass 1 starts
         withTimeout(1_000) { firstEntered.await() }
-        // While pass 1 is in flight, request a rerun.
-        loop.start()  // queues a rerun
-        // Release pass 1; the loop should now run pass 2.
+        // Duplicate runtime/WorkManager entry while pass 1 is active.
+        loop.start()
         releaseFirst.complete(Unit)
         withTimeout(2_000) {
-            while (calls.get() < 2) delay(10)
+            while (loop.isActive()) delay(10)
         }
-        // No more reruns queued, loop should exit.
-        withTimeout(2_000) { while (loop.isActive()) delay(10) }
         scope.cancel()
-        // Two passes total: pass 1 (initial) + pass 2 (rerun). Not three.
         assertEquals(
-            "exactly 2 passes expected (initial + one rerun), got ${calls.get()}",
-            2, calls.get()
+            "duplicate start must not trigger a post-embedding ingest pass",
+            1, calls.get()
         )
     }
 }
