@@ -67,6 +67,15 @@ interface ProcessingTaskDao {
     """)
     suspend fun getActiveBySourceAndType(sourceId: String, taskType: String): ProcessingTaskEntity?
 
+    @Query("""
+        SELECT * FROM processing_task
+        WHERE itemId = :itemId
+          AND taskType = :taskType
+          AND status IN ('pending', 'running', 'pending_network')
+        LIMIT 1
+    """)
+    suspend fun getActiveByItemAndType(itemId: String, taskType: String): ProcessingTaskEntity?
+
     @Query("SELECT * FROM processing_task WHERE sourceId = :sourceId ORDER BY createdAt DESC")
     suspend fun getBySource(sourceId: String): List<ProcessingTaskEntity>
 

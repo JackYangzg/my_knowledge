@@ -40,6 +40,17 @@ data class AiRetryEvent(
     val message: String,
 )
 
+data class AiCallMetrics(
+    val queueWaitMs: Long,
+    val httpToFirstByteMs: Long,
+    val responseReadMs: Long,
+    val totalMs: Long,
+    val inputChars: Int,
+    val outputChars: Int,
+    val attempts: Int,
+    val model: String,
+)
+
 interface AiProvider {
     suspend fun chat(prompt: String, context: String): String
     suspend fun complete(systemPrompt: String, userMessage: String): String
@@ -150,6 +161,7 @@ class AiGateway(
         reasoningEffort: ReasoningEffort? = null,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
+        onMetrics: suspend (AiCallMetrics) -> Unit = {},
     ): String {
         val config = configProvider()
         if (config.apiKey.isBlank()) {
@@ -165,6 +177,7 @@ class AiGateway(
             reasoningEffort = reasoningEffort,
             maxAttempts = maxAttempts,
             onRetry = onRetry,
+            onMetrics = onMetrics,
         )
     }
 
@@ -255,6 +268,7 @@ class AiGateway(
         temperature: Float = 0.2f,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
+        onMetrics: suspend (AiCallMetrics) -> Unit = {},
     ): String {
         val config = configProvider()
         if (config.apiKey.isBlank()) return ""
@@ -265,6 +279,7 @@ class AiGateway(
             temperature = temperature,
             maxAttempts = maxAttempts,
             onRetry = onRetry,
+            onMetrics = onMetrics,
         )
     }
 
@@ -395,22 +410,55 @@ class AiGateway(
         reasoningEffort: ReasoningEffort? = null,
         maxAttempts: Int = MAX_REMOTE_ATTEMPTS,
         onRetry: suspend (AiRetryEvent) -> Unit = {},
-    ): String = concurrencyLimiter.withPermit {
-        withContext(Dispatchers.IO) {
-            try {
-                retryRemoteCall(maxAttempts, onRetry) {
-                    callApiOnce(
-                        config,
-                        systemPrompt,
-                        userMessage,
-                        temperature,
-                        maxTokens,
-                        reasoningEffort,
-                    )
+        onMetrics: suspend (AiCallMetrics) -> Unit = {},
+    ): String {
+        val requestStartedNs = System.nanoTime()
+        concurrencyLimiter.acquire()
+        val acquiredNs = System.nanoTime()
+        try {
+            return withContext(Dispatchers.IO) {
+                var attempts = 0
+                var firstByteDurationNs = 0L
+                var responseReadDurationNs = 0L
+                var responseFinishedNs = acquiredNs
+                try {
+                    retryRemoteCall(maxAttempts, onRetry) {
+                        attempts++
+                        val attemptStartedNs = System.nanoTime()
+                        callApiOnce(
+                            config,
+                            systemPrompt,
+                            userMessage,
+                            temperature,
+                            maxTokens,
+                            reasoningEffort,
+                        ) { responseHeadersNs, bodyFinishedNs ->
+                            firstByteDurationNs = responseHeadersNs - attemptStartedNs
+                            responseReadDurationNs = bodyFinishedNs - responseHeadersNs
+                            responseFinishedNs = bodyFinishedNs
+                        }
+                    }.also { result ->
+                        runCatching {
+                            onMetrics(
+                                AiCallMetrics(
+                                    queueWaitMs = (acquiredNs - requestStartedNs).nanosToMs(),
+                                    httpToFirstByteMs = firstByteDurationNs.nanosToMs(),
+                                    responseReadMs = responseReadDurationNs.nanosToMs(),
+                                    totalMs = (responseFinishedNs - requestStartedNs).nanosToMs(),
+                                    inputChars = (systemPrompt?.length ?: 0) + userMessage.length,
+                                    outputChars = result.length,
+                                    attempts = attempts,
+                                    model = config.modelName,
+                                )
+                            )
+                        }
+                    }
+                } catch (e: Throwable) {
+                    e.toAiErrorMessage(config.baseUrl)
                 }
-            } catch (e: Throwable) {
-                e.toAiErrorMessage(config.baseUrl)
             }
+        } finally {
+            concurrencyLimiter.release()
         }
     }
 
@@ -421,6 +469,7 @@ class AiGateway(
         temperature: Float,
         maxTokens: Int,
         reasoningEffort: ReasoningEffort?,
+        onResponseTiming: (responseHeadersNs: Long, bodyFinishedNs: Long) -> Unit,
     ): String {
         val messages = buildJsonArray {
             if (systemPrompt != null) {
@@ -455,6 +504,7 @@ class AiGateway(
             .header("Authorization", "Bearer ${config.apiKey}")
             .build()
         LlmHttpClient.instance.newCall(request).execute().use { response ->
+            val responseHeadersNs = System.nanoTime()
             val responseCode = response.code
             val responseText = if (response.isSuccessful) {
                 response.body?.string() ?: ""
@@ -466,6 +516,8 @@ class AiGateway(
                 }
                 return classified
             }
+            val bodyFinishedNs = System.nanoTime()
+            onResponseTiming(responseHeadersNs, bodyFinishedNs)
 
             val parsed = parseChatResponse(responseText)
             val cleaned = with(AiTextCleaner) { parsed.cleanModelOutput() }
@@ -693,6 +745,8 @@ class AiGateway(
             else -> "[AI 调用失败] HTTP $code: $trimmed"
         }
     }
+
+    private fun Long.nanosToMs(): Long = this / 1_000_000L
 
     private fun buildImageAnalysisPrompt(title: String, ocrText: String): String = buildString {
         appendLine("Describe this image factually for a knowledge-base index.")

@@ -117,6 +117,23 @@ interface KnowledgeItemDao {
     @Update
     suspend fun update(item: KnowledgeItemEntity)
 
+    @Query("""
+        UPDATE knowledge_item
+        SET contentMarkdown = :contentMarkdown,
+            contentHash = :newHash,
+            updatedAt = :updatedAt
+        WHERE id = :id
+          AND contentHash = :expectedHash
+          AND deletedAt IS NULL
+    """)
+    suspend fun updateContentIfHash(
+        id: String,
+        expectedHash: String,
+        contentMarkdown: String,
+        newHash: String,
+        updatedAt: Long,
+    ): Int
+
     @Query("UPDATE knowledge_item SET deletedAt = :deletedAt, status = 'deleted' WHERE id = :id")
     suspend fun softDelete(id: String, deletedAt: Long)
 

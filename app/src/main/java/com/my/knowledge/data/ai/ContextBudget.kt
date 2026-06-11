@@ -37,6 +37,9 @@ object ContextBudgetCalculator {
     private const val PAGE_BUDGET_FRAC = 0.50
     private const val PER_PAGE_FRAC = 0.30
     private const val PER_PAGE_FLOOR = 5_000
+    const val INGEST_LATENCY_BUDGET_FAST = 24_000
+    const val INGEST_LATENCY_BUDGET_BALANCED = 36_000
+    const val INGEST_LATENCY_BUDGET_QUALITY = 60_000
 
     /**
      * Compute character budgets from the LLM's max context window.
@@ -101,4 +104,13 @@ object ContextBudgetCalculator {
         val upper = min(300_000, max(8_000, floor(b.maxCtx * 0.6).toInt()))
         return available.coerceIn(8_000, upper)
     }
+
+    fun computeIngestAnalysisLimit(
+        maxContextSize: Int,
+        stableContextLength: Int = 0,
+        latencyBudget: Int = INGEST_LATENCY_BUDGET_BALANCED,
+    ): Int = min(
+        computeIngestSourceBudget(maxContextSize, stableContextLength),
+        latencyBudget.coerceAtLeast(8_000),
+    )
 }

@@ -70,4 +70,15 @@ class IngestOrchestratorSourceBudgetTest {
         assertTrue("8K=$small, 128K=$mid, 512K=$big must be monotonically non-decreasing",
             small <= mid && mid <= big)
     }
+
+    @Test
+    fun analysisLimit_usesBalancedLatencyBudgetByDefault() {
+        assertEquals(36_000, IngestOrchestrator.analysisLimit(ModelConfig()))
+        assertEquals(36_000, IngestOrchestrator.analysisLimit(model(128_000)))
+    }
+
+    @Test
+    fun analysisLimit_neverExceedsSmallModelCapacity() {
+        assertEquals(8_000, IngestOrchestrator.analysisLimit(model(8_192)))
+    }
 }

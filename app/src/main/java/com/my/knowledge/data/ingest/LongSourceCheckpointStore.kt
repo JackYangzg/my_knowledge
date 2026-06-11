@@ -127,7 +127,7 @@ class LongSourceCheckpointStore(
 
     companion object {
         const val PROGRESS_SUBDIR = ".my-knowledge/ingest-progress"
-        const val CHECKPOINT_VERSION = 1
+        const val CHECKPOINT_VERSION = 2
         /**
          * Hex SHA-256 of the source content. Used in the checkpoint
          * file name and as the [LongSourceCheckpoint.sourceHash]
@@ -172,7 +172,14 @@ class LongSourceCheckpointStore(
             if (checkpoint.chunkTotal != params.chunkTotal) return false
             if (checkpoint.completedThrough < 0) return false
             if (checkpoint.completedThrough > params.chunkTotal) return false
-            if (checkpoint.analyses.size != checkpoint.completedThrough) return false
+            if (checkpoint.completedChunkIndexes.any { it !in 1..params.chunkTotal }) return false
+            if (checkpoint.completedChunkIndexes.distinct().size != checkpoint.completedChunkIndexes.size) return false
+            val contiguous = (1..params.chunkTotal)
+                .takeWhile { it in checkpoint.completedChunkIndexes }
+                .size
+            if (checkpoint.completedThrough != contiguous) return false
+            if (checkpoint.analysisChunkIndexes != checkpoint.completedChunkIndexes) return false
+            if (checkpoint.analyses.size != checkpoint.analysisChunkIndexes.size) return false
             if (checkpoint.globalDigestBytes < 0) return false
             return true
         }
@@ -202,8 +209,8 @@ data class LongSourceCheckpointParams(
 /**
  * Persisted state of an in-flight long-source analysis. One
  * checkpoint file per source; the orchestrator loads it on entry
- * (when present + compatible) and rewrites it after every chunk
- * finishes.
+ * (when present + compatible) and rewrites it after every parallel
+ * chunk window finishes.
  *
  * The "int + List<String>" shape mirrors the JS `LongSourceCheckpoint`
  * interface in `src/lib/ingest.ts` so a future cross-system
@@ -219,11 +226,12 @@ data class LongSourceCheckpoint(
     val overlapChars: Int,
     val chunkTotal: Int,
     /**
-     * 0-based count of chunks that have been analysed and persisted.
-     * The next run resumes at chunk `completedThrough + 1`. Must
-     * equal `analyses.size` — the compat check enforces this.
+     * Largest continuously completed prefix. Parallel windows can
+     * also persist later indexes, represented explicitly below.
      */
     val completedThrough: Int,
+    val completedChunkIndexes: List<Int> = (1..completedThrough).toList(),
+    val analysisChunkIndexes: List<Int> = completedChunkIndexes,
     /**
      * The most recent "Updated Global Digest" the LLM produced.
      * Pre-rendered into the user prompt of every subsequent chunk
@@ -276,6 +284,8 @@ internal object LongSourceCheckpointJson {
         appendInt(sb, "overlapChars", state.overlapChars); sb.append(',')
         appendInt(sb, "chunkTotal", state.chunkTotal); sb.append(',')
         appendInt(sb, "completedThrough", state.completedThrough); sb.append(',')
+        appendIntArray(sb, "completedChunkIndexes", state.completedChunkIndexes); sb.append(',')
+        appendIntArray(sb, "analysisChunkIndexes", state.analysisChunkIndexes); sb.append(',')
         appendString(sb, "globalDigest", state.globalDigest); sb.append(',')
         appendStringArray(sb, "analyses", state.analyses); sb.append(',')
         appendLong(sb, "updatedAt", state.updatedAt)
@@ -291,8 +301,14 @@ internal object LongSourceCheckpointJson {
             for (i in 0 until analysesArr.length()) {
                 analyses.add(analysesArr.optString(i, ""))
             }
+            val rawVersion = obj.optInt("version", -1)
+            val completedThrough = obj.optInt("completedThrough", -1)
+            val completedIndexes = obj.optJSONArray("completedChunkIndexes")?.toIntList()
+                ?: if (completedThrough >= 0) (1..completedThrough).toList() else emptyList()
+            val analysisIndexes = obj.optJSONArray("analysisChunkIndexes")?.toIntList()
+                ?: completedIndexes
             LongSourceCheckpoint(
-                version = obj.optInt("version", -1),
+                version = if (rawVersion == 1) LongSourceCheckpointStore.CHECKPOINT_VERSION else rawVersion,
                 sourceIdentity = obj.optString("sourceIdentity", ""),
                 sourceHash = obj.optString("sourceHash", ""),
                 sourceLength = obj.optInt("sourceLength", -1),
@@ -300,7 +316,9 @@ internal object LongSourceCheckpointJson {
                 targetChars = obj.optInt("targetChars", -1),
                 overlapChars = obj.optInt("overlapChars", -1),
                 chunkTotal = obj.optInt("chunkTotal", -1),
-                completedThrough = obj.optInt("completedThrough", -1),
+                completedThrough = completedThrough,
+                completedChunkIndexes = completedIndexes,
+                analysisChunkIndexes = analysisIndexes,
                 globalDigest = obj.optString("globalDigest", ""),
                 analyses = analyses,
                 updatedAt = obj.optLong("updatedAt", 0L)
@@ -331,6 +349,18 @@ internal object LongSourceCheckpointJson {
         }
         sb.append(']')
     }
+
+    private fun appendIntArray(sb: StringBuilder, key: String, values: List<Int>) {
+        sb.append('"').append(key).append('"').append(':').append('[')
+        for ((i, value) in values.withIndex()) {
+            if (i > 0) sb.append(',')
+            sb.append(value)
+        }
+        sb.append(']')
+    }
+
+    private fun org.json.JSONArray.toIntList(): List<Int> =
+        (0 until length()).map { optInt(it, -1) }
 
     private fun escape(value: String): String {
         val sb = StringBuilder(value.length + 2)

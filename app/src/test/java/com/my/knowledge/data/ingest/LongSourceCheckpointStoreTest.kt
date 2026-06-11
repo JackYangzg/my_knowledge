@@ -109,4 +109,51 @@ class LongSourceCheckpointStoreTest {
         val loaded = store().load(file, matchingParams())
         assertNull("corrupted JSON must return null (existing behavior)", loaded)
     }
+
+    @Test
+    fun load_roundTripsOutOfOrderCompletedChunks() {
+        val cp = validCheckpoint(
+            updatedAt = nowMs(),
+            completedThrough = 1,
+            analyses = listOf("chunk1 analysis", "chunk3 analysis"),
+        ).copy(
+            completedChunkIndexes = listOf(1, 3),
+            analysisChunkIndexes = listOf(1, 3),
+        )
+        assertTrue(store().save(path(), cp))
+        val loaded = store().load(path(), matchingParams())
+        assertNotNull(loaded)
+        assertEquals(listOf(1, 3), loaded!!.completedChunkIndexes)
+        assertEquals(listOf(1, 3), loaded.analysisChunkIndexes)
+        assertEquals(listOf("chunk1 analysis", "chunk3 analysis"), loaded.analyses)
+    }
+
+    @Test
+    fun load_migratesLegacyV1ContinuousCheckpoint() {
+        val file = path()
+        file.parentFile?.mkdirs()
+        file.writeText(
+            """
+            {
+              "version":1,
+              "sourceIdentity":"src-1",
+              "sourceHash":"abc123",
+              "sourceLength":10000,
+              "sourceBudget":30000,
+              "targetChars":16500,
+              "overlapChars":1320,
+              "chunkTotal":3,
+              "completedThrough":2,
+              "globalDigest":"digest",
+              "analyses":["a1","a2"],
+              "updatedAt":0
+            }
+            """.trimIndent(),
+            Charsets.UTF_8,
+        )
+        val loaded = store().load(file, matchingParams())
+        assertNotNull(loaded)
+        assertEquals(LongSourceCheckpointStore.CHECKPOINT_VERSION, loaded!!.version)
+        assertEquals(listOf(1, 2), loaded.completedChunkIndexes)
+    }
 }

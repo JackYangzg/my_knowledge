@@ -296,6 +296,36 @@ class AiGatewayStreamTest {
     }
 
     @Test
+    fun `observed complete reports latency and payload metrics`() = runTest {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(HttpURLConnection.HTTP_OK)
+                .setHeader("Content-Type", "application/json")
+                .setBody(jsonResponseBody("done")),
+        )
+        val gateway = newGateway()
+        var observed: AiCallMetrics? = null
+
+        val result = gateway.completeObserved(
+            systemPrompt = "system",
+            userMessage = "user",
+            maxAttempts = 1,
+            onMetrics = { observed = it },
+        )
+
+        assertEquals("done", result)
+        assertNotNull(observed)
+        assertEquals("test-model", observed!!.model)
+        assertEquals(10, observed!!.inputChars)
+        assertEquals(4, observed!!.outputChars)
+        assertEquals(1, observed!!.attempts)
+        assertTrue(observed!!.queueWaitMs >= 0)
+        assertTrue(observed!!.httpToFirstByteMs >= 0)
+        assertTrue(observed!!.responseReadMs >= 0)
+        assertTrue(observed!!.totalMs >= 0)
+    }
+
+    @Test
     fun `observed streaming complete retries HTTP 500 and returns second stream`() = runTest {
         server.enqueue(
             MockResponse()

@@ -10,6 +10,7 @@ import com.my.knowledge.data.db.entity.ProcessingTaskLogEntity
 import com.my.knowledge.data.db.entity.ReviewItemEntity
 import com.my.knowledge.data.db.entity.SourceDocumentEntity
 import com.my.knowledge.data.ai.AiGateway
+import com.my.knowledge.data.ai.AiCallMetrics
 import com.my.knowledge.data.ai.AiTextCleaner
 import com.my.knowledge.data.ai.AiTextCleaner.cleanModelOutput
 import com.my.knowledge.data.ai.ContextBudgetCalculator
@@ -29,6 +30,9 @@ import com.my.knowledge.domain.repository.KnowledgeRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -298,6 +302,15 @@ class IngestOrchestrator(
     // relay. Lifted into [ParsedContentCache] so the eviction
     // policy is testable without the orchestrator's other deps.
     private val parsedContentCache = ParsedContentCache(limit = 64)
+    private val llmStatsBySource = ConcurrentHashMap<String, LlmSourceStats>()
+
+    private data class LlmSourceStats(
+        var callCount: Int = 0,
+        var retryCount: Int = 0,
+        var queueWaitMs: Long = 0,
+        var remoteMs: Long = 0,
+        var totalMs: Long = 0,
+    )
 
     // P0-1: the 4-lane claim loop / idle detection / cold-start
     // recovery that used to be inlined at the top of this class now
@@ -378,6 +391,7 @@ class IngestOrchestrator(
         "analysis" to AnalysisStage(),
         "generation" to GenerationStage(),
         "embedding" to EmbeddingStage(),
+        "wiki_merge" to WikiMergeStage(),
     )
 
     /**
@@ -691,7 +705,7 @@ class IngestOrchestrator(
         }
 
         updateProgress(task, 45, "调用 AI 分析来源", "模型生成 Stage 1 Markdown")
-        val isLongSource = parsed.markdown.length > sourceBudget(KnowledgeManager.modelConfig) &&
+        val isLongSource = parsed.markdown.length > analysisLimit(KnowledgeManager.modelConfig) &&
             longSourceCheckpointStore != null
         appendLog(
             task,
@@ -816,6 +830,7 @@ class IngestOrchestrator(
         // it, the M2 path's `insertOrIgnore` would mint a fresh row
         // because the title-keyed lookup misses the existing one —
         // and the user reported that as "两个同名文件".
+        val deferredMerges = mutableListOf<DeferredMergeRequest>()
         val writtenItems = pageDrafts.mapIndexed { index, draft ->
             wikiPageWriteLocks.withLock(kbId, draft) {
                 // Resolve the current row after acquiring this page's lock.
@@ -832,7 +847,6 @@ class IngestOrchestrator(
                 val mergedMarkdown = mergeWikiPageMarkdown(
                     existingMarkdown = existingPage?.contentMarkdown.orEmpty(),
                     draft = draft,
-                    sourceTitle = sourceIdentity(source),
                 )
                 if (index % 3 == 0) {
                     updateProgress(
@@ -876,6 +890,18 @@ class IngestOrchestrator(
                 val rowId = db.knowledgeItemDao().insertOrIgnore(item)
                 if (rowId == -1L) {
                     db.knowledgeItemDao().update(item)
+                }
+                if (shouldDeferAiMerge(existingPage?.contentMarkdown.orEmpty(), draft)) {
+                    deferredMerges += DeferredMergeRequest(
+                        itemId = item.id,
+                        sourceTitle = sourceIdentity(source),
+                        existingContent = existingPage!!.contentMarkdown,
+                        incomingContent = wikiCompiler.mergeFrontmatterOnly(
+                            existingPage.contentMarkdown,
+                            draft.markdown,
+                        ),
+                        expectedHash = item.contentHash,
+                    )
                 }
                 item
             }
@@ -933,6 +959,17 @@ class IngestOrchestrator(
         ingestStateMachine.transitionToGenerated(source.id, now)
         markSuccess(task, "Generated ${writtenItems.size} processed wiki pages", """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
         enqueue(source.id, "embedding", 5, """{"rootItemId":"${rootItem.id}","processedItemIds":[${writtenItems.joinToString(",") { "\"${it.id}\"" }}]}""")
+        logAndClearLlmSummary(task, source.id)
+        deferredMerges.forEach { merge ->
+            enqueueWikiMerge(
+                sourceId = source.id,
+                itemId = merge.itemId,
+                sourceTitle = merge.sourceTitle,
+                existingContent = merge.existingContent,
+                incomingContent = merge.incomingContent,
+                expectedHash = merge.expectedHash,
+            )
+        }
         // 灵感脉络的更新不再由 ingest 触发(2026-06 重构):整套程序化脉络
         // (ThreadEvolutionWorker + ThreadEvolutionRunner)已经删除,脉络刷新
         // 只在 NoteEditorViewModel.saveToKnowledgeBase 走 LLM incremental,
@@ -1005,6 +1042,46 @@ class IngestOrchestrator(
     internal suspend fun runEmbeddingTask(task: ProcessingTaskEntity) {
         // Fragment embeddings are already maintained by repository rebuilds; this task keeps the queue explicit.
         markSuccess(task, "Embedding task acknowledged", "{}")
+    }
+
+    internal suspend fun runWikiMergeTask(task: ProcessingTaskEntity) {
+        val payload = JSONObject(task.inputJson)
+        val itemId = task.itemId ?: payload.optString("itemId")
+        val expectedHash = payload.optString("expectedHash")
+        val existingContent = payload.optString("existingContent")
+        val incomingContent = payload.optString("incomingContent")
+        val sourceTitle = payload.optString("sourceTitle")
+        require(itemId.isNotBlank() && expectedHash.isNotBlank()) { "Invalid wiki_merge payload" }
+
+        val current = db.knowledgeItemDao().getById(itemId)
+        if (current == null || current.contentHash != expectedHash) {
+            markSuccess(task, "页面已变化，跳过过期 AI 合并", """{"skipped":"stale"}""")
+            logAndClearLlmSummary(task, task.sourceId ?: task.targetId)
+            return
+        }
+
+        updateProgress(task, 20, "后台精修 ${current.title}", "开始调用 AI 合并页面")
+        val candidate = requestAiMerge(task, existingContent, incomingContent, sourceTitle)
+        if (!IngestParityCore.acceptsLlmMerge(existingContent, incomingContent, candidate)) {
+            markSuccess(task, "AI 合并未通过保真校验，保留确定性版本", """{"skipped":"validation"}""")
+            logAndClearLlmSummary(task, task.sourceId ?: task.targetId)
+            return
+        }
+        val merged = wikiCompiler.mergeFrontmatterOnly(current.contentMarkdown, candidate)
+        val newHash = fileStore.sha256Text(merged)
+        val updated = db.knowledgeItemDao().updateContentIfHash(
+            id = itemId,
+            expectedHash = expectedHash,
+            contentMarkdown = merged,
+            newHash = newHash,
+            updatedAt = System.currentTimeMillis(),
+        )
+        markSuccess(
+            task,
+            if (updated == 1) "后台页面合并完成" else "页面已变化，放弃覆盖",
+            """{"updated":${updated == 1}}""",
+        )
+        logAndClearLlmSummary(task, task.sourceId ?: task.targetId)
     }
 
     private fun FileBlockParser.ParsedBlock.toWikiPageDraft(
@@ -1095,6 +1172,7 @@ class IngestOrchestrator(
                 temperature = temperature,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
+                onMetrics = { metrics -> recordLlmMetrics(task, step, metrics) },
             ).also { result ->
                 appendLog(
                     task,
@@ -1137,6 +1215,7 @@ class IngestOrchestrator(
                 reasoningEffort = reasoningEffort,
                 maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
                 onRetry = onRetry,
+                onMetrics = { metrics -> recordLlmMetrics(task, step, metrics) },
             ).also { result ->
                 appendLog(
                     task,
@@ -1241,7 +1320,7 @@ class IngestOrchestrator(
         parsed: ParsedContentEntity,
     ): Triple<java.io.File, LongSourceCheckpointParams, List<SourceChunk>>? {
         val store = longSourceCheckpointStore ?: return null
-        val sourceBudget = sourceBudget(KnowledgeManager.modelConfig)
+        val sourceBudget = analysisLimit(KnowledgeManager.modelConfig)
         if (parsed.markdown.length <= sourceBudget) return null
         val targetChars = (sourceBudget * 0.55).toInt()
             .coerceIn(LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
@@ -1367,6 +1446,7 @@ class IngestOrchestrator(
     }
 
     private suspend fun requestAiMerge(
+        task: ProcessingTaskEntity,
         existingContent: String,
         incomingContent: String,
         sourceTitle: String
@@ -1415,6 +1495,7 @@ class IngestOrchestrator(
             ),
             reasoningEffort = ReasoningEffort.NONE,
             maxAttempts = INGEST_AI_REMOTE_ATTEMPTS,
+            onMetrics = { metrics -> recordLlmMetrics(task, "后台页面合并", metrics) },
         )
         val cleaned = with(AiTextCleaner) { response.cleanModelOutput() }
         throwIfAiFailure(cleaned)
@@ -1501,8 +1582,9 @@ class IngestOrchestrator(
      * path code below.
      *
      * Progress is persisted to [longSourceCheckpointStore] after
-     * every chunk, so a retry / crash resumes from
-     * `completedThrough + 1` instead of re-running every chunk. The
+     * every two-chunk window. Completed chunk indexes are explicit,
+     * so a retry skips every saved chunk even when completion order
+     * was non-contiguous. The
      * store's compat check rejects any checkpoint whose identity /
      * shape (source hash, chunk count, target/overlap chars,
      * budget) no longer matches the current run, which forces a
@@ -1536,11 +1618,10 @@ class IngestOrchestrator(
                 ?.takeIf { it.isNotBlank() && !it.startsWith("[") }
 
         val content = parsed.markdown
-        // Model-aware source budget. Previously hardcoded to 30K (LONG_SOURCE_BUDGET_CHARS),
-        // which silently truncated any model with ctx >= 60K and over-budgeted 8K models.
-        // New: computeIngestSourceBudget reserves response + instruction + stable-context,
-        // then gives the remainder to the source, clamped to [8K, 60% of maxCtx].
-        val sourceBudget = sourceBudget(KnowledgeManager.modelConfig)
+        // Capacity and latency are separate. ContextBudgetCalculator
+        // first computes what fits, then analysisLimit caps a single
+        // remote call at the balanced 36K latency budget.
+        val sourceBudget = analysisLimit(KnowledgeManager.modelConfig)
         val targetChars = ((sourceBudget * 0.55).toInt())
             .coerceIn(LONG_SOURCE_CHUNK_MIN, LONG_SOURCE_CHUNK_MAX)
         val overlapChars = ((targetChars * 0.08).toInt())
@@ -1577,9 +1658,13 @@ class IngestOrchestrator(
         )
 
         val existing = store.load(checkpointFile, params)
-        val analyses: MutableList<String> = existing?.analyses?.toMutableList()
-            ?: mutableListOf()
-        var completedThrough = existing?.completedThrough ?: 0
+        val analysesByChunk = linkedMapOf<Int, String>()
+        existing?.analysisChunkIndexes
+            ?.zip(existing.analyses)
+            ?.forEach { (index, analysis) -> analysesByChunk[index] = analysis }
+        val completedIndexes = existing?.completedChunkIndexes?.toMutableSet()
+            ?: mutableSetOf()
+        var completedThrough = contiguousCompletedThrough(completedIndexes, chunks.size)
         var globalDigest = existing?.globalDigest.orEmpty()
 
         if (completedThrough > 0) {
@@ -1606,66 +1691,34 @@ class IngestOrchestrator(
         val currentIndex = buildCurrentIndex(kbId)
         val purpose = "建立一个可读、可维护、可进化的本地知识库（Wiki），用于深度学习和长期记忆。"
 
-        for (chunk in chunks) {
-            if (chunk.index <= completedThrough) continue
+        val remaining = chunks.filterNot { it.index in completedIndexes }
+        for (window in remaining.chunked(LONG_SOURCE_PARALLELISM)) {
+            val digestForWindow = globalDigest
+            val results = coroutineScope {
+                window.map { chunk ->
+                    async {
+                        analyzeLongSourceChunk(
+                            task = task,
+                            source = source,
+                            chunk = chunk,
+                            chunkTotal = chunks.size,
+                            purpose = purpose,
+                            currentIndex = currentIndex,
+                            detectedLanguage = detectedLanguage,
+                            sourceIdentity = sourceIdentity,
+                            globalDigest = digestForWindow,
+                        )
+                    }
+                }.awaitAll()
+            }.sortedBy { it.index }
 
-            updateProgress(
-                task,
-                45 + (35 * (chunk.index - 1) / chunks.size).coerceIn(0, 35),
-                "分块 ${chunk.index}/${chunks.size} 分析中",
-                "标题路径：${chunk.headingPath.ifBlank { "(无标题)" }}"
-            )
-            appendLog(
-                task,
-                "P0-3: 分块 ${chunk.index}/${chunks.size}（${chunk.main.length} 字符，标题：${chunk.headingPath.ifBlank { "无" }}）开始调用 LLM",
-                "running"
-            )
-
-            val systemPrompt = IngestParityCore.chunkAnalysisSystemPrompt(
-                purpose = purpose,
-                schema = "",
-                index = currentIndex,
-                language = detectedLanguage,
-            )
-            val userPrompt = IngestParityCore.chunkAnalysisUserPrompt(
-                sourceIdentity = sourceIdentity,
-                folderContext = source.folderHint,
-                chunk = chunk,
-                globalDigest = globalDigest
-            )
-            val raw = streamTextWithThrottledProgress(
-                systemPrompt = systemPrompt,
-                userPrompt = userPrompt,
-                temperature = 0.1f,
-                maxTokens = 4_096,
-                reasoningEffort = ReasoningEffort.NONE,
-                task = task,
-                step = "分块 ${chunk.index}/${chunks.size} 分析中",
-                onRetry = { event ->
-                    appendLog(
-                        task,
-                        "P0-3: 分块 ${chunk.index}/${chunks.size} 远端请求第 ${event.attempt}/${event.maxAttempts} 次失败：${event.errorType} ${event.message}，${event.delayMs / 1000}s 后重试",
-                        "running",
-                        "分块 ${chunk.index}/${chunks.size} 分析中"
-                    )
-                }
-            )
-            appendLog(
-                task,
-                "P0-3: 分块 ${chunk.index}/${chunks.size} LLM 返回 ${raw.length} 字符",
-                "running"
-            )
-            throwIfAiFailure(raw)
-            if (raw.isBlank()) {
-                throw IllegalStateException("P0-3: 分块 ${chunk.index}/${chunks.size} 未返回任何内容")
+            results.forEach { result ->
+                analysesByChunk[result.index] = result.analysis
+                completedIndexes += result.index
+                if (result.updatedDigest.isNotBlank()) globalDigest = result.updatedDigest
             }
-
-            val chunkAnalysis = IngestParityCore.extractMarkedSection(raw, "Chunk Analysis")
-                .ifBlank { raw.trim() }
-            val updatedDigest = IngestParityCore.extractMarkedSection(raw, "Updated Global Digest")
-            analyses.add(chunkAnalysis)
-            completedThrough = chunk.index
-            if (updatedDigest.isNotBlank()) globalDigest = updatedDigest
+            completedThrough = contiguousCompletedThrough(completedIndexes, chunks.size)
+            val orderedIndexes = completedIndexes.sorted()
             val ok = store.save(
                 checkpointFile,
                 LongSourceCheckpoint(
@@ -1678,16 +1731,17 @@ class IngestOrchestrator(
                     overlapChars = overlapChars,
                     chunkTotal = chunks.size,
                     completedThrough = completedThrough,
+                    completedChunkIndexes = orderedIndexes,
+                    analysisChunkIndexes = orderedIndexes,
                     globalDigest = globalDigest,
-                    analyses = analyses.toList(),
-                    updatedAt = System.currentTimeMillis()
+                    analyses = orderedIndexes.mapNotNull(analysesByChunk::get),
+                    updatedAt = System.currentTimeMillis(),
                 )
             )
-            if (!ok) {
-                appendLog(task, "P0-3: checkpoint 写入失败，将继续下一段（不阻塞当前分析）", "running")
-            }
+            if (!ok) appendLog(task, "P0-3: checkpoint 写入失败，将继续下一窗口", "running")
         }
 
+        val analyses = chunks.mapNotNull { analysesByChunk[it.index] }
         val consolidated = IngestParityCore.consolidatedLongAnalysis(
             sourceIdentity = sourceIdentity,
             analyses = analyses,
@@ -1697,6 +1751,67 @@ class IngestOrchestrator(
         )
         updateProgress(task, 80, "分块分析完成", "已汇总 ${chunks.size} 段 Stage 1 结果")
         return consolidated.first
+    }
+
+    private data class ChunkAnalysisResult(
+        val index: Int,
+        val analysis: String,
+        val updatedDigest: String,
+    )
+
+    private suspend fun analyzeLongSourceChunk(
+        task: ProcessingTaskEntity,
+        source: SourceDocumentEntity,
+        chunk: SourceChunk,
+        chunkTotal: Int,
+        purpose: String,
+        currentIndex: String,
+        detectedLanguage: String,
+        sourceIdentity: String,
+        globalDigest: String,
+    ): ChunkAnalysisResult {
+        updateProgress(
+            task,
+            45 + (35 * (chunk.index - 1) / chunkTotal).coerceIn(0, 35),
+            "分块 ${chunk.index}/$chunkTotal 分析中",
+            "标题路径：${chunk.headingPath.ifBlank { "(无标题)" }}",
+        )
+        val systemPrompt = IngestParityCore.chunkAnalysisSystemPrompt(
+            purpose = purpose,
+            schema = "",
+            index = currentIndex.take(
+                if (chunk.index == 1) CURRENT_INDEX_PROMPT_CHARS else CURRENT_INDEX_PROMPT_CHARS_REST
+            ),
+            language = detectedLanguage,
+        )
+        val userPrompt = IngestParityCore.chunkAnalysisUserPrompt(
+            sourceIdentity = sourceIdentity,
+            folderContext = source.folderHint,
+            chunk = chunk,
+            globalDigest = globalDigest,
+        )
+        val raw = streamTextWithThrottledProgress(
+            systemPrompt = systemPrompt,
+            userPrompt = userPrompt,
+            temperature = 0.1f,
+            maxTokens = 4_096,
+            reasoningEffort = ReasoningEffort.NONE,
+            task = task,
+            step = "分块 ${chunk.index}/$chunkTotal 分析中",
+        )
+        throwIfAiFailure(raw)
+        if (raw.isBlank()) error("P0-3: 分块 ${chunk.index}/$chunkTotal 未返回任何内容")
+        return ChunkAnalysisResult(
+            index = chunk.index,
+            analysis = IngestParityCore.extractMarkedSection(raw, "Chunk Analysis").ifBlank { raw.trim() },
+            updatedDigest = IngestParityCore.extractMarkedSection(raw, "Updated Global Digest"),
+        )
+    }
+
+    private fun contiguousCompletedThrough(completed: Set<Int>, chunkTotal: Int): Int {
+        var index = 1
+        while (index <= chunkTotal && index in completed) index++
+        return index - 1
     }
 
     /**
@@ -2144,10 +2259,9 @@ class IngestOrchestrator(
      * to [WikiPageCompiler.merge]. AI merge is avoided on the hot path
      * to keep the KB write lock short.
      */
-    private suspend fun mergeWikiPageMarkdown(
+    private fun mergeWikiPageMarkdown(
         existingMarkdown: String,
         draft: WikiPageDraft,
-        sourceTitle: String,
     ): String {
         if (existingMarkdown.isBlank()) return draft.markdown
         if (existingMarkdown == draft.markdown) return existingMarkdown
@@ -2161,30 +2275,23 @@ class IngestOrchestrator(
         if (stripFrontMatter(existingMarkdown).trim() == stripFrontMatter(arrayMerged).trim()) {
             return arrayMerged
         }
-        return try {
-            val candidate = requestAiMerge(existingMarkdown, arrayMerged, sourceTitle)
-            if (!IngestParityCore.acceptsLlmMerge(existingMarkdown, arrayMerged, candidate)) {
-                backupMergeFallback(draft, existingMarkdown)
-                arrayMerged
-            } else {
-                wikiCompiler.mergeFrontmatterOnly(existingMarkdown, candidate)
-            }
-        } catch (t: Throwable) {
-            if (t is CancellationException) throw t
-            backupMergeFallback(draft, existingMarkdown)
-            arrayMerged
-        }
+        return wikiCompiler.merge(existingMarkdown, arrayMerged, draft.title)
     }
 
-    private fun backupMergeFallback(draft: WikiPageDraft, existingMarkdown: String) {
-        runCatching {
-            val page = draft.wikiPath ?: draft.title
-            fileStore.writeBackup(
-                "wiki-merge-${page}-${System.currentTimeMillis()}.md",
-                existingMarkdown,
-            )
-        }
+    private fun shouldDeferAiMerge(existingMarkdown: String, draft: WikiPageDraft): Boolean {
+        if (existingMarkdown.isBlank() || existingMarkdown == draft.markdown) return false
+        if (draft.sourceType !in setOf("wiki_entity", "wiki_concept", "wiki_paper", "wiki_method")) return false
+        val incoming = wikiCompiler.mergeFrontmatterOnly(existingMarkdown, draft.markdown)
+        return stripFrontMatter(existingMarkdown).trim() != stripFrontMatter(incoming).trim()
     }
+
+    private data class DeferredMergeRequest(
+        val itemId: String,
+        val sourceTitle: String,
+        val existingContent: String,
+        val incomingContent: String,
+        val expectedHash: String,
+    )
 
     /**
      * Section-aware merge for `wiki_index` and `wiki_overview` pages.
@@ -2478,6 +2585,51 @@ class IngestOrchestrator(
         )
     }
 
+    private suspend fun enqueueWikiMerge(
+        sourceId: String,
+        itemId: String,
+        sourceTitle: String,
+        existingContent: String,
+        incomingContent: String,
+        expectedHash: String,
+    ) {
+        val active = db.processingTaskDao().getActiveByItemAndType(itemId, "wiki_merge")
+        if (active != null && runCatching {
+                JSONObject(active.inputJson).optString("expectedHash") == expectedHash
+            }.getOrDefault(false)
+        ) return
+        val now = System.currentTimeMillis()
+        val taskId = UUID.randomUUID().toString()
+        val input = JSONObject()
+            .put("itemId", itemId)
+            .put("sourceTitle", sourceTitle)
+            .put("existingContent", existingContent)
+            .put("incomingContent", incomingContent)
+            .put("expectedHash", expectedHash)
+            .toString()
+        db.processingTaskDao().insert(
+            ProcessingTaskEntity(
+                id = taskId,
+                targetType = "knowledge_item",
+                targetId = itemId,
+                taskType = "wiki_merge",
+                status = "pending",
+                priority = 1,
+                dependsOnTaskIdsJson = null,
+                retryCount = 0,
+                maxRetry = 2,
+                errorMessage = null,
+                createdAt = now,
+                updatedAt = now,
+                finishedAt = null,
+                sourceId = sourceId,
+                itemId = itemId,
+                currentStep = "等待后台页面精修",
+                inputJson = input,
+            )
+        )
+    }
+
     private suspend fun markRunning(task: ProcessingTaskEntity, startedAt: Long) {
         // Don't pin the progress bar to 5 here — that left the log stuck at
         // "5% forever" until the task finished. Real progress is pushed
@@ -2553,11 +2705,43 @@ class IngestOrchestrator(
         )
     }
 
+    private suspend fun recordLlmMetrics(
+        task: ProcessingTaskEntity,
+        stage: String,
+        metrics: AiCallMetrics,
+    ) {
+        val sourceId = task.sourceId ?: task.targetId
+        val stats = llmStatsBySource.computeIfAbsent(sourceId) { LlmSourceStats() }
+        synchronized(stats) {
+            stats.callCount++
+            stats.retryCount += (metrics.attempts - 1).coerceAtLeast(0)
+            stats.queueWaitMs += metrics.queueWaitMs
+            stats.remoteMs += metrics.httpToFirstByteMs + metrics.responseReadMs
+            stats.totalMs += metrics.totalMs
+        }
+        appendLog(
+            task,
+            "诊断:LLM指标 stage=$stage model=${metrics.model} queue=${metrics.queueWaitMs}ms firstByte=${metrics.httpToFirstByteMs}ms read=${metrics.responseReadMs}ms total=${metrics.totalMs}ms attempts=${metrics.attempts} input=${metrics.inputChars} chars output=${metrics.outputChars} chars",
+            "running",
+            stage,
+        )
+    }
+
+    private suspend fun logAndClearLlmSummary(task: ProcessingTaskEntity, sourceId: String) {
+        val stats = llmStatsBySource.remove(sourceId) ?: return
+        appendLog(
+            task,
+            "诊断:本次 ingest LLM 汇总 calls=${stats.callCount}, retries=${stats.retryCount}, queue=${stats.queueWaitMs}ms, remote=${stats.remoteMs}ms, total=${stats.totalMs}ms",
+            "success",
+        )
+    }
+
     private fun taskLabel(taskType: String): String = when (taskType) {
         "parse" -> "解析"
         "analysis" -> "分析"
         "generation" -> "生成"
         "embedding" -> "入库"
+        "wiki_merge" -> "页面精修"
         else -> taskType
     }
 
@@ -2681,6 +2865,13 @@ class IngestOrchestrator(
                 stableContextLength = stableContextLength,
             )
 
+        @JvmStatic
+        fun analysisLimit(model: ModelConfig, stableContextLength: Int = 0): Int =
+            ContextBudgetCalculator.computeIngestAnalysisLimit(
+                maxContextSize = model.effectiveMaxContextSize(),
+                stableContextLength = stableContextLength,
+            )
+
         // INGEST_IDLE_POLLS / INGEST_IDLE_POLL_MS moved to
         // [IngestScheduler] companion in P0-1 — the orchestrator
         // no longer owns the lane loop.
@@ -2721,6 +2912,7 @@ class IngestOrchestrator(
         // global digest. Bigger = more cross-chunk context per
         // prompt, but the prompt grows too.
         const val LONG_SOURCE_DIGEST_MAX: Int = 15_000
+        const val LONG_SOURCE_PARALLELISM: Int = 2
 
         private const val WIKI_PURPOSE = "建立一个可读、可维护、可进化的本地知识库（Wiki），用于深度学习和长期记忆。"
         private const val WIKI_SCHEMA = """

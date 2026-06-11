@@ -193,6 +193,7 @@ private class FakeTaskDao : ProcessingTaskDao {
     override suspend fun claimTask(id: String, startedAt: Long) = notImpl("claimTask")
     override suspend fun getPendingTaskCandidatesForSource(sourceId: String, limit: Int) = notImpl("getPendingTaskCandidatesForSource")
     override suspend fun getActiveBySourceAndType(sourceId: String, taskType: String) = notImpl("getActiveBySourceAndType")
+    override suspend fun getActiveByItemAndType(itemId: String, taskType: String) = notImpl("getActiveByItemAndType")
     override suspend fun getBySource(sourceId: String) = notImpl("getBySource")
     override suspend fun getBySourceDocument(sourceId: String) = notImpl("getBySourceDocument")
     override suspend fun getPendingTask(targetType: String, targetId: String) = notImpl("getPendingTask")
